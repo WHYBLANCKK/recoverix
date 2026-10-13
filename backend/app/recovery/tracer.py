@@ -620,6 +620,7 @@ def _recover_bifragment_candidate_pair(
     case_id: Optional[str] = None,
     detection_mode: str = "known_file",
     scan_meta: Optional[Dict[str, Any]] = None,
+    precomputed_recon: Optional[Any] = None,
 ) -> RecoveryRun:
     """Execute traced recovery for a bifragment candidate pair of matching formats."""
     if scan_meta is None:
@@ -778,9 +779,12 @@ def _recover_bifragment_candidate_pair(
 
     try:
         frag_b_bytes = content[cand2.offset:]
-        recon_res = reconstruct_bifragment(
-            frag_a_bytes, frag_b_bytes, validator=validator, min_gap=1, max_gap=4096
-        )
+        if precomputed_recon is not None:
+            recon_res = precomputed_recon
+        else:
+            recon_res = reconstruct_bifragment(
+                frag_a_bytes, frag_b_bytes, validator=validator, min_gap=1, max_gap=4096
+            )
 
         rec_success = recon_res.success
         emit_event(
@@ -2196,13 +2200,44 @@ def execute_traced_recoveries(
         cand = candidates_to_process[idx]
         try:
             # Check for bifragment candidate pairing: consecutive candidates of same format without end offsets
-            if (
+            # that form a validated bifragment or are explicitly designated bifragments
+            cand2 = candidates_to_process[idx + 1] if idx + 1 < len(candidates_to_process) else None
+            is_same_format_unbounded = (
                 getattr(cand, "estimated_end_offset", None) is None
-                and idx + 1 < len(candidates_to_process)
-                and getattr(candidates_to_process[idx + 1], "estimated_end_offset", None) is None
-                and getattr(candidates_to_process[idx + 1], "format", "") == getattr(cand, "format", "")
-            ):
-                cand2 = candidates_to_process[idx + 1]
+                and cand2 is not None
+                and getattr(cand2, "estimated_end_offset", None) is None
+                and getattr(cand2, "format", "") == getattr(cand, "format", "")
+            )
+            should_pair = False
+            precomputed_recon = None
+            if is_same_format_unbounded and cand2 is not None:
+                fmt = cand.format
+                validator = VALIDATORS.get(fmt, lambda data: validate_artifact(fmt, data))
+                raw_between = content[cand.offset:cand2.offset]
+                frag_a_bytes = raw_between.rstrip(b"\x00") or raw_between
+                frag_b_bytes = content[cand2.offset:]
+
+                is_explicit_bifrag = (
+                    any(term in filename.lower() for term in ("bifrag", "split"))
+                    or any("bifrag" in getattr(r, "relationship_type", "").lower() for r in getattr(cand, "relationships", ()))
+                )
+
+                # In blind mode, plain text candidates are independent runs unless explicitly indicated
+                allow_text_blind_pair = detection_mode == "known_file" or is_explicit_bifrag
+                if fmt in ("txt", "csv") and not allow_text_blind_pair:
+                    should_pair = False
+                else:
+                    try:
+                        precomputed_recon = reconstruct_bifragment(
+                            frag_a_bytes, frag_b_bytes, validator=validator, min_gap=1, max_gap=4096
+                        )
+                        if precomputed_recon.success or is_explicit_bifrag:
+                            should_pair = True
+                    except Exception:
+                        if is_explicit_bifrag:
+                            should_pair = True
+
+            if should_pair and cand2 is not None:
                 pair_run = _recover_bifragment_candidate_pair(
                     filename=filename,
                     content=content,
@@ -2211,6 +2246,7 @@ def execute_traced_recoveries(
                     case_id=case_id,
                     detection_mode=detection_mode,
                     scan_meta=scan_meta,
+                    precomputed_recon=precomputed_recon,
                 )
                 runs.append(pair_run)
                 idx += 2
