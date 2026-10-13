@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
@@ -473,39 +474,107 @@ def _scan_synthetic(
         search_from = pos + start_len
 
 
+def _find_png_end(
+    data: bytes,
+    start_pos: int,
+    territory_limit: int,
+) -> Optional[int]:
+    """Parse PNG chunks sequentially starting after PNG signature to find authentic IEND chunk.
+
+    Returns the byte offset immediately following the 12-byte IEND chunk (estimated_end),
+    or None if the PNG is truncated, malformed, or missing IEND within territory_limit.
+    """
+    sig_len = len(PNG_SIGNATURE)
+    curr = start_pos + sig_len
+    found_ihdr = False
+
+    while curr + 8 <= territory_limit:
+        chunk_len = struct.unpack(">I", data[curr : curr + 4])[0]
+        chunk_type = data[curr + 4 : curr + 8]
+
+        # Chunk type must consist of 4 ASCII letters (RFC 2083)
+        if not (
+            len(chunk_type) == 4
+            and all(65 <= b <= 90 or 97 <= b <= 122 for b in chunk_type)
+        ):
+            return None
+
+        # First chunk check: MUST be IHDR (length 13)
+        if not found_ihdr:
+            if chunk_type != b"IHDR" or chunk_len != 13:
+                return None
+            found_ihdr = True
+
+        total_chunk_size = 12 + chunk_len
+        chunk_end = curr + total_chunk_size
+
+        if chunk_end > territory_limit:
+            # Chunk data or CRC is truncated within territory
+            return None
+
+        if chunk_type == b"IEND":
+            # IEND chunk must have length 0 per RFC 2083
+            if chunk_len == 0:
+                return chunk_end
+            return None
+
+        curr = chunk_end
+
+    return None
+
+
 def _scan_png(
     data: bytes,
     evidence_len: int,
     candidates: List[Candidate],
 ) -> None:
-    """Find all PNG magic-byte signatures in *data*."""
+    """Find all PNG magic-byte signatures in *data* with bounded sequential chunk parsing."""
     sig = PNG_SIGNATURE
     sig_len = len(sig)
 
+    raw_starts: List[int] = []
     search_from = 0
-
     while search_from <= evidence_len - sig_len:
         pos = data.find(sig, search_from)
         if pos == -1:
             break
-
-        iend_pos = data.find(b"IEND", pos + sig_len)
-        estimated_end = (iend_pos + 8) if iend_pos != -1 else None
-
-        candidates.append(
-            Candidate(
-                candidate_id="",
-                format="png",
-                mime_type="image/png",
-                category="image",
-                offset=pos,
-                detected_header_length=sig_len,
-                estimated_end_offset=estimated_end,
-                detection_method="magic_bytes",
-            )
-        )
-
+        raw_starts.append(pos)
         search_from = pos + sig_len
+
+    if not raw_starts:
+        return
+
+    # Preceding candidate starts to prevent crossing prior candidate boundaries
+    other_starts = [c.offset for c in candidates]
+
+    valid_cands: List[Candidate] = []
+    for idx, pos in enumerate(raw_starts):
+        # If this position falls inside the completed bounds of a preceding valid candidate, skip it
+        if valid_cands and valid_cands[-1].estimated_end_offset is not None:
+            if pos < valid_cands[-1].estimated_end_offset:
+                continue
+
+        # Territory limit: earliest candidate start ahead of pos
+        next_raw_start = raw_starts[idx + 1] if idx + 1 < len(raw_starts) else evidence_len
+        territory_limit = next_raw_start
+        for o in other_starts:
+            if o > pos and o < territory_limit:
+                territory_limit = o
+
+        estimated_end = _find_png_end(data, pos, territory_limit)
+
+        cand = Candidate(
+            candidate_id="",
+            format="png",
+            mime_type="image/png",
+            category="image",
+            offset=pos,
+            detected_header_length=sig_len,
+            estimated_end_offset=estimated_end,
+            detection_method="magic_bytes",
+        )
+        valid_cands.append(cand)
+        candidates.append(cand)
 
 
 # Valid JPEG first marker bytes immediately following \xFF\xD8\xFF
@@ -518,17 +587,85 @@ VALID_JPEG_FIRST_MARKERS = frozenset({
 })
 
 
+def _find_jpeg_end(
+    data: bytes,
+    start_pos: int,
+    territory_limit: int,
+) -> Optional[int]:
+    """Parse JPEG marker stream sequentially starting from SOI to locate authentic EOI marker.
+
+    Returns the byte offset immediately following EOI (estimated_end),
+    or None if the JPEG is truncated, malformed, or missing EOI within territory_limit.
+    """
+    curr = start_pos + 2
+    found_eoi = False
+    end_offset: Optional[int] = None
+
+    while curr < territory_limit:
+        if data[curr] != 0xFF:
+            # Non-marker byte encountered before SOS
+            break
+
+        if curr + 1 >= territory_limit:
+            break
+
+        marker = data[curr + 1]
+
+        # Handle 0xFF padding or 0x00 (stuffed byte)
+        if marker == 0x00 or marker == 0xFF:
+            curr += 1
+            continue
+
+        # EOI Marker (0xFFD9) encountered outside entropy scan
+        if marker == 0xD9:
+            found_eoi = True
+            end_offset = curr + 2
+            break
+
+        # Standalone markers without length: RST0-RST7 (0xD0-0xD7), SOI (0xD8)
+        if 0xD0 <= marker <= 0xD8:
+            curr += 2
+            continue
+
+        # Markers with 2-byte length payload
+        if curr + 4 > territory_limit:
+            break
+
+        segment_len = struct.unpack(">H", data[curr + 2 : curr + 4])[0]
+        if segment_len < 2:
+            break
+
+        segment_end = curr + 2 + segment_len
+        if segment_end > territory_limit:
+            break
+
+        # SOS marker (0xDA): Start of Scan
+        if marker == 0xDA:
+            # Scan header is of length segment_len.
+            # Compressed entropy scan data starts at segment_end.
+            # Search for EOI strictly within [segment_end, territory_limit].
+            eoi_pos = data.find(JPEG_EOI, segment_end, territory_limit)
+            if eoi_pos != -1:
+                found_eoi = True
+                end_offset = eoi_pos + len(JPEG_EOI)
+            break
+
+        curr = segment_end
+
+    return end_offset
+
+
 def _scan_jpeg(
     data: bytes,
     evidence_len: int,
     candidates: List[Candidate],
 ) -> None:
-    """Find all JPEG SOI signatures in *data*, requiring a valid following marker."""
+    """Find all JPEG SOI signatures in *data* with bounded marker stream parsing and territory scoping."""
     sig = JPEG_SOI
     sig_len = len(sig)
 
+    raw_starts: List[int] = []
     search_from = 0
-
     while search_from <= evidence_len - sig_len:
         pos = data.find(sig, search_from)
         if pos == -1:
@@ -536,24 +673,44 @@ def _scan_jpeg(
 
         # A valid JPEG SOI must be immediately followed by 0xFF and a valid marker byte
         if pos + 3 < evidence_len and data[pos + 2] == 0xFF and data[pos + 3] in VALID_JPEG_FIRST_MARKERS:
-            # Check for EOI marker after SOI to estimate end
-            eoi_pos = data.find(JPEG_EOI, pos + sig_len)
-            estimated_end = (eoi_pos + len(JPEG_EOI)) if eoi_pos != -1 else None
-
-            candidates.append(
-                Candidate(
-                    candidate_id="",
-                    format="jpeg",
-                    mime_type="image/jpeg",
-                    category="image",
-                    offset=pos,
-                    detected_header_length=sig_len + 2,
-                    estimated_end_offset=estimated_end,
-                    detection_method="magic_bytes",
-                )
-            )
+            raw_starts.append(pos)
 
         search_from = pos + 1
+
+    if not raw_starts:
+        return
+
+    # Preceding candidate starts to prevent crossing prior candidate boundaries
+    other_starts = [c.offset for c in candidates]
+
+    valid_cands: List[Candidate] = []
+    for idx, pos in enumerate(raw_starts):
+        # If this position falls inside the completed bounds of a preceding valid candidate, skip it
+        if valid_cands and valid_cands[-1].estimated_end_offset is not None:
+            if pos < valid_cands[-1].estimated_end_offset:
+                continue
+
+        # Territory limit: earliest candidate start ahead of pos
+        next_raw_start = raw_starts[idx + 1] if idx + 1 < len(raw_starts) else evidence_len
+        territory_limit = next_raw_start
+        for o in other_starts:
+            if o > pos and o < territory_limit:
+                territory_limit = o
+
+        estimated_end = _find_jpeg_end(data, pos, territory_limit)
+
+        cand = Candidate(
+            candidate_id="",
+            format="jpeg",
+            mime_type="image/jpeg",
+            category="image",
+            offset=pos,
+            detected_header_length=sig_len + 2,
+            estimated_end_offset=estimated_end,
+            detection_method="magic_bytes",
+        )
+        valid_cands.append(cand)
+        candidates.append(cand)
 
 
 
