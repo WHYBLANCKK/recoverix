@@ -1,408 +1,267 @@
 # Recoverix
 
-## Deterministic Digital Evidence Recovery and Analysis System
+### Deterministic Digital Evidence Recovery and Analysis
 
-Recoverix is an AI-assisted digital evidence recovery platform designed to analyze damaged, deleted, corrupted, and fragmented digital files. It identifies recoverable artifacts, reconstructs information when the surviving evidence and file structure make reconstruction possible, validates the result, and clearly reports what was verified, reconstructed, and remains missing.
+Recoverix is a digital evidence recovery and analysis prototype designed to identify, validate, and reconstruct damaged, fragmented, and partially corrupted files.
 
-The core principle of Recoverix is:
+It combines deterministic recovery algorithms, structural validation, byte-level provenance, recovery scoring, and AI-assisted explanations to make recovery results easier to understand and evaluate.
 
-> **Recoverix does not guess what was lost. It proves what can be recovered.**
+Recoverix distinguishes between information directly supported by the available evidence, information reconstructed through deterministic procedures, and information that remains missing.
 
-AI is used only as an interpretation and explanation layer. It does not generate, predict, or modify recovered evidence bytes.
+> Recoverix does not guess what was lost. It reconstructs what the evidence supports and makes uncertainty explicit.
 
----
+## Table of Contents
 
-## 1. Problem
+- [Problem Statement](#problem-statement)
+- [Our Approach](#our-approach)
+- [Core Architecture](#core-architecture)
+- [Key Features](#key-features)
+- [Deterministic Recovery](#deterministic-recovery)
+- [Byte-Level Provenance](#byte-level-provenance)
+- [Recovery Classification](#recovery-classification)
+- [Supported File Formats](#supported-file-formats)
+- [AI Evidence Analyst](#ai-evidence-analyst)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Testing](#testing)
+- [Synthetic Evaluation](#synthetic-evaluation)
+- [Limitations](#limitations)
+- [Design Principles](#design-principles)
+- [Future Improvements](#future-improvements)
 
-Traditional file recovery tools primarily focus on locating and extracting files. In damaged or fragmented evidence, this is not always enough.
+## Problem Statement
 
-A recovered file may contain:
+Damaged or fragmented digital evidence can contain intact data, corrupted regions, missing fragments, or structures that are only partially recoverable.
 
-- Completely intact information
-- Partially available information
-- Corrupted regions
-- Missing fragments
-- Structurally recoverable information
-- Information that cannot be reliably reconstructed
+Finding a file signature or producing an output file does not necessarily mean that the original information has been recovered correctly.
 
-Simply producing an output file does not prove that the original information was recovered.
+A reliable recovery workflow must answer several questions:
 
-Recoverix addresses this problem by combining deterministic recovery, structural validation, byte-level accounting, confidence scoring, and AI-assisted evidence interpretation.
+- What artifacts were identified?
+- Which bytes are directly supported by the available evidence?
+- Which bytes were reconstructed?
+- Which information remains missing?
+- Did the reconstructed artifact pass structural validation?
+- Where does uncertainty remain?
 
----
+Recoverix addresses these questions through deterministic recovery, structural validation, explicit byte accounting, and transparent recovery reporting.
 
-## 2. Solution
+## Our Approach
 
-Recoverix follows a three-stage philosophy:
+Recoverix follows three core stages.
 
-### Recover
+### 1. Recover
 
-Identify file formats, locate candidate fragments, and reconstruct information when the evidence supports a deterministic reconstruction.
+Identify candidate artifacts, locate surviving fragments, and attempt reconstruction when the available evidence supports a defined recovery procedure.
 
-### Prove
+### 2. Prove
 
-Validate the recovered artifact and maintain explicit byte-level provenance:
+Validate recovery candidates and record the distinction between verified, reconstructed, and missing bytes.
 
-- Verified bytes
-- Reconstructed bytes
-- Missing bytes
+### 3. Understand
 
-### Understand
+Classify and prioritize artifacts, present recovery results, and provide explanations grounded in deterministic analysis.
 
-Classify and prioritize recovered artifacts and use an AI evidence analyst to explain the deterministic findings in an investigator-friendly manner.
+The recovery engine remains authoritative. AI-assisted explanations do not replace recovery algorithms or structural validation.
 
----
-
-## 3. Core Architecture
+## Core Architecture
 
 ```text
-Evidence File
-     |
-     v
+Evidence Input
+      |
+      v
 Evidence Ingestion
-     |
-     v
+      |
+      v
 Format Identification
-     |
-     v
-Candidate Fragment Detection
-     |
-     +----------------------+
-     |                      |
-     v                      v
-Contiguous Carving     Fragment Analysis
-                            |
-                            v
-                    Bounded Reconstruction
-                            |
-                            v
-                    Structural Validation
-                            |
-                            v
-                    Byte Accounting (V/R/M)
-                            |
-                            v
-                    Confidence Engine
-                            |
-                            v
-                    Classification
-                            |
-                            v
-                    Priority Assessment
-                            |
-                            v
-                    AI Evidence Explanation
-                            |
-                            v
-                    Investigator Workspace
+      |
+      v
+Candidate Detection
+      |
+      v
+Fragment and Boundary Analysis
+      |
+      v
+Deterministic Recovery
+      |
+      v
+Structural Validation
+      |
+      v
+Byte-Level Provenance (V/R/M)
+      |
+      v
+Recovery Scoring and Classification
+      |
+      v
+Artifact Prioritization
+      |
+      v
+AI-Assisted Explanation
+      |
+      v
+Investigation Interface
 ```
 
----
+Each stage has a distinct responsibility. Recovery decisions and byte accounting are established by the deterministic pipeline before the AI explanation layer interprets the results.
 
-## 4. Reconstruction Engine
+## Key Features
 
-The reconstruction engine is deterministic and evidence-driven.
+### Evidence Ingestion
 
-It can analyze surviving fragments and attempt reconstruction only when the relationship between those fragments can be established.
+- Accept evidence files through the application's ingestion workflow.
+- Maintain evidence metadata.
+- Calculate SHA-256 metadata where implemented.
+- Apply configured evidence-size limits.
 
-### Bounded Fragment Reconstruction
+### File Identification and Candidate Detection
 
-For bifragment evidence, Recoverix uses a bounded gap search.
+- Identify supported file formats.
+- Locate candidate artifacts and fragments.
+- Track candidate offsets and sizes.
+- Apply format-specific boundary detection.
+- Isolate candidates to reduce accidental overlap and cross-candidate contamination.
+
+### Deterministic Reconstruction
+
+- Attempt bounded bifragment reconstruction.
+- Apply supported format-specific structural reconstruction.
+- Validate reconstruction candidates.
+- Preserve ambiguity when the evidence does not establish a unique result.
+- Avoid automatically combining unrelated candidates merely because they share a format.
+
+### Structural Validation
+
+- Validate candidates using format-specific checks.
+- Reject invalid reconstruction results.
+- Handle malformed and truncated input.
+- Distinguish successful structural validation from proof that every original byte has been recovered.
+
+### Byte-Level Provenance
+
+Record the contribution of verified, reconstructed, and missing bytes where supported by the recovery pipeline.
+
+### Recovery Scoring and Classification
+
+Evaluate recovery results using the prototype's scoring policy and classify artifacts according to the available recovery evidence.
+
+### Artifact Prioritization
+
+Organize artifacts using the application's classification and prioritization mechanisms.
+
+### AI-Assisted Explanation
+
+Generate natural-language explanations from deterministic analysis results. The AI layer is intended to explain recovery findings rather than generate recovered evidence.
+
+## Deterministic Recovery
+
+Recoverix uses evidence-driven recovery procedures.
+
+### Bounded Bifragment Reconstruction
+
+When two fragments may belong to the same artifact, the reconstruction engine can evaluate possible gap sizes within a configured search range.
 
 ```text
-Fragment A       Unknown Gap       Fragment B
-██████████       ????????          ██████████
+Fragment A          Unknown Gap          Fragment B
+[Available Bytes]   [Missing Region]     [Available Bytes]
 ```
 
-The engine evaluates candidate gap sizes within a defined maximum:
+The engine evaluates candidate reconstructions using applicable validation rules.
 
-```text
-1 byte <= gap <= 4096 bytes
-```
+- A uniquely validated candidate may be selected.
+- Multiple valid candidates may remain ambiguous.
+- Unrelated candidates should remain separate when the evidence does not support combining them.
+- A failed reconstruction attempt must not be presented as a successful recovery.
 
-Each candidate is subjected to structural validation.
-
-If exactly one candidate is valid, it can be selected.
-
-If multiple candidates are valid but the evidence cannot distinguish between them, Recoverix preserves the ambiguity instead of arbitrarily selecting one.
+The current implementation supports specific reconstruction scenarios rather than arbitrary reconstruction of all file formats.
 
 ### Structural Reconstruction
 
-Certain formats contain enough structural information to deterministically restore missing structural bytes.
+Some formats permit limited deterministic reconstruction of structural bytes.
 
-For example, an incomplete JSON structure such as:
+For example, an incomplete JSON structure may be eligible for a structural-closure attempt when the implemented recovery rules support it.
 
-```json
-{"case":"IR-99","status":"active","tags":["malware","network"
-```
+Any bytes added by such a procedure must be recorded as reconstructed, not verified.
 
-can be structurally closed with:
+Recoverix does not claim to recover arbitrary overwritten or unknowable content.
 
-```text
-]}
-```
+## Byte-Level Provenance
 
-The system records those generated bytes as reconstructed bytes rather than verified bytes.
+Recoverix distinguishes three categories of artifact bytes.
 
-### Important Principle
+| Symbol | Category | Meaning |
+|---|---|---|
+| V | Verified | Bytes directly supported by the available evidence |
+| R | Reconstructed | Bytes added by an implemented deterministic reconstruction procedure |
+| M | Missing | Bytes that cannot be established from the available evidence |
 
-Recoverix does not use AI to predict arbitrary missing data.
-
-If the evidence cannot determine the missing information, it remains classified as missing.
-
----
-
-## 5. Verified, Reconstructed and Missing Bytes
-
-Recoverix maintains explicit byte accounting.
-
-### Verified Bytes (V)
-
-Bytes directly supported by the uploaded evidence.
-
-### Reconstructed Bytes (R)
-
-Bytes generated deterministically by a validated reconstruction process.
-
-### Missing Bytes (M)
-
-Bytes that cannot be established from the available evidence.
-
-The logical artifact accounting follows:
+The logical accounting model is:
 
 ```text
-Total Artifact Bytes = V + R + M
+Total Logical Artifact Bytes = V + R + M
 ```
 
-This prevents the system from incorrectly claiming complete recovery simply because a structurally valid output file was produced.
+The accounting must not imply that reconstructed bytes were present in the original evidence.
 
----
+A structurally valid output is not, by itself, proof of complete recovery.
 
-## 6. Recovery Status
+## Recovery Classification
 
-Recoverix classifies recovery results using the confidence engine.
+Recoverix uses a prototype confidence-scoring policy to classify recovery results.
 
-| Confidence | Status |
+| Score | Prototype Status |
 |---:|---|
 | 85–100 | FULLY_RECOVERED |
 | 50–84 | PARTIALLY_RECOVERED |
 | 20–49 | CORRUPTED |
 | 0–19 | UNRECOVERABLE |
 
-An important recovery rule is that an artifact requiring deterministic reconstruction cannot be reported as fully recovered merely because the resulting file is structurally valid.
+These thresholds are application-specific heuristics, not an established forensic standard.
 
-These thresholds are prototype scoring policies and are not intended to represent a forensic industry standard.
+The final status must also respect recovery completeness. An artifact containing reconstructed or missing bytes must not be classified as fully recovered merely because its output passes structural validation.
 
----
+## Supported File Formats
 
-## 7. Confidence Engine
+The recovery framework includes handling for the following formats:
 
-Recoverix evaluates recovery using multiple deterministic factors:
+| Format | Extension | Notes |
+|---|---|---|
+| Plain Text | TXT | Candidate detection and supported text recovery procedures |
+| Comma-Separated Values | CSV | Candidate detection and supported CSV recovery procedures |
+| JavaScript Object Notation | JSON | Structural validation and supported structural reconstruction |
+| Extensible Markup Language | XML | Format detection and structural validation |
+| Portable Network Graphics | PNG | Image signature and bounded image-boundary analysis |
+| JPEG Image | JPEG/JPG | Image signature and bounded image-boundary analysis |
+| Portable Document Format | PDF | PDF candidate detection and supported recovery procedures |
 
-| Factor | Weight |
-|---|---:|
-| Header validity | 20 |
-| Footer / end-marker validity | 20 |
-| Structural validation | 30 |
-| Size plausibility | 15 |
-| Reconstruction integrity | 15 |
-| Total | 100 |
+Support does not mean that every damaged file can be reconstructed.
 
-The confidence result is combined with byte accounting and reconstruction state to determine the final recovery status.
+Detection, carving, validation, and reconstruction capabilities vary by format. Recovery results depend on the available evidence and the specific recovery procedure implemented for that format.
 
----
+## AI Evidence Analyst
 
-## 8. File Processing
+The AI evidence analyst operates as an interpretation layer over deterministic recovery results.
 
-Recoverix currently supports a common recovery framework across multiple formats.
+Depending on the implemented integration, it may help provide:
 
-The implemented system includes processing for formats such as:
+- Recovery summaries.
+- Explanations of detected damage.
+- Artifact descriptions.
+- Classification context.
+- Investigator-oriented interpretations of recovery findings.
 
-- TXT
-- CSV
-- JSON
-- PDF
-- PNG
-- JPEG
-- XML
+The AI layer must not:
 
-The level of reconstruction varies by format.
+- Invent recovered evidence bytes.
+- Predict missing file contents and present them as recovered.
+- Override deterministic validation results.
+- Modify verified, reconstructed, or missing byte accounting.
+- Independently declare a reconstruction valid.
 
-Some formats can currently be identified, carved, and structurally validated without necessarily supporting arbitrary byte reconstruction.
+AI explanations should remain grounded in the results supplied by the deterministic pipeline.
 
-Recoverix intentionally does not claim that every damaged file or every missing byte can be recovered.
-
----
-
-## 9. AI Evidence Analyst
-
-AI operates after deterministic analysis.
-
-The deterministic engine produces facts such as:
-
-```text
-Format: JSON
-Verified Bytes: 61
-Reconstructed Bytes: 2
-Missing Bytes: 0
-Method: JSON_STRUCTURAL_CLOSURE
-Validation: PASSED
-```
-
-The AI layer uses these results to provide:
-
-- Evidence explanations
-- Recovery summaries
-- Damage interpretation
-- Artifact prioritization
-- Investigator-friendly descriptions
-
-AI does not:
-
-- Predict missing evidence bytes
-- Invent file contents
-- Override deterministic validation
-- Change V/R/M accounting
-- Decide whether a reconstruction is valid
-
-This separation keeps evidence recovery deterministic while using AI where natural-language interpretation is useful.
-
----
-
-## 10. Fragment Graph and Evidence Visualization
-
-The investigation interface visualizes relationships between:
-
-- Artifacts
-- Fragments
-- Damage regions
-- Reconstruction steps
-- Verified bytes
-- Reconstructed bytes
-- Missing bytes
-
-The visualization is driven by backend recovery data rather than being a purely decorative graph.
-
-The byte evidence map distinguishes:
-
-```text
-Verified       Reconstructed       Missing
-```
-
-This allows an investigator to understand which parts of an artifact are directly supported by evidence and which parts were deterministically reconstructed.
-
----
-
-## 11. Main Features
-
-### Evidence Ingestion
-
-- Upload digital evidence
-- Calculate SHA-256 metadata
-- Process evidence in bounded chunks
-- Maintain evidence metadata
-
-### Format Identification
-
-- Detect known file signatures
-- Identify candidate artifacts
-- Use controlled format registries
-
-### Fragment Detection
-
-- Locate candidate fragments
-- Track fragment offsets and sizes
-- Establish relationships between fragments
-
-### Deterministic Reconstruction
-
-- Bounded bifragment reconstruction
-- Structural reconstruction
-- Format-specific reconstruction logic
-- Ambiguity preservation
-
-### Structural Validation
-
-- Validate reconstructed artifacts
-- Reject invalid reconstruction candidates
-- Protect against malformed input
-
-### Provenance
-
-Track:
-
-- Verified bytes
-- Reconstructed bytes
-- Missing bytes
-- Reconstruction method
-- Validation status
-
-### Confidence Analysis
-
-Generate a deterministic confidence score based on structural and recovery evidence.
-
-### Classification
-
-Artifacts can be classified into categories including:
-
-- DOCUMENT
-- DATABASE_LOG
-- PHOTO_MEDIA
-- SYSTEM_TRACE
-- BINARY_ARCHIVE
-
-### Prioritization
-
-Artifacts can be assigned:
-
-- CRITICAL
-- HIGH
-- MEDIUM
-- LOW
-
-### AI Evidence Explanation
-
-Provide grounded natural-language explanations based on deterministic recovery results.
-
----
-
-## 12. API
-
-The backend exposes REST APIs for case and artifact processing.
-
-### Case Management
-
-```text
-POST /api/cases
-POST /api/cases/{case_id}/evidence
-POST /api/cases/{case_id}/analyze
-GET  /api/cases/{case_id}
-GET  /api/cases/{case_id}/artifacts
-```
-
-### Artifact Analysis
-
-```text
-GET  /api/artifacts/{artifact_id}
-POST /api/artifacts/{artifact_id}/explain
-```
-
-### Single File Recovery
-
-```text
-POST /api/recover-file
-GET  /api/recover-file/{file_id}/download
-```
-
-### Health Check
-
-```text
-GET /health
-```
-
----
-
-## 13. Technology Stack
+## Technology Stack
 
 ### Frontend
 
@@ -419,111 +278,23 @@ GET /health
 
 ### Recovery Engine
 
-- Python
-- Custom deterministic scanners
-- File validators
-- Fragment analysis
-- Reconstruction algorithms
-- Confidence and provenance engine
+- Custom deterministic scanners.
+- File-format validators.
+- Fragment analysis.
+- Bounded reconstruction algorithms.
+- Recovery scoring and provenance logic.
 
-### AI
-
-- External LLM/API integration
-- Grounded evidence explanation
-- AI used only after deterministic recovery
-
-### Testing
+### Testing and Development
 
 - Pytest
-- Unit tests
-- Reconstruction tests
-- API tests
-- Recovery integration tests
+- TypeScript compiler checks.
+- Automated recovery regression tests.
+- Synthetic evidence generation.
+- Git and GitHub.
 
-### Development
+The exact runtime requirements and optional integrations are determined by the repository's dependency and configuration files.
 
-- Git
-- GitHub
-- VS Code
-
----
-
-## 14. Testing
-
-Recoverix includes automated tests covering:
-
-- Evidence generation
-- Evidence ingestion
-- Format identification
-- Fragment scanning
-- Contiguous carving
-- Structural validation
-- Bifragment reconstruction
-- Confidence scoring
-- Provenance
-- PDF recovery
-- TXT reconstruction
-- CSV reconstruction
-- JSON reconstruction
-- API behavior
-- Recovery failure handling
-- Malformed input
-- Reconstruction ambiguity
-
-The project uses deterministic synthetic evidence scenarios to test recovery behavior without relying on real-world private evidence.
-
----
-
-## 15. Synthetic Test Scenarios
-
-The test generator produces controlled scenarios including:
-
-```text
-Clean
-Deleted
-Fragmented
-Bifragment
-Corrupted
-Unrecoverable
-```
-
-The generator maintains ground-truth information for testing and validation, while the actual recovery engine does not receive that ground truth during recovery.
-
-This allows reconstruction results to be tested against known expected outcomes without making the recovery algorithm dependent on test metadata.
-
----
-
-## 16. Design Principles
-
-Recoverix follows several core principles:
-
-### Deterministic First
-
-The recovery engine establishes what the evidence actually supports.
-
-### No Evidence Hallucination
-
-AI cannot invent missing evidence.
-
-### Explicit Provenance
-
-Every recovered result should explain where its bytes came from.
-
-### Ambiguity Preservation
-
-When multiple reconstructions are equally valid, the system does not arbitrarily choose one.
-
-### Validation Before Confidence
-
-A reconstruction must be structurally validated before being treated as a valid recovery candidate.
-
-### Recovery Transparency
-
-The investigator should be able to distinguish verified, reconstructed, and missing information.
-
----
-
-## 17. Project Structure
+## Project Structure
 
 ```text
 recoverix/
@@ -539,40 +310,49 @@ recoverix/
 │   │   └── store.py
 │   ├── generate_case.py
 │   └── ...
-│
 ├── frontend/
 │   ├── app/
 │   ├── components/
 │   ├── lib/
 │   └── ...
-│
 ├── tests/
-│
 ├── docs/
-│
 ├── .gitignore
 └── README.md
 ```
 
----
+This is a high-level overview. Individual modules and filenames may change as development continues.
 
-## 18. Running the Project
+## Getting Started
 
-### Backend
+### Prerequisites
 
-From the project root:
+Install the versions of Python, Node.js, and npm supported by the repository's dependency and configuration files.
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/c-zerooo/recoverix.git
+cd recoverix
+```
+
+### 2. Start the Backend
+
+From the repository root, run:
 
 ```bash
 python3 -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Backend:
+The backend is expected to be available at:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-### Frontend
+### 3. Start the Frontend
+
+Open another terminal:
 
 ```bash
 cd frontend
@@ -580,57 +360,133 @@ npm install
 npm run dev
 ```
 
-Frontend:
+The frontend is expected to be available at:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-### Run Tests
+### 4. Run the Tests
 
-From the project root:
+From the repository root:
 
 ```bash
-python3 -m pytest tests/ -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -v
 ```
 
----
+The `PYTHONDONTWRITEBYTECODE=1` setting prevents Python from writing new bytecode files during the test run.
 
-## 19. Limitations
+Consult the repository configuration and dependency files if additional setup is required.
 
-Recoverix is a hackathon prototype and should not be represented as a production forensic platform.
+## Testing
+
+Recoverix includes automated tests covering areas such as:
+
+- Evidence generation.
+- Evidence ingestion.
+- Format identification.
+- Fragment scanning.
+- Candidate-boundary isolation.
+- Contiguous carving.
+- Structural validation.
+- Bifragment reconstruction.
+- Reconstruction ambiguity.
+- Byte-level provenance.
+- Recovery scoring.
+- PDF recovery.
+- Text and CSV recovery.
+- JSON structural reconstruction.
+- API behavior.
+- Malformed and truncated input.
+- Recovery failure handling.
+
+Regression tests are particularly important for preventing unrelated candidates from being combined and for ensuring that malformed files do not cause recovery logic to claim unsupported bytes.
+
+Run the complete backend test suite with:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -v
+```
+
+## Synthetic Evaluation
+
+Recoverix uses controlled synthetic evidence scenarios to evaluate recovery behavior.
+
+Example scenario categories include:
+
+- Clean evidence.
+- Deleted artifacts.
+- Fragmented artifacts.
+- Bifragmented artifacts.
+- Corrupted artifacts.
+- Unrecoverable artifacts.
+
+Synthetic generation and ground-truth information are intended for testing and evaluation. Ground truth must remain separate from the production recovery decisions.
+
+Evaluation results should be reported with the command, seed, scenario coverage, and test results used to obtain them. A successful synthetic benchmark does not establish performance on every real-world evidence source.
+
+## Limitations
+
+Recoverix is an evolving prototype, not a validated production forensic platform.
 
 Current limitations include:
 
-- Evidence size is bounded.
-- Reconstruction is limited to supported deterministic cases.
-- Arbitrarily overwritten or genuinely unknowable bytes cannot be recovered.
-- Multiple equally valid reconstruction candidates remain ambiguous.
-- Format-specific reconstruction coverage is incomplete.
-- Confidence scores are prototype heuristics rather than forensic standards.
-- Production deployment would require additional security, storage, authentication, audit controls, scalability, and forensic validation.
+- Evidence processing is subject to configured size limits.
+- Recovery depends on supported formats and deterministic procedures.
+- Arbitrarily overwritten or unknowable bytes cannot be recovered reliably.
+- Some reconstruction candidates may remain ambiguous.
+- Reconstruction capabilities differ across file formats.
+- Confidence thresholds are prototype heuristics, not forensic standards.
+- Synthetic evaluation does not establish general real-world recovery accuracy.
+- Production deployment requires further security hardening, authentication, storage design, audit controls, scalability work, and independent validation.
 
----
+Recoverix should not be treated as a substitute for established forensic procedures or tools.
 
-## 20. Why Recoverix Is Different
+## Design Principles
 
-Traditional recovery can answer:
+### Deterministic First
 
-> "Did I find a file?"
+Recovery decisions must be grounded in evidence and reproducible procedures.
 
-Recoverix aims to answer a deeper set of questions:
+### No Invented Evidence
 
-> "What did we find?"  
-> "Which bytes are actually supported by evidence?"  
-> "Which bytes were reconstructed?"  
-> "What remains missing?"  
-> "Why do we believe this reconstruction is valid?"  
-> "How should an investigator understand and prioritize it?"
+Missing bytes must not be fabricated and represented as original recovered content.
 
-This creates an evidence-oriented recovery workflow rather than simply producing recovered files.
+### Explicit Provenance
 
----
+Recovery results should distinguish verified, reconstructed, and missing information.
 
-## 21. Core Statement
+### Preserve Ambiguity
 
-> **Recoverix does not guess what was lost. It reconstructs only what can be proven, validates the result, and makes the remaining uncertainty explicit.**
+When the available evidence cannot distinguish between valid alternatives, the system should preserve that uncertainty.
+
+### Validate Before Accepting
+
+Candidate reconstructions must pass the applicable validation rules before being accepted.
+
+### Isolate Independent Candidates
+
+Candidates should not be combined solely because they share a format or appear near one another.
+
+### Honest Reporting
+
+The system should communicate its limitations and avoid claiming capabilities that have not been implemented and validated.
+
+## Future Improvements
+
+Potential areas for continued development include:
+
+- Making repeated case-analysis requests idempotent.
+- Expanding benchmark coverage across file formats.
+- Improving evaluation criteria and status-matching checks.
+- Extending format-specific reconstruction capabilities.
+- Strengthening API security and access controls.
+- Improving performance for larger evidence files.
+- Adding more reproducible evaluation scenarios.
+- Expanding documentation and contributor guidance.
+
+These are development directions, not claims that the features are already implemented.
+
+## Core Statement
+
+> Recoverix does not guess what was lost. It reconstructs only what the available evidence supports, validates the result, and makes the remaining uncertainty explicit.
