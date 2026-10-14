@@ -148,11 +148,13 @@ class EvaluationReport:
     @property
     def passed(self) -> bool:
         evaluated_ids = [ae.artifact_id for ae in self.artifact_evaluations]
-        if self.expected_artifact_ids:
+        if self.expected_artifact_ids or self.expected_artifact_count == 0:
             if set(evaluated_ids) != set(self.expected_artifact_ids):
                 return False
             if len(evaluated_ids) != len(self.expected_artifact_ids):
                 return False
+            if not self.expected_artifact_ids:
+                return len(self.forensic_violations) == 0
         elif self.expected_artifact_count > 0:
             if len(set(evaluated_ids)) != self.expected_artifact_count or len(evaluated_ids) != self.expected_artifact_count:
                 return False
@@ -193,7 +195,12 @@ def evaluate_scenario(
         art: Optional[PhysicalArtifactRecord] = None
         if rec.observed_candidate_id and rec.observed_candidate_id in cand_to_art:
             art = cand_to_art[rec.observed_candidate_id]
-        elif len(gt_manifest.artifacts) == 1 and len(observed_manifest.recoveries) == 1:
+        elif (
+            not rec.observed_candidate_id
+            and not observed_manifest.candidates
+            and len(gt_manifest.artifacts) == 1
+            and len(observed_manifest.recoveries) == 1
+        ):
             art = gt_manifest.artifacts[0]
 
         if art is not None:

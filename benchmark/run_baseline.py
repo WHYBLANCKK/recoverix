@@ -656,7 +656,7 @@ def run_baseline_benchmark(
             "scenarios_total": len(gt_manifest.artifacts),
             "scenarios_passed": scenarios_passed,
             "scenarios_failed": scenarios_failed,
-            "overall_passed": report.passed and (scenarios_failed == 0),
+            "overall_passed": report.passed and (scenarios_failed == 0) and (len(gt_manifest.artifacts) > 0),
             "candidate_detection": {
                 "precision": report.candidate_metrics.precision,
                 "recall": report.candidate_metrics.recall,
@@ -760,12 +760,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    run_baseline_benchmark(
+    report = run_baseline_benchmark(
         seed=args.seed,
         output_dir=Path(args.output_dir),
         report_path=Path(args.report_path),
         verbose=not args.quiet,
     )
+    if not report.get("summary", {}).get("overall_passed", False):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
