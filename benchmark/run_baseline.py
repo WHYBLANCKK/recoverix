@@ -656,7 +656,7 @@ def run_baseline_benchmark(
             "scenarios_total": len(gt_manifest.artifacts),
             "scenarios_passed": scenarios_passed,
             "scenarios_failed": scenarios_failed,
-            "overall_passed": report.passed,
+            "overall_passed": report.passed and (scenarios_failed == 0),
             "candidate_detection": {
                 "precision": report.candidate_metrics.precision,
                 "recall": report.candidate_metrics.recall,

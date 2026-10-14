@@ -138,6 +138,8 @@ class EvaluationReport:
 
     artifact_evaluations: List[EvaluationMetrics] = field(default_factory=list)
     forensic_violations: List[str] = field(default_factory=list)
+    expected_artifact_ids: List[str] = field(default_factory=list)
+    expected_artifact_count: int = 0
 
     @property
     def has_false_fully_recovered(self) -> bool:
@@ -145,7 +147,24 @@ class EvaluationReport:
 
     @property
     def passed(self) -> bool:
-        return len(self.forensic_violations) == 0 and not self.has_false_fully_recovered
+        evaluated_ids = [ae.artifact_id for ae in self.artifact_evaluations]
+        if self.expected_artifact_ids:
+            if set(evaluated_ids) != set(self.expected_artifact_ids):
+                return False
+            if len(evaluated_ids) != len(self.expected_artifact_ids):
+                return False
+        elif self.expected_artifact_count > 0:
+            if len(set(evaluated_ids)) != self.expected_artifact_count or len(evaluated_ids) != self.expected_artifact_count:
+                return False
+        elif not self.artifact_evaluations:
+            return self.expected_artifact_count == 0 and len(self.forensic_violations) == 0
+
+        return (
+            len(self.forensic_violations) == 0
+            and not self.has_false_fully_recovered
+            and len(self.artifact_evaluations) > 0
+            and all(ae.status_match for ae in self.artifact_evaluations)
+        )
 
 
 def evaluate_scenario(
@@ -198,4 +217,6 @@ def evaluate_scenario(
         relationship_accuracy=rel_acc,
         artifact_evaluations=artifact_evals,
         forensic_violations=all_violations,
+        expected_artifact_ids=[art.artifact_id for art in gt_manifest.artifacts],
+        expected_artifact_count=len(gt_manifest.artifacts),
     )

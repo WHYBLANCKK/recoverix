@@ -23,6 +23,13 @@ from benchmark.models import (
 )
 from benchmark.expectations import DerivedExpectation
 
+VALID_STATUSES = frozenset({
+    "FULLY_RECOVERED",
+    "PARTIALLY_RECOVERED",
+    "CORRUPTED",
+    "UNRECOVERABLE",
+})
+
 
 def compute_volume_ratio(observed_vol: int, expected_vol: int) -> float:
     """Compute volume accuracy ratio min(obs, exp) / max(obs, exp).
@@ -253,7 +260,11 @@ def compute_evaluation_metrics(
             r_byte_corr = None
 
     # 5. Status match
-    status_match = (recovery.observed_status == expectation.expected_status)
+    status_match = bool(
+        recovery.observed_status in VALID_STATUSES
+        and expectation.expected_status in VALID_STATUSES
+        and recovery.observed_status == expectation.expected_status
+    )
 
     # 6. False FULLY_RECOVERED detection
     is_damaged = (
