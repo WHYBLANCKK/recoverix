@@ -516,13 +516,41 @@ def _recover_contiguous_candidate(
             status_val = eval_res.status.value
             if (not is_complete) and status_val == "FULLY_RECOVERED":
                 status_val = "PARTIALLY_RECOVERED"
-            ver_bytes = eval_res.provenance.verified_bytes
-            rec_byte_cnt = eval_res.provenance.reconstructed_bytes
-            miss_bytes = eval_res.provenance.missing_bytes
-            score_breakdown_dict = asdict(eval_res.score_breakdown)
-            val_details_dict = asdict(val_res)
-            prov_dict = asdict(eval_res.provenance)
-            output_dict = {"recovered_bytes": carved.recovered_bytes.hex()}
+            if status_val == "UNRECOVERABLE":
+                ver_bytes = 0
+                rec_byte_cnt = 0
+                miss_bytes = frag_len
+                output_dict = {"recovered_bytes": ""}
+                eval_res = evaluate_artifact_confidence(
+                    validation_result=val_res,
+                    artifact=None,
+                    actual_verified_bytes=0,
+                    actual_missing_bytes=frag_len,
+                    is_complete=False,
+                )
+                score_breakdown_dict = asdict(eval_res.score_breakdown)
+                val_details_dict = asdict(val_res)
+                prov_dict = asdict(eval_res.provenance)
+                if not damage_regions:
+                    damage_regions.append(
+                        DamageRegion(
+                            region_id="damage-0",
+                            start_offset=cand.offset,
+                            end_offset=frag_end,
+                            length=frag_len,
+                            type="UNRECOVERABLE",
+                            status="UNRECOVERABLE",
+                            affected_fragment_ids=["frag-0"],
+                        )
+                    )
+            else:
+                ver_bytes = eval_res.provenance.verified_bytes
+                rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                miss_bytes = eval_res.provenance.missing_bytes
+                score_breakdown_dict = asdict(eval_res.score_breakdown)
+                val_details_dict = asdict(val_res)
+                prov_dict = asdict(eval_res.provenance)
+                output_dict = {"recovered_bytes": carved.recovered_bytes.hex()}
 
         if fmt in ("txt", "csv", "json") and recon_res.details and "physical_fragments" in recon_res.details:
             phys_frags = recon_res.details["physical_fragments"]
@@ -544,9 +572,18 @@ def _recover_contiguous_candidate(
                     for i, (p_off, p_len) in enumerate(phys_frags)
                 ]
             else:
+                frag_status = (
+                    "VERIFIED"
+                    if status_val == "FULLY_RECOVERED"
+                    else (
+                        "UNRECOVERABLE"
+                        if status_val == "UNRECOVERABLE"
+                        else ("CORRUPTED" if status_val == "CORRUPTED" else "PARTIAL")
+                    )
+                )
                 frag0_updated = frag0.model_copy(
                     update={
-                        "status": "CORRUPTED" if status_val == "CORRUPTED" else frag0.status,
+                        "status": frag_status,
                         "verified_bytes": ver_bytes,
                         "reconstructed_bytes": rec_byte_cnt,
                         "missing_bytes": miss_bytes,
@@ -555,9 +592,18 @@ def _recover_contiguous_candidate(
                 )
                 fragments[0] = frag0_updated
         else:
+            frag_status = (
+                "VERIFIED"
+                if status_val == "FULLY_RECOVERED"
+                else (
+                    "UNRECOVERABLE"
+                    if status_val == "UNRECOVERABLE"
+                    else ("CORRUPTED" if status_val == "CORRUPTED" else "PARTIAL")
+                )
+            )
             frag0_updated = frag0.model_copy(
                 update={
-                    "status": "CORRUPTED" if status_val == "CORRUPTED" else frag0.status,
+                    "status": frag_status,
                     "verified_bytes": ver_bytes,
                     "reconstructed_bytes": rec_byte_cnt,
                     "missing_bytes": miss_bytes,
@@ -621,6 +667,7 @@ def _recover_bifragment_candidate_pair(
     detection_mode: str = "known_file",
     scan_meta: Optional[Dict[str, Any]] = None,
     precomputed_recon: Optional[Any] = None,
+    next_offset: Optional[int] = None,
 ) -> RecoveryRun:
     """Execute traced recovery for a bifragment candidate pair of matching formats."""
     if scan_meta is None:
@@ -713,12 +760,13 @@ def _recover_bifragment_candidate_pair(
         validation_status="PARTIAL",
     )
 
-    frag_b_len = len(content) - cand2.offset
+    frag_b_end = min(next_offset, len(content)) if next_offset is not None else len(content)
+    frag_b_len = frag_b_end - cand2.offset
     frag_b = Fragment(
         fragment_id="frag-1",
         offset=cand2.offset,
         length=frag_b_len,
-        end_offset=len(content),
+        end_offset=frag_b_end,
         status="PARTIAL",
         source="bifragment_b",
         format=fmt,
@@ -739,7 +787,7 @@ def _recover_bifragment_candidate_pair(
 
     emit_event(
         "FRAGMENT_IDENTIFIED",
-        f"Identified bifragment frag-0 [{cand.offset}..{frag_a_end}] and frag-1 [{cand2.offset}..{len(content)}]",
+        f"Identified bifragment frag-0 [{cand.offset}..{frag_a_end}] and frag-1 [{cand2.offset}..{frag_b_end}]",
         relevant_fragment_ids=["frag-0", "frag-1"],
     )
 
@@ -778,7 +826,7 @@ def _recover_bifragment_candidate_pair(
     output_dict: Optional[Dict[str, Any]] = None
 
     try:
-        frag_b_bytes = content[cand2.offset:]
+        frag_b_bytes = content[cand2.offset:frag_b_end]
         if precomputed_recon is not None:
             recon_res = precomputed_recon
         else:
@@ -1046,102 +1094,136 @@ def _recover_standalone_candidate(
 
     elif fmt == "pdf":
         reconstruction_attempted = True
-        raw_bytes = content[cand.offset:]
+        raw_bytes = content[cand.offset:search_end]
         val_initial = validator(raw_bytes)
 
         shuffled_recovered = False
         if cand.offset > 0 and b"%%EOF" in content[:cand.offset]:
-            candidate_unshuffled = content[cand.offset:] + content[:cand.offset]
-            val_unshuffled = validator(candidate_unshuffled)
-            if not val_unshuffled.valid and (b"xref" not in candidate_unshuffled or any("xref" in e.lower() for e in val_unshuffled.errors)):
-                rebuilt_unshuffled, xref_ok = reconstruct_pdf_xref(candidate_unshuffled)
-                if xref_ok:
-                    candidate_unshuffled = rebuilt_unshuffled
-                    val_unshuffled = validator(candidate_unshuffled)
+            trailer_slice = content[:cand.offset]
+            eof_pos = trailer_slice.rfind(PDF_TRAILER_SIGNATURE)
+            if eof_pos != -1:
+                eof_end = eof_pos + len(PDF_TRAILER_SIGNATURE)
+                if eof_end < cand.offset and trailer_slice[eof_end:eof_end + 2] == b"\r\n":
+                    eof_end += 2
+                elif eof_end < cand.offset and trailer_slice[eof_end:eof_end + 1] in (b"\n", b"\r"):
+                    eof_end += 1
 
-            if val_unshuffled.valid:
-                shuffled_recovered = True
-                emit_event(
-                    "RECONSTRUCTION_STARTED",
-                    "Detected shuffled PDF fragments; executing deterministic un-shuffle reconstruction",
-                )
-                emit_event(
-                    "RECONSTRUCTION_COMPLETED",
-                    "Shuffled PDF fragments reordered and structurally validated",
-                )
-                header_frag_len = len(content) - cand.offset
-                trailer_frag_len = cand.offset
+                trailer_bytes = trailer_slice[:eof_end]
+                header_bytes = content[cand.offset:search_end]
+                gap_size = cand.offset - eof_end
 
-                f_head = Fragment(
-                    fragment_id="frag-0",
-                    offset=cand.offset,
-                    length=header_frag_len,
-                    end_offset=len(content),
-                    status="VERIFIED",
-                    source="shuffled_header",
-                    format="pdf",
-                    verified_bytes=header_frag_len,
-                    reconstructed_bytes=0,
-                    missing_bytes=0,
-                    validation_status="PASSED",
-                )
-                f_tail = Fragment(
-                    fragment_id="frag-1",
-                    offset=0,
-                    length=trailer_frag_len,
-                    end_offset=cand.offset,
-                    status="VERIFIED",
-                    source="shuffled_trailer",
-                    format="pdf",
-                    verified_bytes=trailer_frag_len,
-                    reconstructed_bytes=0,
-                    missing_bytes=0,
-                    validation_status="PASSED",
-                )
-                rel = FragmentRelationship(
-                    source_fragment_id="frag-0",
-                    target_fragment_id="frag-1",
-                    relationship_type="SHUFFLED_SEQUENCE",
-                    details={"unshuffle_offset": cand.offset},
-                )
-                f_head = f_head.model_copy(update={"relationships": [rel]})
-                fragments.clear()
-                fragments.extend([f_head, f_tail])
+                candidate_unshuffled = header_bytes + trailer_bytes
+                val_unshuffled = validator(candidate_unshuffled)
+                if not val_unshuffled.valid and (b"xref" not in candidate_unshuffled or any("xref" in e.lower() for e in val_unshuffled.errors)):
+                    rebuilt_unshuffled, xref_ok = reconstruct_pdf_xref(candidate_unshuffled)
+                    if xref_ok:
+                        candidate_unshuffled = rebuilt_unshuffled
+                        val_unshuffled = validator(candidate_unshuffled)
 
-                step0 = ReconstructionStep(
-                    step_id="step-0",
-                    method="FRAGMENT_UNSHUFFLE",
-                    input_fragment_ids=["frag-0", "frag-1"],
-                    gap_start=None,
-                    gap_end=None,
-                    gap_size=None,
-                    result="SUCCESS",
-                    verified_bytes=len(content),
-                    reconstructed_bytes=0,
-                    missing_bytes=0,
-                    validation_status="PASSED",
-                    confidence=100.0,
-                )
-                reconstruction_steps.append(step0)
+                if val_unshuffled.valid:
+                    shuffled_recovered = True
+                    emit_event(
+                        "RECONSTRUCTION_STARTED",
+                        "Detected shuffled PDF fragments; executing deterministic un-shuffle reconstruction",
+                    )
+                    emit_event(
+                        "RECONSTRUCTION_COMPLETED",
+                        "Shuffled PDF fragments reordered and structurally validated",
+                    )
+                    header_frag_len = len(header_bytes)
+                    trailer_frag_len = len(trailer_bytes)
+                    actual_ver = header_frag_len + trailer_frag_len
+                    actual_miss = gap_size
 
-                eval_res = evaluate_artifact_confidence(
-                    validation_result=val_unshuffled,
-                    artifact=candidate_unshuffled,
-                    actual_verified_bytes=len(content),
-                    actual_reconstructed_bytes=0,
-                    actual_missing_bytes=0,
-                )
-                status_val = eval_res.status.value
-                ver_bytes = eval_res.provenance.verified_bytes
-                rec_byte_cnt = eval_res.provenance.reconstructed_bytes
-                miss_bytes = eval_res.provenance.missing_bytes
-                total_input_bytes = len(content)
-                score_breakdown_dict = asdict(eval_res.score_breakdown)
-                val_details_dict = asdict(val_unshuffled)
-                prov_dict = asdict(eval_res.provenance)
-                prov_dict["evidence_size"] = len(content)
-                prov_dict["reconstruction_method"] = "FRAGMENT_UNSHUFFLE"
-                output_dict = {"recovered_bytes": candidate_unshuffled.hex()}
+                    f_head = Fragment(
+                        fragment_id="frag-0",
+                        offset=cand.offset,
+                        length=header_frag_len,
+                        end_offset=cand.offset + header_frag_len,
+                        status="VERIFIED",
+                        source="shuffled_header",
+                        format="pdf",
+                        verified_bytes=header_frag_len,
+                        reconstructed_bytes=0,
+                        missing_bytes=0,
+                        validation_status="PASSED",
+                    )
+                    f_tail = Fragment(
+                        fragment_id="frag-1",
+                        offset=0,
+                        length=trailer_frag_len,
+                        end_offset=eof_end,
+                        status="VERIFIED",
+                        source="shuffled_trailer",
+                        format="pdf",
+                        verified_bytes=trailer_frag_len,
+                        reconstructed_bytes=0,
+                        missing_bytes=0,
+                        validation_status="PASSED",
+                    )
+                    rel = FragmentRelationship(
+                        source_fragment_id="frag-0",
+                        target_fragment_id="frag-1",
+                        relationship_type="SHUFFLED_SEQUENCE",
+                        details={"unshuffle_offset": cand.offset, "gap_size": gap_size},
+                    )
+                    f_head = f_head.model_copy(update={"relationships": [rel]})
+                    fragments.clear()
+                    fragments.extend([f_head, f_tail])
+
+                    if gap_size > 0:
+                        damage_regions.append(
+                            DamageRegion(
+                                region_id="damage-gap",
+                                start_offset=eof_end,
+                                end_offset=cand.offset,
+                                length=gap_size,
+                                type="MISSING",
+                                status="UNRECOVERABLE",
+                                affected_fragment_ids=["frag-0", "frag-1"],
+                            )
+                        )
+                        emit_event(
+                            "DAMAGE_DETECTED",
+                            f"Detected missing gap of {gap_size} bytes between shuffled fragments at {eof_end}..{cand.offset}",
+                            relevant_fragment_ids=["frag-0", "frag-1"],
+                        )
+
+                    step0 = ReconstructionStep(
+                        step_id="step-0",
+                        method="FRAGMENT_UNSHUFFLE",
+                        input_fragment_ids=["frag-0", "frag-1"],
+                        gap_start=eof_end if gap_size > 0 else None,
+                        gap_end=cand.offset if gap_size > 0 else None,
+                        gap_size=gap_size if gap_size > 0 else None,
+                        result="SUCCESS",
+                        verified_bytes=actual_ver,
+                        reconstructed_bytes=0,
+                        missing_bytes=actual_miss,
+                        validation_status="PASSED",
+                        confidence=100.0 if gap_size == 0 else 80.0,
+                    )
+                    reconstruction_steps.append(step0)
+
+                    eval_res = evaluate_artifact_confidence(
+                        validation_result=val_unshuffled,
+                        artifact=candidate_unshuffled,
+                        actual_verified_bytes=actual_ver,
+                        actual_reconstructed_bytes=0,
+                        actual_missing_bytes=actual_miss,
+                        is_complete=(gap_size == 0),
+                    )
+                    status_val = eval_res.status.value
+                    ver_bytes = eval_res.provenance.verified_bytes
+                    rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                    miss_bytes = eval_res.provenance.missing_bytes
+                    total_input_bytes = actual_ver + actual_miss
+                    score_breakdown_dict = asdict(eval_res.score_breakdown)
+                    val_details_dict = asdict(val_unshuffled)
+                    prov_dict = asdict(eval_res.provenance)
+                    prov_dict["evidence_size"] = total_input_bytes
+                    prov_dict["reconstruction_method"] = "FRAGMENT_UNSHUFFLE"
+                    output_dict = {"recovered_bytes": candidate_unshuffled.hex()}
 
         if not shuffled_recovered and (not val_initial.valid and b"xref" not in raw_bytes or any("xref" in e.lower() for e in val_initial.errors)):
             emit_event(
@@ -1225,15 +1307,21 @@ def _recover_standalone_candidate(
                 damage_regions[0] = dam0.model_copy(update={"status": "RECONSTRUCTED"})
             else:
                 val_res = val_initial
-                eval_res = evaluate_artifact_confidence(val_res)
-                status_val = eval_res.status.value
-                ver_bytes = eval_res.provenance.verified_bytes
-                rec_byte_cnt = eval_res.provenance.reconstructed_bytes
-                miss_bytes = eval_res.provenance.missing_bytes
+                status_val = "UNRECOVERABLE"
+                ver_bytes = 0
+                rec_byte_cnt = 0
+                miss_bytes = search_len
+                eval_res = evaluate_artifact_confidence(
+                    validation_result=val_res,
+                    artifact=None,
+                    actual_verified_bytes=0,
+                    actual_missing_bytes=search_len,
+                    is_complete=False,
+                )
                 score_breakdown_dict = asdict(eval_res.score_breakdown)
                 val_details_dict = asdict(val_res)
                 prov_dict = asdict(eval_res.provenance)
-                output_dict = {"recovered_bytes": raw_bytes.hex()}
+                output_dict = {"recovered_bytes": ""}
 
     if not reconstruction_attempted and status_val == "UNRECOVERABLE":
         try:
@@ -2211,11 +2299,13 @@ def execute_traced_recoveries(
             should_pair = False
             precomputed_recon = None
             if is_same_format_unbounded and cand2 is not None:
+                cand3 = candidates_to_process[idx + 2] if idx + 2 < len(candidates_to_process) else None
+                next_cand_offset = cand3.offset if cand3 is not None else None
                 fmt = cand.format
                 validator = VALIDATORS.get(fmt, lambda data: validate_artifact(fmt, data))
                 raw_between = content[cand.offset:cand2.offset]
                 frag_a_bytes = raw_between.rstrip(b"\x00") or raw_between
-                frag_b_bytes = content[cand2.offset:]
+                frag_b_bytes = content[cand2.offset:next_cand_offset] if next_cand_offset is not None else content[cand2.offset:]
 
                 is_explicit_bifrag = (
                     any(term in filename.lower() for term in ("bifrag", "split"))
@@ -2247,6 +2337,7 @@ def execute_traced_recoveries(
                     detection_mode=detection_mode,
                     scan_meta=scan_meta,
                     precomputed_recon=precomputed_recon,
+                    next_offset=next_cand_offset,
                 )
                 runs.append(pair_run)
                 idx += 2

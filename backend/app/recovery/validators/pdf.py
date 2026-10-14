@@ -101,6 +101,8 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
     end_pos = raw_bytes.rfind(PDF_TRAILER_SIGNATURE)
     if end_pos == -1:
         errors.append(f"Missing PDF trailer signature: {PDF_TRAILER_SIGNATURE.decode('ascii')}")
+    else:
+        details["end_offset"] = end_pos + len(PDF_TRAILER_SIGNATURE)
 
     # 4. Marker ordering check
     if start_pos != -1 and end_pos != -1:

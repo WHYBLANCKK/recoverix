@@ -85,7 +85,7 @@ def assess_artifact_completeness(
 
         # Self-terminating formats in blind mode require verified start & end markers
         if clean_fmt == "pdf":
-            return content.startswith(PDF_HEADER_SIGNATURE) and PDF_TRAILER_SIGNATURE in content
+            return content.startswith(PDF_HEADER_SIGNATURE) and content.rstrip(b"\r\n\t ").endswith(PDF_TRAILER_SIGNATURE)
         if clean_fmt == "png":
             return content.startswith(PNG_SIGNATURE) and b"IEND" in content
         if clean_fmt == "jpeg":
@@ -163,7 +163,7 @@ def assess_artifact_completeness(
         )
 
     if clean_fmt == "pdf":
-        return PDF_HEADER_SIGNATURE in content and PDF_TRAILER_SIGNATURE in content
+        return PDF_HEADER_SIGNATURE in content and content.rstrip(b"\r\n\t ").endswith(PDF_TRAILER_SIGNATURE)
 
     if clean_fmt == "png":
         return content.startswith(PNG_SIGNATURE) and b"IEND" in content
