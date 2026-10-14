@@ -149,6 +149,9 @@ def analyze_case(case_id: str) -> AnalysisSummaryResponse:
             art_resp.metadata["run_index"] = idx
 
             store.add_artifact(art_resp)
+            store.link_artifact_to_run(artifact_id, run.run_id)
+            run.artifact_id = artifact_id
+            store.add_recovery_run(run)
             payload = extract_recovered_bytes(run)
             store.store_artifact_bytes(artifact_id, payload)
             recovered_artifacts.append(art_resp)

@@ -145,6 +145,7 @@ class ArtifactRecord(BaseModel):
             "damage_regions": self.damage_regions,
             "reconstruction_steps": self.reconstruction_steps,
             "total_input_bytes": self.total_input_bytes,
+            "provenance": self.provenance,
         }
 
     @classmethod
@@ -207,7 +208,7 @@ class ArtifactRecord(BaseModel):
             download_url=meta.get("download_url"),
             content_preview=meta.get("content_preview"),
             score_breakdown=dict(meta.get("score_breakdown") or {}),
-            provenance={"detection_mode": "known_file"},
+            provenance=dict(meta.get("provenance") or {"detection_mode": "known_file"}),
             validation_details=dict(meta.get("validation_details") or {}),
             fragments=meta.get("fragments"),
             damage_regions=meta.get("damage_regions"),

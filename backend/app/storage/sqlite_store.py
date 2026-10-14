@@ -136,8 +136,11 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         json.loads(row["output_json"]) if row["output_json"] else None
     )
 
+    case_id = row["case_id"] if ("case_id" in row.keys() and row["case_id"]) else None
+
     return RecoveryRun(
         run_id=row["run_id"],
+        case_id=case_id,
         artifact_id=row["artifact_id"],
         candidate_id=row["candidate_id"],
         filename=row["filename"],
@@ -584,6 +587,13 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 """,
                 (record.artifact_id, db_run_id),
             )
+            cursor.execute(
+                """
+                UPDATE recovery_runs SET artifact_id = ?
+                WHERE run_id = ? AND (artifact_id IS NULL OR artifact_id = '');
+                """,
+                (record.artifact_id, db_run_id),
+            )
 
         return record
 
@@ -748,6 +758,12 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         evt_json = json.dumps([e.model_dump(mode="json") for e in run.events])
 
         with self._engine.transaction() as cursor:
+            case_id_val = run.case_id
+            if case_id_val:
+                cursor.execute("SELECT 1 FROM cases WHERE case_id = ?;", (case_id_val,))
+                if cursor.fetchone() is None:
+                    case_id_val = None
+
             cursor.execute(
                 """
                 INSERT INTO recovery_runs (
@@ -764,9 +780,9 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                     ?, ?, ?, ?
                 )
                 ON CONFLICT(run_id) DO UPDATE SET
-                    case_id = excluded.case_id,
-                    artifact_id = excluded.artifact_id,
-                    candidate_id = excluded.candidate_id,
+                    case_id = COALESCE(excluded.case_id, recovery_runs.case_id),
+                    artifact_id = COALESCE(excluded.artifact_id, recovery_runs.artifact_id),
+                    candidate_id = COALESCE(excluded.candidate_id, recovery_runs.candidate_id),
                     filename = excluded.filename,
                     format = excluded.format,
                     status = excluded.status,
@@ -788,7 +804,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 """,
                 (
                     run.run_id,
-                    None,
+                    case_id_val,
                     run.artifact_id,
                     run.candidate_id,
                     run.filename,
@@ -858,6 +874,19 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             rows = cursor.fetchall()
             return [_row_to_recovery_run(r) for r in rows]
 
+    def get_case_recovery_runs(self, case_id: str) -> Optional[List[RecoveryRun]]:
+        """Retrieve all RecoveryRun instances associated with a case_id, or None if case not found."""
+        with self._engine.transaction() as cursor:
+            cursor.execute("SELECT 1 FROM cases WHERE case_id = ?;", (case_id,))
+            if cursor.fetchone() is None:
+                return None
+            cursor.execute(
+                "SELECT * FROM recovery_runs WHERE case_id = ? ORDER BY rowid ASC;",
+                (case_id,),
+            )
+            rows = cursor.fetchall()
+            return [_row_to_recovery_run(r) for r in rows]
+
     def _link_artifact_to_run_on_cursor(
         self, cursor: sqlite3.Cursor, artifact_id: str, run_id: str
     ) -> None:
@@ -880,6 +909,12 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 UPDATE artifacts SET run_id = ? WHERE artifact_id = ?;
                 """,
                 (run_id, artifact_id),
+            )
+            cursor.execute(
+                """
+                UPDATE recovery_runs SET artifact_id = ? WHERE run_id = ?;
+                """,
+                (artifact_id, run_id),
             )
         else:
             # If run_id is not yet in recovery_runs, update artifacts metadata_json

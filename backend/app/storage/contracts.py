@@ -70,6 +70,10 @@ class CaseRepository(Protocol):
         """Retrieve evidence chunks for a case."""
         ...
 
+    def get_case_recovery_runs(self, case_id: str) -> Optional[List[RecoveryRun]]:
+        """Retrieve all RecoveryRun instances associated with a case, or None if case not found."""
+        ...
+
 
 @runtime_checkable
 class ArtifactRepository(Protocol):
@@ -126,6 +130,10 @@ class RecoveryRunRepository(Protocol):
 
     def list_recovery_runs(self) -> List[RecoveryRun]:
         """List all stored RecoveryRun instances."""
+        ...
+
+    def get_case_recovery_runs(self, case_id: str) -> Optional[List[RecoveryRun]]:
+        """Retrieve all RecoveryRun instances associated with a case_id, or None if case not found."""
         ...
 
     def link_artifact_to_run(self, artifact_id: str, run_id: str) -> None:

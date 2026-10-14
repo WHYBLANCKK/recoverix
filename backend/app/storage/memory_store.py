@@ -197,6 +197,10 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             # Establish artifact_id -> run_id linkage if run_id is present
             if record.run_id:
                 self._artifact_runs[artifact.artifact_id] = record.run_id
+                if record.run_id in self._recovery_runs:
+                    run = self._recovery_runs[record.run_id]
+                    if not run.artifact_id:
+                        run.artifact_id = artifact.artifact_id
 
             self._cases[artifact.case_id]["artifact_count"] = len(self._case_artifacts[artifact.case_id])
             return artifact
@@ -212,6 +216,10 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
             if record.run_id:
                 self._artifact_runs[record.artifact_id] = record.run_id
+                if record.run_id in self._recovery_runs:
+                    run = self._recovery_runs[record.run_id]
+                    if not run.artifact_id:
+                        run.artifact_id = record.artifact_id
 
             return record
 
@@ -297,6 +305,12 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
     def add_recovery_run(self, run: RecoveryRun) -> RecoveryRun:
         """Store a RecoveryRun model in memory (persisted exactly once)."""
         with self._lock:
+            existing = self._recovery_runs.get(run.run_id)
+            if existing:
+                if not run.case_id and existing.case_id:
+                    run.case_id = existing.case_id
+                if not run.artifact_id and existing.artifact_id:
+                    run.artifact_id = existing.artifact_id
             self._recovery_runs[run.run_id] = run
             if run.artifact_id:
                 self._artifact_runs[run.artifact_id] = run.run_id
@@ -312,10 +326,19 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         with self._lock:
             return list(self._recovery_runs.values())
 
+    def get_case_recovery_runs(self, case_id: str) -> Optional[List[RecoveryRun]]:
+        """Retrieve all RecoveryRun instances associated with a case_id, or None if case not found."""
+        with self._lock:
+            if case_id not in self._cases:
+                return None
+            return [run for run in self._recovery_runs.values() if run.case_id == case_id]
+
     def link_artifact_to_run(self, artifact_id: str, run_id: str) -> None:
         """Establish relationship between an artifact and a RecoveryRun."""
         with self._lock:
             self._artifact_runs[artifact_id] = run_id
+            if run_id in self._recovery_runs:
+                self._recovery_runs[run_id].artifact_id = artifact_id
 
     def get_recovery_run_by_artifact(self, artifact_id: str) -> Optional[RecoveryRun]:
         """Retrieve RecoveryRun associated with an artifact_id."""

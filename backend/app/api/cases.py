@@ -4,10 +4,11 @@ cases.py — Cases API router for case creation, retrieval, and evidence ingesti
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Response, status
 
 from backend.app.models.case import CaseCreate, CaseResponse
+from backend.app.models.recovery_run import RecoveryRun
 from backend.app.store import store, MAX_EVIDENCE_SIZE
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -44,6 +45,18 @@ def get_case(case_id: str) -> CaseResponse:
             detail=f"Case '{case_id}' not found",
         )
     return case_res
+
+
+@router.get("/{case_id}/runs", response_model=List[RecoveryRun], status_code=status.HTTP_200_OK)
+def get_case_runs(case_id: str) -> List[RecoveryRun]:
+    """Retrieve all canonical recovery execution runs for a specific forensic case."""
+    runs = store.get_case_recovery_runs(case_id)
+    if runs is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Case '{case_id}' not found",
+        )
+    return runs
 
 
 @router.post("/{case_id}/evidence", response_model=CaseResponse, status_code=status.HTTP_200_OK)

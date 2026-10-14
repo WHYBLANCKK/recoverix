@@ -42,6 +42,7 @@ class FileRecoveryResponse(BaseModel):
     damage_regions: Optional[List[Dict[str, Any]]] = None
     reconstruction_steps: Optional[List[Dict[str, Any]]] = None
     total_input_bytes: Optional[int] = None
+    provenance: Optional[Dict[str, Any]] = None
 
 
 router = APIRouter(tags=["file_recovery"])
@@ -132,6 +133,7 @@ async def recover_single_file(file: UploadFile = File(...)) -> FileRecoveryRespo
         "damage_regions": [d.model_dump() for d in recovery_run.damage_regions],
         "reconstruction_steps": [s.model_dump() for s in recovery_run.reconstruction_steps],
         "total_input_bytes": recovery_run.total_input_bytes,
+        "provenance": recovery_run.provenance,
     }
 
     store.store_recovered_file(file_id, meta_dict, (bytes.fromhex(recovery_run.output.get("recovered_bytes", "")) if recovery_run.output else b""))

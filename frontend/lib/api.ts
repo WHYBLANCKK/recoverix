@@ -722,6 +722,18 @@ export async function fetchRecoveryRuns(): Promise<any[]> {
   return [];
 }
 
+export async function fetchCaseRecoveryRuns(caseId: string): Promise<any[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/cases/${caseId}/runs`, { cache: 'no-store' });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn("Failed to fetch case recovery runs", e);
+  }
+  return [];
+}
+
 export function generateLocalGroundedExplanation(
   fileId: string,
   facts?: Record<string, any>

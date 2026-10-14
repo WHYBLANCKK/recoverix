@@ -166,6 +166,7 @@ export interface SingleFileRecoveryResult {
   damage_regions?: DamageRegion[];
   reconstruction_steps?: ReconstructionStep[];
   total_input_bytes?: number;
+  provenance?: Record<string, any>;
   context?: InvestigationContext;
 }
 
