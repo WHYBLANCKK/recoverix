@@ -107,6 +107,10 @@ class ArtifactRepository(Protocol):
         """Retrieve raw recovered bytes for an artifact."""
         ...
 
+    def delete_artifact(self, artifact_id: str) -> bool:
+        """Delete an artifact by artifact_id. Returns True if deleted, False if not found."""
+        ...
+
 
 @runtime_checkable
 class RecoveryRunRepository(Protocol):

@@ -251,6 +251,24 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             if record is not None:
                 record.ai_summary = ai_summary
 
+    def delete_artifact(self, artifact_id: str) -> bool:
+        """Delete an artifact and its associated blobs and linkages.
+
+        Returns True if deleted, False if not found.
+        """
+        with self._lock:
+            if artifact_id not in self._artifacts:
+                return False
+            rec = self._artifacts.pop(artifact_id)
+            if rec.case_id and rec.case_id in self._case_artifacts:
+                if artifact_id in self._case_artifacts[rec.case_id]:
+                    self._case_artifacts[rec.case_id].remove(artifact_id)
+                if rec.case_id in self._cases:
+                    self._cases[rec.case_id]["artifact_count"] = len(self._case_artifacts[rec.case_id])
+            self._artifact_runs.pop(artifact_id, None)
+            self._artifact_blobs.delete(artifact_id)
+            return True
+
     # ── Pipeline B Harmonized Methods ────────────────────────────────────
 
     def store_recovered_file(self, file_id: str, metadata: dict, content: bytes) -> dict:

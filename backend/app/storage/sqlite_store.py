@@ -693,6 +693,20 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 (ai_summary, artifact_id),
             )
 
+    def delete_artifact(self, artifact_id: str) -> bool:
+        """Delete an artifact and its associated blobs and linkages.
+
+        Returns True if deleted, False if not found.
+        """
+        with self._engine.transaction() as cursor:
+            cursor.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?;", (artifact_id,))
+            if cursor.fetchone() is None:
+                return False
+            cursor.execute("DELETE FROM artifact_runs WHERE artifact_id = ?;", (artifact_id,))
+            cursor.execute("DELETE FROM artifacts WHERE artifact_id = ?;", (artifact_id,))
+        self._blobs.delete(artifact_id)
+        return True
+
     # ── Pipeline B Harmonized Methods ────────────────────────────────────
 
     def store_recovered_file(self, file_id: str, metadata: dict, content: bytes) -> dict:

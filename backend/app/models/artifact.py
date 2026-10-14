@@ -151,10 +151,18 @@ class ArtifactRecord(BaseModel):
     def from_artifact_response(cls, art: ArtifactResponse) -> ArtifactRecord:
         """Construct internal ArtifactRecord from API ArtifactResponse."""
         run_id = art.metadata.get("run_id") if art.metadata else None
+        orig_fn = (
+            art.metadata.get("original_filename")
+            or art.metadata.get("evidence_filename")
+            or art.metadata.get("filename")
+            if art.metadata
+            else None
+        )
         return cls(
             artifact_id=art.artifact_id,
             case_id=art.case_id,
             run_id=run_id,
+            original_filename=orig_fn,
             format=art.format,
             status=art.status,
             confidence_score=float(art.confidence_score),
