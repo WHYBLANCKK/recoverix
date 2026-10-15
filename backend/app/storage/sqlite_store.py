@@ -286,7 +286,9 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             engine = SqliteEngine(db_path=engine)
         self._engine = engine
         self._engine.initialize()
-        self._blobs = SqliteBlobStore(self._engine)
+        self._evidence_blobs = SqliteBlobStore(self._engine, namespace="evidence:")
+        self._artifact_blobs = SqliteBlobStore(self._engine, namespace="artifact:")
+        self._blobs = self._artifact_blobs
 
     def close(self) -> None:
         """Close the underlying SQLite engine and release resources."""
@@ -301,7 +303,9 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             engine = SqliteEngine(db_path=engine)
         self._engine = engine
         self._engine.initialize()
-        self._blobs = SqliteBlobStore(self._engine)
+        self._evidence_blobs = SqliteBlobStore(self._engine, namespace="evidence:")
+        self._artifact_blobs = SqliteBlobStore(self._engine, namespace="artifact:")
+        self._blobs = self._artifact_blobs
 
     # ── Subsystem Accessors ──────────────────────────────────────────────
 
@@ -323,12 +327,12 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
     @property
     def evidence_blobs(self) -> BlobStore:
         """Evidence raw byte blob store."""
-        return self._blobs
+        return self._evidence_blobs
 
     @property
     def artifact_blobs(self) -> BlobStore:
         """Recovered artifact raw byte blob store."""
-        return self._blobs
+        return self._artifact_blobs
 
     # ── Lifecycle / Maintenance ──────────────────────────────────────────
 
@@ -533,14 +537,14 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                     size_bytes = excluded.size_bytes,
                     created_at = excluded.created_at;
                 """,
-                (case_id, sqlite3.Binary(raw_bytes), len(raw_bytes), uploaded_at),
+                (self._evidence_blobs._make_key(case_id), sqlite3.Binary(raw_bytes), len(raw_bytes), uploaded_at),
             )
 
         return meta
 
     def get_evidence_bytes(self, case_id: str) -> Optional[bytes]:
         """Get uploaded evidence raw bytes for a case from evidence BlobStore."""
-        return self._blobs.get(case_id)
+        return self._evidence_blobs.get(case_id)
 
     def get_evidence_chunks(self, case_id: str) -> Optional[List[Chunk]]:
         """Get uploaded evidence chunks for a case in sequential order."""
@@ -784,7 +788,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 size_bytes = excluded.size_bytes,
                 created_at = excluded.created_at;
             """,
-            (artifact_id, sqlite3.Binary(raw_bytes), len(raw_bytes), datetime.now(timezone.utc).isoformat()),
+            (self._artifact_blobs._make_key(artifact_id), sqlite3.Binary(raw_bytes), len(raw_bytes), datetime.now(timezone.utc).isoformat()),
         )
 
     def store_artifact_bytes(
@@ -794,11 +798,11 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         if cursor is not None:
             self._store_artifact_bytes_on_cursor(cursor, artifact_id, content)
         else:
-            self._blobs.put(artifact_id, content)
+            self._artifact_blobs.put(artifact_id, content)
 
     def get_artifact_bytes(self, artifact_id: str) -> Optional[bytes]:
         """Get raw bytes of a recovered artifact by artifact_id from artifact BlobStore."""
-        return self._blobs.get(artifact_id)
+        return self._artifact_blobs.get(artifact_id)
 
     def update_artifact_ai_summary(self, artifact_id: str, ai_summary: str) -> None:
         """Update cached AI summary on an artifact record."""
@@ -811,7 +815,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             )
 
     def delete_artifact(self, artifact_id: str) -> bool:
-        """Delete an artifact and its associated blobs and linkages.
+        """Delete an artifact and its associated blobs and linkages atomically.
 
         Returns True if deleted, False if not found.
         """
@@ -821,7 +825,8 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 return False
             cursor.execute("DELETE FROM artifact_runs WHERE artifact_id = ?;", (artifact_id,))
             cursor.execute("DELETE FROM artifacts WHERE artifact_id = ?;", (artifact_id,))
-        self._blobs.delete(artifact_id)
+            cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (self._artifact_blobs._make_key(artifact_id),))
+            cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (artifact_id,))
         return True
 
     # ── Pipeline B Harmonized Methods ────────────────────────────────────
