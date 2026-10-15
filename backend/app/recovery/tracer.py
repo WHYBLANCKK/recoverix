@@ -168,15 +168,16 @@ def _resolve_damage_region_status(raw_status: Optional[str], recon_success: bool
       otherwise 'UNRECOVERABLE'.
     - Known terminal statuses ('RECONSTRUCTED', 'UNRECOVERABLE', 'UNRESOLVED', 'DETECTED'):
       preserved as declared.
-    - Missing, absent, or unrecognized status values: handled deliberately by falling back
-      to 'RECONSTRUCTED' if reconstruction succeeded, else 'UNRECOVERABLE'.
-      Arbitrary invalid status strings are never silently passed to DamageRegion.
+    - Missing, absent, or unrecognized status values: conservatively default to
+      'UNRECOVERABLE'. Artifact-level reconstruction success does not prove that an
+      unattributed damage region was recovered. Arbitrary invalid status strings
+      are never silently passed to DamageRegion.
     """
     if raw_status == "RECONSTRUCTABLE":
         return "RECONSTRUCTED" if recon_success else "UNRECOVERABLE"
     if raw_status in _VALID_DAMAGE_STATUSES:
         return raw_status
-    return "RECONSTRUCTED" if recon_success else "UNRECOVERABLE"
+    return "UNRECOVERABLE"
 
 
 def _finalize_recovery_run(

@@ -39,6 +39,8 @@ from benchmark.json_benchmark import (
     build_truncated_closable_content_loss_scenario,
     build_truncated_incomplete_scenario,
     build_unrecoverable_noise_scenario,
+    build_json_with_binary_noise_scenario,
+    build_two_independent_json_scenario,
     evaluate_json_scenario,
     run_json_benchmark,
 )
@@ -346,9 +348,9 @@ def test_13_json_benchmark_runner():
     report = run_json_benchmark(seed=42, verbose=False)
 
     summary = report["summary"]
-    assert summary["scenarios_total"] == 5
+    assert summary["scenarios_total"] == 7
     assert summary["marker_free_verified"] is True
-    assert len(report["scenarios"]) == 5
+    assert len(report["scenarios"]) == 7
 
     scenario_ids = [s["scenario_id"] for s in report["scenarios"]]
     assert scenario_ids == [
@@ -357,6 +359,8 @@ def test_13_json_benchmark_runner():
         "json-truncated-closable-content-loss",
         "json-truncated-incomplete",
         "json-unrecoverable-noise",
+        "json-with-binary-noise",
+        "json-multi-candidate-independent",
     ]
 
     # Clean scenario must pass
@@ -939,3 +943,149 @@ def test_28_evaluator_idempotence_and_non_mutation():
     # Underlying manifest objects were not mutated
     assert obs_manifest.recoveries[0].verified_segments[0].original_start is None
     assert obs_manifest.recoveries[0].reconstructed_segments[0].original_start is None
+
+
+# ── TEST 29: MULTI-CANDIDATE JSON WITH BINARY NOISE ───────────────────────
+
+def test_29_multi_candidate_json_with_binary_noise():
+    """Scenario E: Candidate boundary isolates JSON from trailing high-entropy noise."""
+    gt_manifest, evidence_bytes = build_json_with_binary_noise_scenario(seed=42)
+    obs_manifest = run_pipeline_and_observe(gt_manifest.evidence_buffer_id, evidence_bytes)
+
+    # Candidate boundary must stop at the closing '}', excluding trailing noise
+    assert len(obs_manifest.candidates) == 1
+    cand = obs_manifest.candidates[0]
+    art = gt_manifest.artifacts[0]
+    assert cand.offset == art.header_evidence_offset
+    assert cand.estimated_end_offset == cand.offset + art.original_size_bytes
+
+    report = evaluate_scenario(gt_manifest, obs_manifest)
+    assert report.passed is True
+    assert len(report.artifact_evaluations) == 1
+    ae = report.artifact_evaluations[0]
+    assert ae.expected_status == "FULLY_RECOVERED"
+    assert ae.observed_status == "FULLY_RECOVERED"
+    assert ae.whole_payload_hash_match is True
+    assert ae.v_volume_accuracy == 1.0
+    assert ae.r_volume_accuracy == 1.0
+    assert ae.m_volume_accuracy == 1.0
+    assert len(report.forensic_violations) == 0
+
+
+# ── TEST 30: TWO INDEPENDENT JSON DOCUMENTS SEPARATED BY NOISE ────────────
+
+def test_30_two_independent_json_documents_separated_by_noise():
+    """Scenario F: Multi-candidate discovery and independent recovery without cross-contamination."""
+    gt_manifest, evidence_bytes = build_two_independent_json_scenario(seed=42)
+    obs_manifest = run_pipeline_and_observe(gt_manifest.evidence_buffer_id, evidence_bytes)
+
+    # Exactly 2 candidates discovered
+    assert len(obs_manifest.candidates) == 2
+    c0 = obs_manifest.candidates[0]
+    c1 = obs_manifest.candidates[1]
+
+    art1 = gt_manifest.artifacts[0]
+    art2 = gt_manifest.artifacts[1]
+
+    assert c0.offset == art1.header_evidence_offset
+    assert c0.estimated_end_offset == art1.header_evidence_offset + art1.original_size_bytes
+    assert c1.offset == art2.header_evidence_offset
+    assert c1.estimated_end_offset == art2.header_evidence_offset + art2.original_size_bytes
+
+    # Both recovered independently into separate RecoveryRun records
+    assert len(obs_manifest.recoveries) == 2
+    r0 = obs_manifest.recoveries[0]
+    r1 = obs_manifest.recoveries[1]
+
+    assert r0.observed_status == "FULLY_RECOVERED"
+    assert r1.observed_status == "FULLY_RECOVERED"
+    assert r0.total_verified_bytes == art1.original_size_bytes
+    assert r1.total_verified_bytes == art2.original_size_bytes
+
+    # Evaluator validates both artifacts independently
+    report = evaluate_scenario(gt_manifest, obs_manifest)
+    assert report.passed is True
+    assert len(report.artifact_evaluations) == 2
+    assert all(ae.status_match for ae in report.artifact_evaluations)
+    assert all(ae.whole_payload_hash_match for ae in report.artifact_evaluations)
+    assert len(report.forensic_violations) == 0
+
+
+# ── TEST 31: MATCHING INTEGRITY — FALSE POSITIVES & DUPLICATES PENALIZED ──
+
+def test_31_multi_candidate_ground_truth_matching_and_fp_detection():
+    """Evaluator strictly rejects runs containing unexpected false-positive candidates or duplicates."""
+    gt_manifest, evidence_bytes = build_two_independent_json_scenario(seed=42)
+    obs_manifest = run_pipeline_and_observe(gt_manifest.evidence_buffer_id, evidence_bytes)
+
+    # Inject an unexpected phantom candidate into the observed manifest
+    from benchmark.models import ObservedCandidateResult
+    mut_obs = copy.deepcopy(obs_manifest)
+    phantom_cand = ObservedCandidateResult(
+        candidate_id="cand-phantom",
+        evidence_buffer_id=gt_manifest.evidence_buffer_id,
+        format="json",
+        offset=999,
+        detected_header_length=1,
+        estimated_end_offset=1050,
+        is_unbounded=False,
+    )
+    mut_obs.candidates.append(phantom_cand)
+
+    report = evaluate_scenario(gt_manifest, mut_obs)
+    # The scenario must fail because of the false-positive candidate
+    assert report.passed is False
+    assert report.candidate_metrics.false_positives == 1
+    fp_violations = [v for v in report.forensic_violations if "FALSE_POSITIVE_CANDIDATE" in v]
+    assert len(fp_violations) == 1
+    assert "cand-phantom" in fp_violations[0]
+
+
+# ── TEST 32: CANDIDATE MATCHING PERMUTATION INVARIANCE ────────────────────
+
+def test_32_candidate_matching_permutation_invariance():
+    """Order of observed candidates in manifest does not alter ground-truth association."""
+    gt_manifest, evidence_bytes = build_two_independent_json_scenario(seed=42)
+    obs_manifest = run_pipeline_and_observe(gt_manifest.evidence_buffer_id, evidence_bytes)
+
+    # Invert candidate and recovery ordering
+    permuted_obs = copy.deepcopy(obs_manifest)
+    permuted_obs.candidates.reverse()
+    permuted_obs.recoveries.reverse()
+
+    report_orig = evaluate_scenario(gt_manifest, obs_manifest)
+    report_perm = evaluate_scenario(gt_manifest, permuted_obs)
+
+    assert report_orig.passed is True
+    assert report_perm.passed is True
+    assert len(report_orig.artifact_evaluations) == len(report_perm.artifact_evaluations) == 2
+
+    # Both orderings map each candidate to the correct artifact
+    evals_by_id_orig = {ae.artifact_id: ae for ae in report_orig.artifact_evaluations}
+    evals_by_id_perm = {ae.artifact_id: ae for ae in report_perm.artifact_evaluations}
+
+    for art_id in ("art-json-multi-01", "art-json-multi-02"):
+        assert evals_by_id_orig[art_id].whole_payload_hash_match is True
+        assert evals_by_id_perm[art_id].whole_payload_hash_match is True
+        assert evals_by_id_orig[art_id].v_volume_accuracy == evals_by_id_perm[art_id].v_volume_accuracy == 1.0
+
+
+# ── TEST 33: CORRUPTED JSON SYNTAX HONEST ACCOUNTING ──────────────────────
+
+def test_33_corrupted_json_syntax_honest_accounting():
+    """A candidate with syntax corruption (NUL in string) reports CORRUPTED with V=0 and M=len(input)."""
+    from backend.app.recovery.reconstructors.json import reconstruct_json
+
+    corrupt_evidence = b'{"user": "alice", "bio": "developer \x00 admin", "active": true}'
+    r = reconstruct_json(corrupt_evidence)
+
+    assert r.status == "CORRUPTED"
+    assert r.success is False
+    assert r.verified_bytes == 0
+    assert r.reconstructed_bytes == 0
+    assert r.missing_bytes == len(corrupt_evidence)
+    # Accounting invariant holds: V + R + M == len(input)
+    assert r.verified_bytes + r.reconstructed_bytes + r.missing_bytes == len(corrupt_evidence)
+    assert len(r.damage_regions) == 1
+    assert r.damage_regions[0]["type"] == "CORRUPTED"
+    assert r.damage_regions[0]["status"] == "UNRECOVERABLE"

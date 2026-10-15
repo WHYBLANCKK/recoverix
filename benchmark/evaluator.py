@@ -9,6 +9,7 @@ Evaluates observed recovery runs against physical ground truth manifests:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from typing import Dict, List, Optional
 from benchmark.expectations import DerivedExpectation, derive_expected_recovery
 from benchmark.matcher import (
@@ -193,7 +194,7 @@ def audit_false_recovery(
             )
 
     # Rule 9: Payload volume conservation and segment accounting consistency
-    if recovery.observed_status == "UNRECOVERABLE" or len(payload_bytes) == 0:
+    if recovery.observed_status in ("UNRECOVERABLE", "CORRUPTED") or len(payload_bytes) == 0:
         if recovery.total_verified_bytes > 0 or recovery.total_reconstructed_bytes > 0:
             violations.append(
                 f"Benchmark finding: UNCONSERVED_PAYLOAD_VOLUME — Status is {recovery.observed_status} "
@@ -603,6 +604,10 @@ class EvaluationReport:
         elif not self.artifact_evaluations:
             return self.expected_artifact_count == 0 and len(self.forensic_violations) == 0
 
+        # Strict candidate detection checks: zero false positives and zero duplicates
+        if self.candidate_metrics.false_positives > 0 or self.candidate_metrics.duplicate_count > 0:
+            return False
+
         # Strict correctness checks for each artifact evaluation
         for ae in self.artifact_evaluations:
             if not ae.status_match:
@@ -642,6 +647,24 @@ def evaluate_scenario(
 
     artifact_evals: List[EvaluationMetrics] = []
     all_violations: List[str] = []
+
+    # 2a. Record candidate detection integrity findings (false positives, duplicates, unrecovered artifacts)
+    for fp_cand in matching.unmatched_candidates:
+        all_violations.append(
+            f"Benchmark finding: FALSE_POSITIVE_CANDIDATE — Unexpected candidate {fp_cand.candidate_id} "
+            f"detected at offset {fp_cand.offset} ({fp_cand.format}) with no matching ground-truth artifact"
+        )
+    for dup_cand in matching.duplicate_candidates:
+        all_violations.append(
+            f"Benchmark finding: DUPLICATE_CANDIDATE — Candidate {dup_cand.candidate_id} "
+            f"at offset {dup_cand.offset} duplicate-matched an already claimed artifact"
+        )
+    for unrec_art in matching.unmatched_artifacts:
+        if not unrec_art.is_unrecoverable:
+            all_violations.append(
+                f"Benchmark finding: UNRECOVERED_ARTIFACT — Expected artifact {unrec_art.artifact_id} "
+                f"({unrec_art.format} at offset {unrec_art.header_evidence_offset}) was not recovered"
+            )
 
     for rec in observed_manifest.recoveries:
         art: Optional[PhysicalArtifactRecord] = None

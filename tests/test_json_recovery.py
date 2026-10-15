@@ -667,10 +667,11 @@ def test_m3_2_json_candidate_with_observed_known_length_missing_region():
     assert _resolve_damage_region_status("DETECTED", True) == "DETECTED"
     assert _resolve_damage_region_status("RECONSTRUCTABLE", True) == "RECONSTRUCTED"
     assert _resolve_damage_region_status("RECONSTRUCTABLE", False) == "UNRECOVERABLE"
-    assert _resolve_damage_region_status(None, True) == "RECONSTRUCTED"
+    # Conservative fallback: artifact-level success never implies an unstated damage region was reconstructed
+    assert _resolve_damage_region_status(None, True) == "UNRECOVERABLE"
     assert _resolve_damage_region_status(None, False) == "UNRECOVERABLE"
-    assert _resolve_damage_region_status("", True) == "RECONSTRUCTED"
-    assert _resolve_damage_region_status("INVALID_STATUS", True) == "RECONSTRUCTED"
+    assert _resolve_damage_region_status("", True) == "UNRECOVERABLE"
+    assert _resolve_damage_region_status("INVALID_STATUS", True) == "UNRECOVERABLE"
     assert _resolve_damage_region_status("INVALID_STATUS", False) == "UNRECOVERABLE"
 
 
@@ -809,3 +810,26 @@ def test_m3_8_independent_evaluator_unaccounted_gap_detection():
     res_pure = evaluate_json_scenario(gt_pure, ev_pure)
     assert res_pure["passed"] is True
     assert len(res_pure["forensic_violations"]) == 0
+
+
+def test_m5_json_syntax_corruption_accounting():
+    """Verify that candidate-level syntax corruption (e.g. unescaped NUL in string)
+    is accounted with verified_bytes=0, missing_bytes=len(data), status=CORRUPTED,
+    and a distinct CORRUPTED damage region with status UNRECOVERABLE.
+    """
+    corrupt_evidence = b'{"user": "alice", "bio": "developer \x00 admin", "active": true}'
+    r = reconstruct_json(corrupt_evidence)
+
+    assert r.status == "CORRUPTED"
+    assert r.success is False
+    assert r.verified_bytes == 0
+    assert r.reconstructed_bytes == 0
+    assert r.missing_bytes == len(corrupt_evidence)
+    # Conservation invariant: V + R + M == len(input)
+    assert r.verified_bytes + r.reconstructed_bytes + r.missing_bytes == len(corrupt_evidence)
+    assert len(r.damage_regions) == 1
+    dmg = r.damage_regions[0]
+    assert dmg["type"] == "CORRUPTED"
+    assert dmg["status"] == "UNRECOVERABLE"
+    assert dmg["offset"] == 0
+    assert dmg["length"] == len(corrupt_evidence)

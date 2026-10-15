@@ -375,6 +375,154 @@ def build_unrecoverable_noise_scenario(
     return manifest, evidence
 
 
+def build_json_with_binary_noise_scenario(
+    seed: int = 42,
+    offset: int = 128,
+) -> Tuple[BenchmarkGroundTruthManifest, bytes]:
+    """Scenario E: JSON Followed by High-Entropy Binary Noise.
+
+    A valid JSON document followed immediately by high-entropy binary noise.
+    Tests scanner boundary isolation: scanner must terminate candidate at
+    the closing delimiter '}', isolating the JSON from the adjacent trailing noise.
+
+    Ground Truth Expectation:
+        - Format: json
+        - Status: FULLY_RECOVERED
+        - Verified bytes: 100% of JSON payload
+        - Reconstructed bytes: 0
+        - Missing bytes: 0
+        - Candidate detection: 1 candidate, noise excluded
+        - Payload hash: Exact SHA-256 match
+    """
+    payload = b'{"session_id": "sess-9941a", "authenticated": true, "timestamp": 1729000000}'
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    # Non-structured high-entropy noise
+    noise = bytes([(x * 37 + 13) % 255 + 1 for x in range(128)])
+    evidence = (b"\x00" * offset) + payload + noise
+    evidence_sha256 = hashlib.sha256(evidence).hexdigest()
+
+    assert SYNTHETIC_START_MARKER not in evidence, "Accidental synthetic start marker in evidence"
+    assert SYNTHETIC_END_MARKER not in evidence, "Accidental synthetic end marker in evidence"
+
+    art = PhysicalArtifactRecord(
+        artifact_id="art-json-noise-iso-01",
+        original_filename="session_auth.json",
+        format="json",
+        original_size_bytes=len(payload),
+        original_sha256=payload_sha256,
+        original_bytes_b64=base64.b64encode(payload).decode("ascii"),
+        header_evidence_offset=offset,
+        header_original_offset=0,
+        placements=[
+            PhysicalPlacement(
+                fragment_index=0,
+                evidence_offset=offset,
+                evidence_length=len(payload),
+                original_offset=0,
+            )
+        ],
+        damage_intervals=[],
+    )
+
+    manifest = BenchmarkGroundTruthManifest(
+        manifest_version="1.0.0",
+        scenario_id="json-with-binary-noise",
+        evidence_buffer_id="json_with_binary_noise.img",
+        evidence_size_bytes=len(evidence),
+        evidence_sha256=evidence_sha256,
+        seed=seed,
+        artifacts=[art],
+        spatial_relationships=[],
+    )
+
+    return manifest, evidence
+
+
+def build_two_independent_json_scenario(
+    seed: int = 42,
+    offset1: int = 64,
+    noise_len: int = 64,
+    suffix_len: int = 64,
+) -> Tuple[BenchmarkGroundTruthManifest, bytes]:
+    """Scenario F: Two Independent JSON Documents Separated by Binary Noise.
+
+    Two distinct JSON documents placed in the same evidence buffer, separated
+    by high-entropy binary noise and bounded by zero-padding.
+    Tests multi-candidate discovery, isolation, and independent evaluation:
+    neither document merges into the other, and no false-positive candidates are produced.
+
+    Ground Truth Expectation:
+        - Document 1: FULLY_RECOVERED, exact SHA-256 match, V=len(c1), R=0, M=0
+        - Document 2: FULLY_RECOVERED, exact SHA-256 match, V=len(c2), R=0, M=0
+        - Candidate detection: Exactly 2 true-positive candidates, 0 FP, 0 FN
+        - Greedy matcher correctly maps each candidate to its respective artifact
+    """
+    c1 = b'{"cluster": "us-east-1", "primary": "node-01.internal", "shards": 4}'
+    c2 = b'{"service": "metrics-collector", "port": 9090, "retention_days": 30}'
+    noise = bytes([(i * 17) % 255 + 1 for i in range(noise_len)])
+
+    off1 = offset1
+    off2 = off1 + len(c1) + len(noise)
+    evidence = (b"\x00" * off1) + c1 + noise + c2 + (b"\x00" * suffix_len)
+    evidence_sha256 = hashlib.sha256(evidence).hexdigest()
+
+    assert SYNTHETIC_START_MARKER not in evidence, "Accidental synthetic start marker in evidence"
+    assert SYNTHETIC_END_MARKER not in evidence, "Accidental synthetic end marker in evidence"
+
+    art1 = PhysicalArtifactRecord(
+        artifact_id="art-json-multi-01",
+        original_filename="cluster_config.json",
+        format="json",
+        original_size_bytes=len(c1),
+        original_sha256=hashlib.sha256(c1).hexdigest(),
+        original_bytes_b64=base64.b64encode(c1).decode("ascii"),
+        header_evidence_offset=off1,
+        header_original_offset=0,
+        placements=[
+            PhysicalPlacement(
+                fragment_index=0,
+                evidence_offset=off1,
+                evidence_length=len(c1),
+                original_offset=0,
+            )
+        ],
+        damage_intervals=[],
+    )
+
+    art2 = PhysicalArtifactRecord(
+        artifact_id="art-json-multi-02",
+        original_filename="metrics_service.json",
+        format="json",
+        original_size_bytes=len(c2),
+        original_sha256=hashlib.sha256(c2).hexdigest(),
+        original_bytes_b64=base64.b64encode(c2).decode("ascii"),
+        header_evidence_offset=off2,
+        header_original_offset=0,
+        placements=[
+            PhysicalPlacement(
+                fragment_index=0,
+                evidence_offset=off2,
+                evidence_length=len(c2),
+                original_offset=0,
+            )
+        ],
+        damage_intervals=[],
+    )
+
+    manifest = BenchmarkGroundTruthManifest(
+        manifest_version="1.0.0",
+        scenario_id="json-multi-candidate-independent",
+        evidence_buffer_id="json_multi_candidate_independent.img",
+        evidence_size_bytes=len(evidence),
+        evidence_sha256=evidence_sha256,
+        seed=seed,
+        artifacts=[art1, art2],
+        spatial_relationships=[],
+    )
+
+    return manifest, evidence
+
+
 def build_all_json_scenarios(
     seed: int = 42,
 ) -> List[Tuple[BenchmarkGroundTruthManifest, bytes]]:
@@ -385,6 +533,8 @@ def build_all_json_scenarios(
         build_truncated_closable_content_loss_scenario(seed=seed),
         build_truncated_incomplete_scenario(seed=seed),
         build_unrecoverable_noise_scenario(seed=seed),
+        build_json_with_binary_noise_scenario(seed=seed),
+        build_two_independent_json_scenario(seed=seed),
     ]
 
 
@@ -439,7 +589,7 @@ def evaluate_json_scenario(
                 art_violations.append(v)
             elif art.artifact_id in v:
                 art_violations.append(v)
-            elif cand_id and (f"segment {cand_id}" in v or f"{cand_id}-" in v):
+            elif cand_id and (f"segment {cand_id}" in v or f"{cand_id}-" in v or f"Candidate {cand_id}" in v):
                 art_violations.append(v)
             elif art.is_unrecoverable and ("UNRECOVERABLE_MISCLASSIFIED" in v or "OVERSTATED_VERIFICATION" in v or "UNACCOUNTED_GAP" in v):
                 art_violations.append(v)
@@ -478,7 +628,12 @@ def evaluate_json_scenario(
             "passed": passed,
         })
 
-    all_passed = all(r["passed"] for r in scenario_artifact_results)
+    has_matching_violations = any(
+        "FALSE_POSITIVE_CANDIDATE" in v or "DUPLICATE_CANDIDATE" in v or "UNRECOVERED_ARTIFACT" in v
+        for v in report.forensic_violations
+    ) or (matching.false_positives > 0) or (len(matching.duplicate_candidates) > 0)
+
+    all_passed = all(r["passed"] for r in scenario_artifact_results) and not has_matching_violations
 
     return {
         "scenario_id": gt_manifest.scenario_id,
@@ -487,6 +642,14 @@ def evaluate_json_scenario(
         "evidence_sha256": gt_manifest.evidence_sha256,
         "candidates_discovered": len(obs_manifest.candidates),
         "recoveries_observed": len(obs_manifest.recoveries),
+        "candidate_metrics": {
+            "true_positives": report.candidate_metrics.true_positives,
+            "false_positives": report.candidate_metrics.false_positives,
+            "false_negatives": report.candidate_metrics.false_negatives,
+            "duplicate_count": report.candidate_metrics.duplicate_count,
+            "precision": report.candidate_metrics.precision,
+            "recall": report.candidate_metrics.recall,
+        },
         "artifacts": scenario_artifact_results,
         "forensic_violations": report.forensic_violations,
         "passed": all_passed,

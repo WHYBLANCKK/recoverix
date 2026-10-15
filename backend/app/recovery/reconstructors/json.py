@@ -427,42 +427,75 @@ def reconstruct_json(
         clean_body = clean_text.encode("utf-8")
         padding_bytes = len(body) - len(clean_body)
         val = validate_json(clean_body)
-        status = "FULLY_RECOVERED" if (val.valid and padding_bytes == 0) else ("PARTIALLY_RECOVERED" if val.valid else "CORRUPTED")
-        damage_regions = []
-        if val.valid and padding_bytes > 0:
-            damage_regions.append({
-                "offset": len(clean_body),
-                "length": padding_bytes,
-                "type": "UNATTRIBUTED_PADDING",
-                "status": "UNRECOVERABLE",
-                "details": f"Evidence contained {padding_bytes} byte(s) of trailing padding",
-            })
-        return _result(
-            status=status,
-            success=bool(val.valid),
-            recovered=clean_body,
-            verified=len(clean_body),
-            reconstructed=0,
-            missing=padding_bytes,
-            methods=["JSON_STRUCTURAL_VALIDATION"],
-            damage_regions=damage_regions,
-            validation_result=val,
-            details={
-                **common,
-                "reconstruction_method": "JSON_STRUCTURAL_VALIDATION",
-                "synthetic_markers": had_markers,
-                "marker_overhead_bytes": marker_overhead,
-                "trailing_padding_bytes": padding_bytes,
-                "output_sha256": hashlib.sha256(clean_body).hexdigest(),
-                "notice": (
-                    "The evidence parses as complete JSON, so it is preserved byte for byte "
-                    "with no reconstruction and nothing missing."
-                    if padding_bytes == 0 else
-                    f"The evidence parses as complete JSON ({len(clean_body)} bytes). Trailing {padding_bytes} byte(s) of padding are accounted as missing."
-                ),
-            },
-            original_data=original_data,
-        )
+        if val.valid:
+            status = "FULLY_RECOVERED" if padding_bytes == 0 else "PARTIALLY_RECOVERED"
+            damage_regions = []
+            if padding_bytes > 0:
+                damage_regions.append({
+                    "offset": len(clean_body),
+                    "length": padding_bytes,
+                    "type": "UNATTRIBUTED_PADDING",
+                    "status": "UNRECOVERABLE",
+                    "details": f"Evidence contained {padding_bytes} byte(s) of trailing padding",
+                })
+            return _result(
+                status=status,
+                success=True,
+                recovered=clean_body,
+                verified=len(clean_body),
+                reconstructed=0,
+                missing=padding_bytes,
+                methods=["JSON_STRUCTURAL_VALIDATION"],
+                damage_regions=damage_regions,
+                validation_result=val,
+                details={
+                    **common,
+                    "reconstruction_method": "JSON_STRUCTURAL_VALIDATION",
+                    "synthetic_markers": had_markers,
+                    "marker_overhead_bytes": marker_overhead,
+                    "trailing_padding_bytes": padding_bytes,
+                    "output_sha256": hashlib.sha256(clean_body).hexdigest(),
+                    "notice": (
+                        "The evidence parses as complete JSON, so it is preserved byte for byte "
+                        "with no reconstruction and nothing missing."
+                        if padding_bytes == 0 else
+                        f"The evidence parses as complete JSON ({len(clean_body)} bytes). Trailing {padding_bytes} byte(s) of padding are accounted as missing."
+                    ),
+                },
+                original_data=original_data,
+            )
+        else:
+            # Structural validation failed (corrupted syntax in complete-looking container)
+            err_msg = "; ".join(val.errors) if val.errors else "Invalid JSON syntax"
+            return _result(
+                status="CORRUPTED",
+                success=False,
+                recovered=clean_body,
+                verified=0,
+                reconstructed=0,
+                missing=len(data),
+                methods=["JSON_SYNTAX_CORRUPTED"],
+                damage_regions=[{
+                    "offset": 0,
+                    "length": len(clean_body),
+                    "type": "CORRUPTED",
+                    "status": "UNRECOVERABLE",
+                    "details": f"JSON structural validation failed: {err_msg}",
+                }],
+                validation_result=val,
+                details={
+                    **common,
+                    "reconstruction_method": "JSON_SYNTAX_CORRUPTED",
+                    "validation_error": err_msg,
+                    "synthetic_markers": had_markers,
+                    "marker_overhead_bytes": marker_overhead,
+                    "notice": (
+                        f"The candidate structure appears bounded but failed RFC 8259 JSON validation: {err_msg}. "
+                        "Because the syntax is corrupted, 0 bytes are claimed as verified."
+                    ),
+                },
+                original_data=original_data,
+            )
 
     # ── Case 2: deterministically closable prefix ─────────────────────────
     if classification == _CLOSABLE:
