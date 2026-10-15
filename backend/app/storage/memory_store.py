@@ -347,6 +347,11 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             if not run_id and artifact_id in self._artifacts:
                 art = self._artifacts[artifact_id]
                 run_id = art.run_id or (art.metadata.get("run_id") if art.metadata else None)
-            if run_id:
-                return self._recovery_runs.get(run_id)
+            if run_id and run_id in self._recovery_runs:
+                return self._recovery_runs[run_id]
+
+            for run in self._recovery_runs.values():
+                if run.artifact_id == artifact_id:
+                    return run
+
             return None

@@ -36,33 +36,38 @@ from backend.app.storage.sqlite_blob_store import SqliteBlobStore
 from backend.app.storage.sqlite_engine import SqliteEngine
 
 
+def _safe_json_loads(val: Any, default: Any = None) -> Any:
+    """Safely decode JSON string, returning default if None, empty, or corrupted."""
+    if not val:
+        return default
+    if isinstance(val, (dict, list)):
+        return val
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default
+
+
 def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
     """Convert an SQLite row from the artifacts table to an ArtifactRecord."""
-    score_breakdown = (
-        json.loads(row["score_breakdown_json"]) if row["score_breakdown_json"] else {}
-    )
-    provenance = (
-        json.loads(row["provenance_json"]) if row["provenance_json"] else {}
-    )
-    validation_details = (
-        json.loads(row["validation_details_json"])
-        if row["validation_details_json"]
-        else {}
-    )
-    metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
-    fragments = (
-        json.loads(row["fragments_json"]) if row["fragments_json"] else None
-    )
-    damage_regions = (
-        json.loads(row["damage_regions_json"]) if row["damage_regions_json"] else None
-    )
-    reconstruction_steps = (
-        json.loads(row["reconstruction_steps_json"])
-        if row["reconstruction_steps_json"]
-        else None
-    )
+    score_breakdown = _safe_json_loads(row["score_breakdown_json"], default={})
+    provenance = _safe_json_loads(row["provenance_json"], default={})
+    validation_details = _safe_json_loads(row["validation_details_json"], default={})
+    metadata = _safe_json_loads(row["metadata_json"], default={})
+    fragments = _safe_json_loads(row["fragments_json"], default=None)
+    damage_regions = _safe_json_loads(row["damage_regions_json"], default=None)
+    reconstruction_steps = _safe_json_loads(row["reconstruction_steps_json"], default=None)
 
-    run_id = row["run_id"] or metadata.get("run_id")
+    run_id = row["run_id"] or (metadata.get("run_id") if isinstance(metadata, dict) else None)
+
+    v_bytes = int(row["verified_bytes"])
+    r_bytes = int(row["reconstructed_bytes"])
+    m_bytes = int(row["missing_bytes"])
+    total_inp = (
+        int(row["total_input_bytes"])
+        if row["total_input_bytes"] is not None
+        else (v_bytes + r_bytes + m_bytes)
+    )
 
     return ArtifactRecord(
         artifact_id=row["artifact_id"],
@@ -73,29 +78,25 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         format=row["format"],
         status=row["status"],
         confidence_score=float(row["confidence_score"]),
-        verified_bytes=int(row["verified_bytes"]),
-        reconstructed_bytes=int(row["reconstructed_bytes"]),
-        missing_bytes=int(row["missing_bytes"]),
-        total_input_bytes=(
-            int(row["total_input_bytes"])
-            if row["total_input_bytes"] is not None
-            else None
-        ),
+        verified_bytes=v_bytes,
+        reconstructed_bytes=r_bytes,
+        missing_bytes=m_bytes,
+        total_input_bytes=total_inp,
         reconstruction_method=row["reconstruction_method"],
         validation_status=row["validation_status"],
         is_downloadable=bool(row["is_downloadable"]),
         download_url=row["download_url"],
         content_preview=row["content_preview"],
-        score_breakdown=score_breakdown,
-        provenance=provenance,
-        validation_details=validation_details,
-        fragments=fragments,
-        damage_regions=damage_regions,
-        reconstruction_steps=reconstruction_steps,
+        score_breakdown=score_breakdown if isinstance(score_breakdown, dict) else {},
+        provenance=provenance if isinstance(provenance, dict) else {},
+        validation_details=validation_details if isinstance(validation_details, dict) else {},
+        fragments=fragments if isinstance(fragments, list) else None,
+        damage_regions=damage_regions if isinstance(damage_regions, list) else None,
+        reconstruction_steps=reconstruction_steps if isinstance(reconstruction_steps, list) else None,
         category=row["category"],
         priority=row["priority"],
         ai_summary=row["ai_summary"],
-        metadata=metadata,
+        metadata=metadata if isinstance(metadata, dict) else {},
     )
 
 
@@ -108,33 +109,15 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         else None
     )
 
-    fragments_data = (
-        json.loads(row["fragments_json"]) if row["fragments_json"] else []
-    )
-    damage_regions_data = (
-        json.loads(row["damage_regions_json"]) if row["damage_regions_json"] else []
-    )
-    reconstruction_steps_data = (
-        json.loads(row["reconstruction_steps_json"])
-        if row["reconstruction_steps_json"]
-        else []
-    )
-    events_data = (
-        json.loads(row["events_json"]) if row["events_json"] else []
-    )
+    fragments_data = _safe_json_loads(row["fragments_json"], default=[])
+    damage_regions_data = _safe_json_loads(row["damage_regions_json"], default=[])
+    reconstruction_steps_data = _safe_json_loads(row["reconstruction_steps_json"], default=[])
+    events_data = _safe_json_loads(row["events_json"], default=[])
 
-    validation = (
-        json.loads(row["validation_json"]) if row["validation_json"] else None
-    )
-    confidence = (
-        json.loads(row["confidence_json"]) if row["confidence_json"] else None
-    )
-    provenance = (
-        json.loads(row["provenance_json"]) if row["provenance_json"] else None
-    )
-    output = (
-        json.loads(row["output_json"]) if row["output_json"] else None
-    )
+    validation = _safe_json_loads(row["validation_json"], default=None)
+    confidence = _safe_json_loads(row["confidence_json"], default=None)
+    provenance = _safe_json_loads(row["provenance_json"], default=None)
+    output = _safe_json_loads(row["output_json"], default=None)
 
     case_id = row["case_id"] if ("case_id" in row.keys() and row["case_id"]) else None
 
@@ -957,13 +940,18 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 if art_row:
                     run_id = art_row["run_id"]
                     if not run_id and art_row["metadata_json"]:
-                        try:
-                            meta = json.loads(art_row["metadata_json"])
+                        meta = _safe_json_loads(art_row["metadata_json"], default={})
+                        if isinstance(meta, dict):
                             run_id = meta.get("run_id")
-                        except Exception:
-                            pass
 
             if not run_id:
+                cursor.execute(
+                    "SELECT * FROM recovery_runs WHERE artifact_id = ?;",
+                    (artifact_id,),
+                )
+                direct_row = cursor.fetchone()
+                if direct_row is not None:
+                    return _row_to_recovery_run(direct_row)
                 return None
 
             cursor.execute("SELECT * FROM recovery_runs WHERE run_id = ?;", (run_id,))

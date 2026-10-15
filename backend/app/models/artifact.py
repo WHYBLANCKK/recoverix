@@ -105,11 +105,24 @@ class ArtifactRecord(BaseModel):
         if self.run_id and "run_id" not in meta:
             meta["run_id"] = self.run_id
 
+        eff_total_input = (
+            self.total_input_bytes
+            if self.total_input_bytes is not None
+            else (self.verified_bytes + self.reconstructed_bytes + self.missing_bytes)
+        )
+        meta["total_input_bytes"] = eff_total_input
+
+        # Actual recovered payload size in bytes. If unrecoverable or not downloadable, size is 0.
+        if self.status == "UNRECOVERABLE" or not self.is_downloadable:
+            size_bytes = 0
+        else:
+            size_bytes = self.verified_bytes + self.reconstructed_bytes
+
         return ArtifactResponse(
             artifact_id=self.artifact_id,
             case_id=self.case_id or "",
             format=self.format,
-            size_bytes=self.total_input_bytes if self.total_input_bytes is not None else (self.verified_bytes + self.reconstructed_bytes),
+            size_bytes=size_bytes,
             confidence_score=int(round(self.confidence_score)),
             score_breakdown=sb_schema,
             status=self.status,
@@ -159,6 +172,25 @@ class ArtifactRecord(BaseModel):
             if art.metadata
             else None
         )
+        total_inp = None
+        if art.metadata and art.metadata.get("total_input_bytes") is not None:
+            try:
+                total_inp = int(art.metadata["total_input_bytes"])
+            except (ValueError, TypeError):
+                total_inp = None
+        if total_inp is None:
+            total_inp = (
+                art.provenance.verified_bytes
+                + art.provenance.reconstructed_bytes
+                + art.provenance.missing_bytes
+            )
+
+        is_dl = (
+            bool(art.metadata.get("is_downloadable"))
+            if (art.metadata and "is_downloadable" in art.metadata)
+            else (art.status != "UNRECOVERABLE")
+        )
+
         return cls(
             artifact_id=art.artifact_id,
             case_id=art.case_id,
@@ -170,10 +202,10 @@ class ArtifactRecord(BaseModel):
             verified_bytes=art.provenance.verified_bytes,
             reconstructed_bytes=art.provenance.reconstructed_bytes,
             missing_bytes=art.provenance.missing_bytes,
-            total_input_bytes=art.size_bytes,
+            total_input_bytes=total_inp,
             reconstruction_method=art.provenance.reconstruction_method,
             validation_status=art.provenance.validation_status,
-            is_downloadable=True,
+            is_downloadable=is_dl,
             download_url=f"/api/artifacts/{art.artifact_id}/download",
             content_preview=art.content_preview,
             score_breakdown=art.score_breakdown.model_dump(),
@@ -189,6 +221,26 @@ class ArtifactRecord(BaseModel):
         """Construct internal ArtifactRecord from single-file recovery dictionary."""
         f_id = meta.get("file_id") or meta.get("artifact_id", "")
         run_id = meta.get("run_id")
+        ver = int(meta.get("verified_bytes", 0))
+        rec = int(meta.get("reconstructed_bytes", 0))
+        miss = int(meta.get("missing_bytes", 0))
+        status_val = meta.get("status", "UNRECOVERABLE")
+
+        total_inp = meta.get("total_input_bytes")
+        if total_inp is not None:
+            try:
+                total_inp = int(total_inp)
+            except (ValueError, TypeError):
+                total_inp = ver + rec + miss
+        else:
+            total_inp = ver + rec + miss
+
+        is_dl = (
+            bool(meta["is_downloadable"])
+            if "is_downloadable" in meta
+            else (status_val != "UNRECOVERABLE")
+        )
+
         return cls(
             artifact_id=f_id,
             case_id=None,
@@ -196,15 +248,15 @@ class ArtifactRecord(BaseModel):
             original_filename=meta.get("original_filename"),
             recovered_filename=meta.get("recovered_filename"),
             format=meta.get("format", "unknown"),
-            status=meta.get("status", "UNRECOVERABLE"),
+            status=status_val,
             confidence_score=float(meta.get("confidence_score", 0.0)),
-            verified_bytes=int(meta.get("verified_bytes", 0)),
-            reconstructed_bytes=int(meta.get("reconstructed_bytes", 0)),
-            missing_bytes=int(meta.get("missing_bytes", 0)),
-            total_input_bytes=meta.get("total_input_bytes"),
+            verified_bytes=ver,
+            reconstructed_bytes=rec,
+            missing_bytes=miss,
+            total_input_bytes=total_inp,
             reconstruction_method=meta.get("reconstruction_method", "NONE"),
             validation_status=meta.get("validation_status", "PASSED"),
-            is_downloadable=bool(meta.get("is_downloadable", True)),
+            is_downloadable=is_dl,
             download_url=meta.get("download_url"),
             content_preview=meta.get("content_preview"),
             score_breakdown=dict(meta.get("score_breakdown") or {}),

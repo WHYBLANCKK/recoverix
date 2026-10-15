@@ -5,7 +5,7 @@ recovery_run.py — Pydantic models for the Recovery Run forensic trace.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 
 
@@ -30,6 +30,19 @@ class Fragment(BaseModel):
     validation_status: str  # PASSED, FAILED, UNTESTED, PARTIAL
     relationships: List[FragmentRelationship] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def verify_offsets_and_length(self) -> "Fragment":
+        if self.end_offset < self.offset:
+            raise ValueError(
+                f"Fragment end_offset ({self.end_offset}) cannot be less than offset ({self.offset})"
+            )
+        computed = self.end_offset - self.offset
+        if self.length != computed:
+            raise ValueError(
+                f"Fragment length {self.length} does not match end_offset - offset ({computed})"
+            )
+        return self
+
 
 class DamageRegion(BaseModel):
     region_id: str
@@ -39,6 +52,19 @@ class DamageRegion(BaseModel):
     type: str  # CORRUPTED, MISSING, TRUNCATED, RECONSTRUCTABLE
     status: str  # UNRESOLVED, RECONSTRUCTED, UNRECOVERABLE, DETECTED
     affected_fragment_ids: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def verify_offsets_and_length(self) -> "DamageRegion":
+        if self.end_offset < self.start_offset:
+            raise ValueError(
+                f"DamageRegion end_offset ({self.end_offset}) cannot be less than start_offset ({self.start_offset})"
+            )
+        computed = self.end_offset - self.start_offset
+        if self.length != computed:
+            raise ValueError(
+                f"DamageRegion length {self.length} does not match end_offset - start_offset ({computed})"
+            )
+        return self
 
 
 class ReconstructionStep(BaseModel):

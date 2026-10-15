@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from backend.app.store import store, MAX_EVIDENCE_SIZE
 from backend.app.recovery.tracer import execute_traced_recovery
 from backend.app.scoring.explainer import explain_artifact
+from backend.app.recovery.adapter import extract_recovered_bytes
 
 
 class FileRecoveryResponse(BaseModel):
@@ -136,7 +137,8 @@ async def recover_single_file(file: UploadFile = File(...)) -> FileRecoveryRespo
         "provenance": recovery_run.provenance,
     }
 
-    store.store_recovered_file(file_id, meta_dict, (bytes.fromhex(recovery_run.output.get("recovered_bytes", "")) if recovery_run.output else b""))
+    recovered_content = extract_recovered_bytes(recovery_run)
+    store.store_recovered_file(file_id, meta_dict, recovered_content)
 
     return FileRecoveryResponse(**meta_dict)
 
