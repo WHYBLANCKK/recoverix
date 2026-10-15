@@ -64,18 +64,19 @@ def audit_false_recovery(
     orig_bytes = artifact.original_bytes
     payload_bytes = recovery.recovered_payload_bytes
 
-    for seg in recovery.verified_segments:
+    all_segments = recovery.verified_segments + recovery.reconstructed_segments + recovery.missing_segments
+    for seg in all_segments:
         if seg.evidence_start is not None or seg.evidence_end is not None:
             if not is_valid_half_open_interval(seg.evidence_start, seg.evidence_end):
                 violations.append(
-                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Segment {seg.segment_id} ({seg.category}) "
                     f"has invalid evidence bounds [{seg.evidence_start}, {seg.evidence_end})"
                 )
                 break
         if seg.recovered_start is not None or seg.recovered_end is not None:
             if not is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes)):
                 violations.append(
-                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Segment {seg.segment_id} ({seg.category}) "
                     f"has invalid recovered bounds [{seg.recovered_start}, {seg.recovered_end}) "
                     f"for payload length {len(payload_bytes)}"
                 )
@@ -83,7 +84,7 @@ def audit_false_recovery(
         if seg.original_start is not None or seg.original_end is not None:
             if not is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes):
                 violations.append(
-                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Segment {seg.segment_id} ({seg.category}) "
                     f"has invalid original bounds [{seg.original_start}, {seg.original_end}) "
                     f"for original size {artifact.original_size_bytes}"
                 )
@@ -93,10 +94,19 @@ def audit_false_recovery(
                 o_len = seg.original_end - seg.original_start
                 if r_len != o_len:
                     violations.append(
-                        f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                        f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Segment {seg.segment_id} ({seg.category}) "
                         f"length mismatch: recovered {r_len} != original {o_len}"
                     )
                     break
+        if seg.category == "VERIFIED" and (seg.evidence_start is not None and seg.recovered_start is not None):
+            e_len = seg.evidence_end - seg.evidence_start
+            r_len = seg.recovered_end - seg.recovered_start
+            if e_len != r_len:
+                violations.append(
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Segment {seg.segment_id} (VERIFIED) "
+                    f"length mismatch: evidence {e_len} != recovered {r_len}"
+                )
+                break
 
     # Rule 1: Damaged artifact cannot be FULLY_RECOVERED
     if is_damaged and recovery.observed_status == "FULLY_RECOVERED":
@@ -182,6 +192,112 @@ def audit_false_recovery(
                 "but no recovered payload bytes produced"
             )
 
+    # Rule 9: Payload volume conservation and segment accounting consistency
+    if recovery.observed_status == "UNRECOVERABLE" or len(payload_bytes) == 0:
+        if recovery.total_verified_bytes > 0 or recovery.total_reconstructed_bytes > 0:
+            violations.append(
+                f"Benchmark finding: UNCONSERVED_PAYLOAD_VOLUME — Status is {recovery.observed_status} "
+                f"with payload length {len(payload_bytes)}, but observed V={recovery.total_verified_bytes}, "
+                f"R={recovery.total_reconstructed_bytes} (must be 0)"
+            )
+    elif recovery.observed_status in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED"):
+        if (recovery.total_verified_bytes + recovery.total_reconstructed_bytes) != len(payload_bytes):
+            violations.append(
+                f"Benchmark finding: UNCONSERVED_PAYLOAD_VOLUME — Payload length ({len(payload_bytes)}) "
+                f"!= observed V ({recovery.total_verified_bytes}) + R ({recovery.total_reconstructed_bytes})"
+            )
+
+    if recovery.total_verified_bytes > 0 and not recovery.verified_segments:
+        violations.append(
+            f"Benchmark finding: INCONSISTENT_SEGMENT_ACCOUNTING — Observed total_verified_bytes "
+            f"({recovery.total_verified_bytes}) > 0, but verified_segments is empty"
+        )
+    if recovery.total_reconstructed_bytes > 0 and not recovery.reconstructed_segments:
+        violations.append(
+            f"Benchmark finding: INCONSISTENT_SEGMENT_ACCOUNTING — Observed total_reconstructed_bytes "
+            f"({recovery.total_reconstructed_bytes}) > 0, but reconstructed_segments is empty"
+        )
+
+    if recovery.verified_segments and all(s.recovered_start is not None and s.recovered_end is not None for s in recovery.verified_segments):
+        v_seg_sum = sum(
+            (seg.recovered_end - seg.recovered_start)
+            for seg in recovery.verified_segments
+            if is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes))
+        )
+        if v_seg_sum != recovery.total_verified_bytes:
+            violations.append(
+                f"Benchmark finding: INCONSISTENT_SEGMENT_ACCOUNTING — Verified segment length sum ({v_seg_sum}) "
+                f"!= total_verified_bytes ({recovery.total_verified_bytes})"
+            )
+
+    if recovery.reconstructed_segments and all(s.recovered_start is not None and s.recovered_end is not None for s in recovery.reconstructed_segments):
+        r_seg_sum = sum(
+            (seg.recovered_end - seg.recovered_start)
+            for seg in recovery.reconstructed_segments
+            if is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes))
+        )
+        if r_seg_sum != recovery.total_reconstructed_bytes:
+            violations.append(
+                f"Benchmark finding: INCONSISTENT_SEGMENT_ACCOUNTING — Reconstructed segment length sum ({r_seg_sum}) "
+                f"!= total_reconstructed_bytes ({recovery.total_reconstructed_bytes})"
+            )
+
+    # Recovered payload space partition: no overlaps and no gaps
+    if recovery.observed_status in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED") and len(payload_bytes) > 0:
+        rec_intervals = []
+        for s in (recovery.verified_segments + recovery.reconstructed_segments):
+            if s.recovered_start is not None and s.recovered_end is not None:
+                if is_valid_half_open_interval(s.recovered_start, s.recovered_end, max_bound=len(payload_bytes)):
+                    rec_intervals.append((s.recovered_start, s.recovered_end, s.segment_id))
+
+        has_overlap = False
+        for i in range(len(rec_intervals)):
+            s1, e1, id1 = rec_intervals[i]
+            for j in range(i + 1, len(rec_intervals)):
+                s2, e2, id2 = rec_intervals[j]
+                if max(s1, s2) < min(e1, e2):
+                    violations.append(
+                        f"Benchmark finding: OVERLAPPING_RECOVERED_SEGMENTS — Segments {id1} [{s1}, {e1}) and {id2} [{s2}, {e2}) "
+                        f"overlap in recovered payload space"
+                    )
+                    has_overlap = True
+                    break
+            if has_overlap:
+                break
+
+        if rec_intervals and not has_overlap:
+            sorted_intervals = sorted(rec_intervals, key=lambda x: x[0])
+            curr = 0
+            for s, e, seg_id in sorted_intervals:
+                if s > curr:
+                    violations.append(
+                        f"Benchmark finding: UNCOVERED_PAYLOAD_GAP — Gap in recovered payload space [{curr}, {s}) "
+                        f"before segment {seg_id}"
+                    )
+                    break
+                curr = max(curr, e)
+            if curr < len(payload_bytes) and not any("UNCOVERED_PAYLOAD_GAP" in v for v in violations):
+                violations.append(
+                    f"Benchmark finding: UNCOVERED_PAYLOAD_GAP — Gap at end of recovered payload space "
+                    f"[{curr}, {len(payload_bytes)})"
+                )
+
+    # Rule 10: Uncertified reconstructed original coordinates
+    for seg in recovery.reconstructed_segments:
+        if seg.original_start is not None or seg.original_end is not None:
+            is_certified = any(
+                d.reconstruction_mode == "RECONSTRUCTION_DETERMINISTIC"
+                and d.original_start <= seg.original_start
+                and seg.original_end <= d.original_end
+                for d in artifact.damage_intervals
+            )
+            if not is_certified:
+                violations.append(
+                    f"Benchmark finding: UNCERTIFIED_RECONSTRUCTED_COORDINATES — Reconstructed segment {seg.segment_id} "
+                    f"claims original coordinates [{seg.original_start}, {seg.original_end}) without ground-truth deterministic certification"
+                )
+                break
+
     return violations
 
 
@@ -200,10 +316,17 @@ def map_recovery_to_ground_truth(
     # 1. Map verified segments
     mapped_v_segs: List[ObservedRecoverySegment] = []
     for seg in recovery.verified_segments:
-        # Check pre-existing original coordinates defensively
+        # Check pre-existing original coordinates defensively against ground truth placements
         if seg.original_start is not None and seg.original_end is not None:
+            is_certified = False
+            if is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes):
+                for p in artifact.placements:
+                    if p.original_offset <= seg.original_start and seg.original_end <= (p.original_offset + p.evidence_length):
+                        is_certified = True
+                        break
+
             if (
-                is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes)
+                is_certified
                 and (
                     seg.recovered_start is None
                     or (
@@ -214,7 +337,7 @@ def map_recovery_to_ground_truth(
             ):
                 mapped_v_segs.append(seg)
                 continue
-            # Strip invalid pre-existing original coordinates
+            # Strip uncertified or invalid pre-existing original coordinates
             seg = seg.model_copy(update={"original_start": None, "original_end": None})
 
         orig_s: Optional[int] = None
@@ -256,10 +379,21 @@ def map_recovery_to_ground_truth(
     # 2. Map reconstructed segments
     mapped_r_segs: List[ObservedRecoverySegment] = []
     for seg in recovery.reconstructed_segments:
-        # Check pre-existing original coordinates defensively
+        # Check pre-existing original coordinates defensively against ground truth damage intervals
         if seg.original_start is not None and seg.original_end is not None:
+            is_certified = False
+            if is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes):
+                for d in artifact.damage_intervals:
+                    if (
+                        d.reconstruction_mode == "RECONSTRUCTION_DETERMINISTIC"
+                        and d.original_start <= seg.original_start
+                        and seg.original_end <= d.original_end
+                    ):
+                        is_certified = True
+                        break
+
             if (
-                is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes)
+                is_certified
                 and (
                     seg.recovered_start is None
                     or (
@@ -270,6 +404,7 @@ def map_recovery_to_ground_truth(
             ):
                 mapped_r_segs.append(seg)
                 continue
+            # Strip uncertified or invalid pre-existing original coordinates
             seg = seg.model_copy(update={"original_start": None, "original_end": None})
 
         orig_s = None
@@ -330,6 +465,31 @@ def map_recovery_to_ground_truth(
 
                 if len(candidate_mappings) == 1:
                     orig_s, orig_e = candidate_mappings[0]
+
+        # C. Terminal deterministic reconstruction (e.g. deterministic structural closures appended at EOF)
+        if orig_s is None and is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=payload_len):
+            r_s = seg.recovered_start
+            r_e = seg.recovered_end
+            r_len = r_e - r_s
+
+            terminal_mappings = []
+            if artifact.placements:
+                p_last = max(artifact.placements, key=lambda p: p.original_offset + p.evidence_length)
+                last_orig_end = p_last.original_offset + p_last.evidence_length
+
+                for d in artifact.damage_intervals:
+                    if (
+                        d.reconstruction_mode == "RECONSTRUCTION_DETERMINISTIC"
+                        and d.original_start == last_orig_end
+                        and d.length == r_len
+                    ):
+                        cand_s = d.original_start
+                        cand_e = d.original_end
+                        if is_valid_half_open_interval(cand_s, cand_e, max_bound=artifact.original_size_bytes):
+                            terminal_mappings.append((cand_s, cand_e))
+
+            if len(terminal_mappings) == 1:
+                orig_s, orig_e = terminal_mappings[0]
 
         if orig_s is not None and orig_e is not None:
             mapped_r_segs.append(
@@ -496,13 +656,15 @@ def evaluate_scenario(
             art = gt_manifest.artifacts[0]
 
         if art is not None:
-            mapped_rec = map_recovery_to_ground_truth(rec, art)
             expectation = derive_expected_recovery(art)
+            pre_violations = audit_false_recovery(art, rec, expectation)
+            mapped_rec = map_recovery_to_ground_truth(rec, art)
             metrics = compute_evaluation_metrics(art, expectation, mapped_rec)
-            violations = audit_false_recovery(art, mapped_rec, expectation)
+            post_violations = audit_false_recovery(art, mapped_rec, expectation)
 
             artifact_evals.append(metrics)
-            all_violations.extend(violations)
+            combined_v = list(dict.fromkeys(pre_violations + post_violations))
+            all_violations.extend(combined_v)
 
     # 3. Compute spatial relationship accuracy
     rel_acc = compute_relationship_accuracy(

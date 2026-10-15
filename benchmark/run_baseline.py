@@ -410,23 +410,45 @@ def run_pipeline_and_observe(
                 e_end += cand_offset
 
             if d.status == "RECONSTRUCTED" or d.type == "RECONSTRUCTABLE":
+                r_s: Optional[int] = None
+                r_e: Optional[int] = None
+                if payload and len(payload) >= d.end_offset and d.end_offset > d.start_offset:
+                    r_s = d.start_offset
+                    r_e = d.end_offset
+
+                # Reconstructed structural bytes (e.g. appended closures) were never in evidence
+                is_structural_closure = (d.type == "MISSING_STRUCTURAL_CLOSURE")
+                ev_s: Optional[int] = None
+                ev_e: Optional[int] = None
+                if not is_structural_closure and e_end <= len(evidence_bytes) and e_start >= 0 and e_end > e_start:
+                    ev_s = e_start
+                    ev_e = e_end
+
                 r_segs.append(
                     ObservedRecoverySegment(
                         segment_id=f"{cid}-{d.region_id}-r",
                         category="RECONSTRUCTED",
-                        evidence_start=e_start,
-                        evidence_end=e_end,
+                        evidence_start=ev_s,
+                        evidence_end=ev_e,
+                        recovered_start=r_s,
+                        recovered_end=r_e,
                         original_start=None,
                         original_end=None,
                     )
                 )
             else:
+                ev_s = None
+                ev_e = None
+                if e_end <= len(evidence_bytes) and e_start >= 0 and e_end > e_start:
+                    ev_s = e_start
+                    ev_e = e_end
+
                 m_segs.append(
                     ObservedRecoverySegment(
                         segment_id=f"{cid}-{d.region_id}-m",
                         category="MISSING",
-                        evidence_start=e_start,
-                        evidence_end=e_end,
+                        evidence_start=ev_s,
+                        evidence_end=ev_e,
                         original_start=None,
                         original_end=None,
                     )
