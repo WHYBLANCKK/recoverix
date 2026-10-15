@@ -26,6 +26,7 @@ Recoverix distinguishes between information directly supported by the available 
 - [Getting Started](#getting-started)
 - [Testing](#testing)
 - [Synthetic Evaluation](#synthetic-evaluation)
+- [Security and Deployment Model](#security-and-deployment-model)
 - [Limitations](#limitations)
 - [Design Principles](#design-principles)
 - [Future Improvements](#future-improvements)
@@ -424,6 +425,44 @@ Example scenario categories include:
 Synthetic generation and ground-truth information are intended for testing and evaluation. Ground truth must remain separate from the production recovery decisions.
 
 Evaluation results should be reported with the command, seed, scenario coverage, and test results used to obtain them. A successful synthetic benchmark does not establish performance on every real-world evidence source.
+
+## Security and Deployment Model
+
+Recoverix is architected as a **local single-user forensic recovery workstation tool**. It does **not** provide built-in user accounts, passwords, API tokens, session management, or role-based access controls (RBAC).
+
+### Supported Deployment Modes
+
+1. **Local Development / Single-User Workstation (Recommended)**
+   - The backend runs on loopback (`http://127.0.0.1:8000`) and the frontend runs on loopback (`http://127.0.0.1:3000`).
+   - CORS is restricted by default to local origins (`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:8000`, `http://127.0.0.1:8000`).
+   - Browsers prevent arbitrary third-party websites from reading evidence data or executing cross-origin API calls.
+
+2. **Local Desktop / Container Deployment (`docker compose`)**
+   - Services are published on the host loopback adapter (`127.0.0.1:8000` and `127.0.0.1:3000`), preventing port exposure across LAN or public network interfaces.
+   - CORS origins are configured via `RECOVERIX_CORS_ORIGINS`.
+
+3. **Network-Accessible Deployment (Shared Server or Cloud)**
+   - **Important:** Recoverix does not implement authentication. Binding the backend to `0.0.0.0` or exposing port 8000 directly to a local network or the internet allows anyone with network connectivity to view cases, upload evidence, and download recovered payloads.
+   - Exposing Recoverix to an untrusted or multi-user network requires an external security perimeter:
+     - **Authenticating Reverse Proxy:** Deploy an identity-aware proxy (e.g. OAuth2-Proxy, Cloudflare Access, AWS ALB OIDC, or Nginx with HTTP Basic/mTLS) in front of the API.
+     - **Network Isolation:** Restrict access via VPN (e.g. WireGuard, Tailscale) or firewall rules.
+     - **TLS Termination:** Terminate HTTPS at the gateway.
+     - **Request Size Limiting:** Enforce reverse-proxy upload size limits (`client_max_body_size 6m` in Nginx).
+     - **CORS Configuration:** Explicitly configure `RECOVERIX_CORS_ORIGINS` to the domain of the deployed frontend.
+
+### CORS Configuration and Invariants
+
+Browser cross-origin requests are governed by the `RECOVERIX_CORS_ORIGINS` environment variable:
+- **Default Loopback Origins:** If unset or blank, Recoverix defaults safely to local loopback origins (`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:8000`, `http://127.0.0.1:8000`).
+- **Configuring Explicit Origins:** Specify allowed origins as a comma-separated list or JSON array of `scheme://host[:port]` entries with no path, query, or fragment:
+  - `RECOVERIX_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`
+  - `RECOVERIX_CORS_ORIGINS='["http://localhost:3000", "https://forensics.corp.internal"]'`
+- **Disabling CORS:** Setting `RECOVERIX_CORS_ORIGINS=none` (or `disabled`, `false`, `0`) disables browser cross-origin requests entirely by omitting CORS headers.
+- **Malformed Entry Handling:** Invalid origin formats (e.g., missing scheme, containing path like `/api`, or containing query strings) are filtered out individually.
+- **Fallback Behavior:** If all configured entries are malformed or invalid, Recoverix falls back safely to the local loopback defaults rather than failing open or producing an empty/broken state.
+- **Wildcard Origins Strictly Rejected:** Wildcard origins (`*`) are rejected by the origin validator. Configuring `RECOVERIX_CORS_ORIGINS=*` will not enable unrestricted CORS; it will be rejected as invalid and fall back to the loopback defaults.
+- **CORS Is Not Authentication:** CORS is enforced solely by web browsers to restrict cross-origin JavaScript execution. It provides zero protection against direct HTTP clients (`curl`, scripts) or unauthorized users with network connectivity to the port.
+- **No Built-in Authentication:** The API contains no authentication or authorization. Wildcard CORS or exposing the API port to untrusted networks without an authenticating reverse proxy and network isolation must never be permitted.
 
 ## Limitations
 

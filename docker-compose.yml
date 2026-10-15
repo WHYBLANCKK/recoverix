@@ -5,11 +5,12 @@ services:
       dockerfile: Dockerfile.backend
     container_name: recoverix-backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - RECOVERIX_DB_PATH=/app/data/recoverix.db
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - RECOVERIX_OFFLINE=${RECOVERIX_OFFLINE:-0}
+      - RECOVERIX_CORS_ORIGINS=${RECOVERIX_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     volumes:
       - recoverix_data:/app/data
     healthcheck:
@@ -28,7 +29,7 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     container_name: recoverix-frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
