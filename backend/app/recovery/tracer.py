@@ -158,6 +158,27 @@ def _init_trace_context(run_id: str):
     return started_at, events, emit_event
 
 
+_VALID_DAMAGE_STATUSES = {"RECONSTRUCTED", "UNRECOVERABLE", "UNRESOLVED", "DETECTED"}
+
+
+def _resolve_damage_region_status(raw_status: Optional[str], recon_success: bool) -> str:
+    """Resolve and validate damage region status from reconstructor output.
+
+    - 'RECONSTRUCTABLE': translates to 'RECONSTRUCTED' if reconstruction succeeded,
+      otherwise 'UNRECOVERABLE'.
+    - Known terminal statuses ('RECONSTRUCTED', 'UNRECOVERABLE', 'UNRESOLVED', 'DETECTED'):
+      preserved as declared.
+    - Missing, absent, or unrecognized status values: handled deliberately by falling back
+      to 'RECONSTRUCTED' if reconstruction succeeded, else 'UNRECOVERABLE'.
+      Arbitrary invalid status strings are never silently passed to DamageRegion.
+    """
+    if raw_status == "RECONSTRUCTABLE":
+        return "RECONSTRUCTED" if recon_success else "UNRECOVERABLE"
+    if raw_status in _VALID_DAMAGE_STATUSES:
+        return raw_status
+    return "RECONSTRUCTED" if recon_success else "UNRECOVERABLE"
+
+
 def _finalize_recovery_run(
     *,
     run_id: str,
@@ -483,7 +504,7 @@ def _recover_contiguous_candidate(
                         end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
                         length=dmg.get("length", 0),
                         type=dmg.get("type", "CORRUPTED"),
-                        status="RECONSTRUCTED" if recon_res.success else "UNRECOVERABLE",
+                        status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
                         affected_fragment_ids=["frag-0"],
                     )
                 )
@@ -1082,7 +1103,7 @@ def _recover_standalone_candidate(
                     end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
                     length=dmg.get("length", 0),
                     type=dmg.get("type", "CORRUPTED"),
-                    status="RECONSTRUCTED" if recon_res.success else "UNRECOVERABLE",
+                    status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
                     affected_fragment_ids=["frag-0"],
                 )
             )
@@ -1740,7 +1761,7 @@ def _recover_direct_fallback(
                             end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
                             length=dmg.get("length", 0),
                             type=dmg.get("type", "CORRUPTED"),
-                            status="RECONSTRUCTED" if recon_res.success else "UNRECOVERABLE",
+                            status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
                             affected_fragment_ids=[detected[0].fragment_id],
                         )
                     )
@@ -1916,7 +1937,7 @@ def _recover_direct_fallback(
                             end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
                             length=dmg.get("length", 0),
                             type=dmg.get("type", "CORRUPTED"),
-                            status="RECONSTRUCTED" if recon_res.success else "UNRECOVERABLE",
+                            status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
                             affected_fragment_ids=["frag-0"],
                         )
                     )
@@ -2032,7 +2053,7 @@ def _recover_direct_fallback(
                         end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
                         length=dmg.get("length", 0),
                         type=dmg.get("type", "CORRUPTED"),
-                        status="RECONSTRUCTED" if recon_res.success else "UNRECOVERABLE",
+                        status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
                         affected_fragment_ids=["frag-0"],
                     )
                 )

@@ -16,6 +16,7 @@ Covers the required recovery cases:
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -597,3 +598,214 @@ def test_case13_reconstructor_and_evaluator_idempotence():
     assert r1.reconstructed_bytes == r2.reconstructed_bytes == 2
     assert r1.missing_bytes == r2.missing_bytes == 0
     assert r1.damage_regions == r2.damage_regions
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Milestone 3 — JSON Content-Loss Accounting Regression Tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_m3_1_closable_json_prefix_no_known_physical_gap():
+    """1. A closable JSON prefix with no known physical gap."""
+    evidence = b'{"service": "auth", "port": 8080, "roles": ["admin"'
+    r = reconstruct_json(evidence)
+    assert r.status == "PARTIALLY_RECOVERED"
+    assert r.status != "FULLY_RECOVERED"
+    assert r.verified_bytes == len(evidence)
+    assert r.reconstructed_bytes == 2  # appended ']}'
+    assert r.missing_bytes == 0  # no gap present in evidence
+    assert r.recovered_bytes == b'{"service": "auth", "port": 8080, "roles": ["admin"]}'
+    parsed = json.loads(r.recovered_bytes)
+    assert parsed["roles"] == ["admin"]
+    assert len(r.damage_regions) == 1
+    assert r.damage_regions[0]["type"] == "MISSING_STRUCTURAL_CLOSURE"
+
+
+def test_m3_2_json_candidate_with_observed_known_length_missing_region():
+    """2. A JSON candidate with an observed, known-length missing region (padding)."""
+    clean_prefix = b'{"status": "ok", "tags": [1, 2'
+    padding = b"\x00" * 32
+    evidence = clean_prefix + padding
+
+    r = reconstruct_json(evidence)
+    assert r.status == "PARTIALLY_RECOVERED"
+    assert r.verified_bytes == len(clean_prefix)
+    assert r.reconstructed_bytes == 2  # ']}'
+    assert r.missing_bytes == 32  # observed trailing padding accounted as missing
+    assert r.verified_bytes + r.missing_bytes == len(evidence)
+
+    # Damage regions contain structural closure and unrecoverable padding
+    padding_dmgs = [d for d in r.damage_regions if d["type"] == "UNATTRIBUTED_PADDING"]
+    assert len(padding_dmgs) == 1
+    assert padding_dmgs[0]["length"] == 32
+    assert padding_dmgs[0]["status"] == "UNRECOVERABLE"
+
+    # Verify through tracer: UNRECOVERABLE status is preserved and not clobbered
+    runs = execute_traced_recoveries("observed_gap.img", evidence)
+    assert len(runs) >= 1
+    run = runs[0]
+    unrec_dmgs = [d for d in run.damage_regions if d.status == "UNRECOVERABLE"]
+    assert len(unrec_dmgs) == 1
+    assert unrec_dmgs[0].length == 32
+
+    # Verify benchmark observation maps padding to MISSING segment, NOT RECONSTRUCTED
+    from benchmark.run_baseline import run_pipeline_and_observe
+    obs_manifest = run_pipeline_and_observe("observed_gap.img", evidence)
+    rec = obs_manifest.recoveries[0]
+    assert rec.total_verified_bytes == len(clean_prefix)
+    assert rec.total_reconstructed_bytes == 2
+    assert rec.total_missing_bytes == 32
+    assert len(rec.missing_segments) == 1
+    assert rec.missing_segments[0].evidence_start == len(clean_prefix)
+    assert rec.missing_segments[0].evidence_end == len(evidence)
+
+    # Deliberate status resolution: verify that arbitrary/unrecognized strings are not passed through
+    from backend.app.recovery.tracer import _resolve_damage_region_status
+    assert _resolve_damage_region_status("UNRECOVERABLE", True) == "UNRECOVERABLE"
+    assert _resolve_damage_region_status("UNRECOVERABLE", False) == "UNRECOVERABLE"
+    assert _resolve_damage_region_status("RECONSTRUCTED", True) == "RECONSTRUCTED"
+    assert _resolve_damage_region_status("UNRESOLVED", True) == "UNRESOLVED"
+    assert _resolve_damage_region_status("DETECTED", True) == "DETECTED"
+    assert _resolve_damage_region_status("RECONSTRUCTABLE", True) == "RECONSTRUCTED"
+    assert _resolve_damage_region_status("RECONSTRUCTABLE", False) == "UNRECOVERABLE"
+    assert _resolve_damage_region_status(None, True) == "RECONSTRUCTED"
+    assert _resolve_damage_region_status(None, False) == "UNRECOVERABLE"
+    assert _resolve_damage_region_status("", True) == "RECONSTRUCTED"
+    assert _resolve_damage_region_status("INVALID_STATUS", True) == "RECONSTRUCTED"
+    assert _resolve_damage_region_status("INVALID_STATUS", False) == "UNRECOVERABLE"
+
+
+def test_m3_3_json_candidate_with_possible_gap_exact_size_unknown():
+    """3. A JSON candidate with a possible gap whose exact size is unknown from evidence."""
+    orig = b'{"readings": [1, 2, 3, 4, 5]}'
+    surviving = b'{"readings": [1, 2'  # Truncated at EOF, missing 11 original bytes
+
+    # Engine must NOT invent or guess missing bytes from thin air
+    r = reconstruct_json(surviving, original_data=orig)
+    assert r.status == "PARTIALLY_RECOVERED"
+    assert r.verified_bytes == len(surviving)
+    assert r.reconstructed_bytes == 2  # ']}'
+    assert r.missing_bytes == 0  # cannot prove 11 bytes were lost from evidence alone
+    assert r.is_exact_match is False
+
+    # Independent benchmark evaluator detects UNACCOUNTED_GAP
+    from benchmark.json_benchmark import build_truncated_closable_content_loss_scenario, evaluate_json_scenario
+    gt_manifest, evidence_bytes = build_truncated_closable_content_loss_scenario(seed=42)
+    eval_res = evaluate_json_scenario(gt_manifest, evidence_bytes)
+    assert eval_res["passed"] is False
+    assert any("UNACCOUNTED_GAP" in v for v in eval_res["forensic_violations"])
+
+
+def test_m3_4_structural_closure_with_genuinely_missing_original_content():
+    """4. Structural closure with genuinely missing original content."""
+    orig = b'{"user": "alice", "items": ["item1", "item2", "item3"]}'
+    surviving = b'{"user": "alice", "items": ["item1"'
+
+    r = reconstruct_json(surviving, original_data=orig)
+    assert r.status == "PARTIALLY_RECOVERED"
+    assert r.status != "FULLY_RECOVERED"
+    assert r.recovered_bytes == b'{"user": "alice", "items": ["item1"]}'
+
+    # Syntactically valid JSON
+    parsed = json.loads(r.recovered_bytes)
+    assert parsed["user"] == "alice"
+    assert parsed["items"] == ["item1"]
+
+    # Original content 'item2' and 'item3' are permanently missing
+    assert b"item2" not in r.recovered_bytes
+    assert b"item3" not in r.recovered_bytes
+    assert r.is_exact_match is False
+    assert hashlib.sha256(r.recovered_bytes).hexdigest() != hashlib.sha256(orig).hexdigest()
+    assert r.details["output_sha256"] != hashlib.sha256(orig).hexdigest()
+
+
+def test_m3_5_incomplete_tokens_no_fabrication():
+    """5. Incomplete tokens where content must not be fabricated."""
+    # Case A: Incomplete number token
+    r_num = reconstruct_json(b'{"ratio": 3.')
+    assert r_num.success is False
+    assert r_num.reconstructed_bytes == 0
+    assert r_num.status in ("UNRECOVERABLE", "PARTIALLY_RECOVERED")
+
+    # Case B: Unterminated member string
+    r_str = reconstruct_json(b'{"incomplete_key')
+    assert r_str.success is False
+    assert r_str.reconstructed_bytes == 0
+
+    # Case C: Truncated literal
+    r_lit = reconstruct_json(b'{"active": tr')
+    assert r_lit.success is False
+    assert r_lit.reconstructed_bytes == 0
+
+
+def test_m3_6_correct_separation_v_r_m_u():
+    """6. Correct separation of V, R, M, and unresolved uncertainty."""
+    # Case A: Complete JSON with trailing padding
+    ev_complete = b'{"key": "val"}' + (b"\x00" * 10)
+    r1 = reconstruct_json(ev_complete)
+    assert r1.verified_bytes + r1.missing_bytes == len(ev_complete)
+    assert r1.verified_bytes + r1.reconstructed_bytes == len(r1.recovered_bytes)
+    assert r1.reconstructed_bytes == 0
+    assert r1.missing_bytes == 10
+
+    # Case B: Closable JSON with trailing padding
+    ev_closable = b'{"key": "val"' + (b"\x00" * 10)
+    r2 = reconstruct_json(ev_closable)
+    assert r2.verified_bytes + r2.missing_bytes == len(ev_closable)
+    assert r2.verified_bytes + r2.reconstructed_bytes == len(r2.recovered_bytes)
+    assert r2.reconstructed_bytes == 1  # '}'
+    assert r2.missing_bytes == 10
+
+    # Case C: Truncated at EOF (uncertainty U)
+    ev_eof = b'{"key": "val"'
+    r3 = reconstruct_json(ev_eof)
+    # Conservation holds on evidence coordinates
+    assert r3.verified_bytes + r3.missing_bytes == len(ev_eof)
+    assert r3.verified_bytes + r3.reconstructed_bytes == len(r3.recovered_bytes)
+    # Uncertainty is not fabricated into M
+    assert r3.missing_bytes == 0
+
+
+def test_m3_7_correct_recovery_status_invariants():
+    """7. Correct recovery status invariants."""
+    # FULLY_RECOVERED requires valid JSON, R == 0, and M == 0
+    r_clean = reconstruct_json(b'{"status": "ok"}')
+    assert r_clean.status == "FULLY_RECOVERED"
+    assert r_clean.reconstructed_bytes == 0
+    assert r_clean.missing_bytes == 0
+
+    # PARTIALLY_RECOVERED if R > 0
+    r_closable = reconstruct_json(b'{"status": "ok"')
+    assert r_closable.status == "PARTIALLY_RECOVERED"
+    assert r_closable.status != "FULLY_RECOVERED"
+
+    # PARTIALLY_RECOVERED if M > 0
+    r_padded = reconstruct_json(b'{"status": "ok"}' + (b"\x00" * 8))
+    assert r_padded.status == "PARTIALLY_RECOVERED"
+    assert r_padded.status != "FULLY_RECOVERED"
+
+    # UNRECOVERABLE if noise
+    r_noise = reconstruct_json(b'{malformed-not-json')
+    assert r_noise.status == "UNRECOVERABLE"
+    assert r_noise.status != "FULLY_RECOVERED"
+
+
+def test_m3_8_independent_evaluator_unaccounted_gap_detection():
+    """8. Independent evaluator detection of content-loss accounting gap."""
+    import hashlib
+    from benchmark.json_benchmark import (
+        build_truncated_closable_content_loss_scenario,
+        build_truncated_closable_pure_scenario,
+        evaluate_json_scenario,
+    )
+
+    # Content-loss scenario: gap is detected by benchmark evaluator
+    gt_cl, ev_cl = build_truncated_closable_content_loss_scenario(seed=42)
+    res_cl = evaluate_json_scenario(gt_cl, ev_cl)
+    assert res_cl["passed"] is False
+    assert any("UNACCOUNTED_GAP" in v for v in res_cl["forensic_violations"])
+
+    # Pure delimiter scenario: closes deterministically with 0 violations
+    gt_pure, ev_pure = build_truncated_closable_pure_scenario(seed=42)
+    res_pure = evaluate_json_scenario(gt_pure, ev_pure)
+    assert res_pure["passed"] is True
+    assert len(res_pure["forensic_violations"]) == 0
