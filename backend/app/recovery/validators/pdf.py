@@ -188,6 +188,128 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
     )
 
 
+def is_catalog_dictionary(obj_bytes: bytes) -> bool:
+    """Determine whether obj_bytes contains a top-level Document Catalog dictionary.
+
+    Uses a bounded lexical scanner that distinguishes structural dictionary
+    entries from occurrences inside literal strings (with escaped parens),
+    comments, hex strings, arrays, sub-dictionaries, and stream payloads.
+    """
+    n = len(obj_bytes)
+    i = 0
+    dict_depth = 0
+    array_depth = 0
+
+    while i < n:
+        b = obj_bytes[i:i + 1]
+
+        # Stop if we hit stream or endobj keywords outside of strings/comments
+        if obj_bytes.startswith(b"stream", i):
+            after_stream = i + 6
+            if after_stream >= n or obj_bytes[after_stream:after_stream + 1] in b" \t\r\n\x00\x0c":
+                break
+        if obj_bytes.startswith(b"endobj", i):
+            after_endobj = i + 6
+            if after_endobj >= n or obj_bytes[after_endobj:after_endobj + 1] in b" \t\r\n\x00\x0c()<>[]{}/%":
+                break
+
+        # 1. Skip comments: % to end of line (\r or \n)
+        if b == b"%":
+            i += 1
+            while i < n and obj_bytes[i:i + 1] not in b"\r\n":
+                i += 1
+            continue
+
+        # 2. Skip literal strings: (...) handling nested () and escapes \( \)
+        if b == b"(":
+            i += 1
+            paren_depth = 1
+            while i < n and paren_depth > 0:
+                cb = obj_bytes[i:i + 1]
+                if cb == b"\\":
+                    i += 2
+                    continue
+                elif cb == b"(":
+                    paren_depth += 1
+                elif cb == b")":
+                    paren_depth -= 1
+                i += 1
+            continue
+
+        # 3. Dictionary start << or hex string <
+        if b == b"<":
+            if i + 1 < n and obj_bytes[i + 1:i + 2] == b"<":
+                dict_depth += 1
+                i += 2
+                continue
+            else:
+                # Hex string: skip until >
+                i += 1
+                while i < n and obj_bytes[i:i + 1] != b">":
+                    i += 1
+                if i < n and obj_bytes[i:i + 1] == b">":
+                    i += 1
+                continue
+
+        # 4. Dictionary end >> or stray >
+        if b == b">":
+            if i + 1 < n and obj_bytes[i + 1:i + 2] == b">":
+                if dict_depth > 0:
+                    dict_depth -= 1
+                    if dict_depth == 0:
+                        break
+                i += 2
+                continue
+            else:
+                i += 1
+                continue
+
+        # 5. Array delimiters [ and ]
+        if b == b"[":
+            array_depth += 1
+            i += 1
+            continue
+        if b == b"]":
+            if array_depth > 0:
+                array_depth -= 1
+            i += 1
+            continue
+
+        # 6. Name token starting with /
+        if b == b"/":
+            start_name = i
+            i += 1
+            while i < n and obj_bytes[i:i + 1] not in b" \t\r\n\x00\x0c()<>[]{}/%":
+                i += 1
+            name = obj_bytes[start_name:i]
+
+            # We only care about /Type at top-level dictionary
+            if dict_depth == 1 and array_depth == 0 and name == b"/Type":
+                # Scan next token, skipping whitespace and comments
+                while i < n:
+                    if obj_bytes[i:i + 1] in b" \t\r\n\x00\x0c":
+                        i += 1
+                    elif obj_bytes[i:i + 1] == b"%":
+                        while i < n and obj_bytes[i:i + 1] not in b"\r\n":
+                            i += 1
+                    else:
+                        break
+
+                if i < n and obj_bytes[i:i + 1] == b"/":
+                    val_start = i
+                    i += 1
+                    while i < n and obj_bytes[i:i + 1] not in b" \t\r\n\x00\x0c()<>[]{}/%":
+                        i += 1
+                    val_name = obj_bytes[val_start:i]
+                    if val_name == b"/Catalog":
+                        return True
+            continue
+
+        i += 1
+
+    return False
+
+
 def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
     """Deterministically rebuild xref table and startxref for damaged PDF bytes.
 
@@ -221,17 +343,34 @@ def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
     if not objects_map:
         return pdf_bytes, False
 
-    # Find existing catalog / Root object reference if possible, or fallback to first Catalog obj
-    root_ref_match = re.search(rb"/Root\s+(\d+)\s+(\d+)\s+R", pdf_bytes)
-    if root_ref_match:
+    # Find existing catalog / Root object reference in trailer if possible
+    root_ref_match = None
+    trailer_idx = pdf_bytes.rfind(b"trailer")
+    if trailer_idx != -1:
+        root_ref_match = re.search(rb"/Root\s+(\d+)\s+(\d+)\s+R\b", pdf_bytes[trailer_idx:])
+
+    if root_ref_match and int(root_ref_match.group(1)) in objects_map:
         root_num = int(root_ref_match.group(1))
     else:
-        # Fallback: look for object containing /Type /Catalog
-        catalog_match = re.search(rb"(\d+)\s+(\d+)\s+obj\s*<<[^\n]*?/Type\s*/Catalog", pdf_bytes, re.DOTALL)
-        if catalog_match:
-            root_num = int(catalog_match.group(1))
-        else:
-            root_num = min(objects_map.keys())
+        # Search objects for structural Document Catalog dictionary
+        root_num = None
+        for i, match in enumerate(obj_matches):
+            obj_num = int(match.group(1))
+            start_off = match.start()
+            next_start = obj_matches[i + 1].start() if i + 1 < len(obj_matches) else len(pdf_bytes)
+            obj_slice = pdf_bytes[start_off:next_start]
+
+            endobj_match = re.search(rb"\bendobj\b", obj_slice)
+            if endobj_match:
+                obj_slice = obj_slice[:endobj_match.end()]
+
+            if is_catalog_dictionary(obj_slice):
+                root_num = obj_num
+                break
+
+        if root_num is None:
+            # Conservative failure: no valid trailer /Root exists and no Catalog can be structurally identified
+            return pdf_bytes, False
 
     # Truncate any damaged old xref / trailer if present
     clean_base = pdf_bytes

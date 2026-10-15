@@ -447,3 +447,236 @@ def test_shuffled_pdf_recovery_via_api():
     assert data["confidence_score"] == 100.0
     assert data["is_downloadable"] is True
 
+
+# ── PDF Catalog Matching Regression Suite (Phases 1-3) ────────────────
+
+
+def test_pdf_catalog_detection_single_line():
+    """Scenario 9: Valid Catalog dictionary represented on one line is recognized."""
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Pages /Kinds [] /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Catalog /Pages 1 0 R >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 1 0 R >>\nendobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+    val = validate_pdf(reconstructed)
+    assert val.valid is True
+
+
+def test_pdf_catalog_detection_multiline_format():
+    """Scenario 1: The original multiline Catalog defect is resolved."""
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"2 0 obj\n"
+        b"<<\n"
+        b"  /Type /Catalog\n"
+        b"  /Pages 1 0 R\n"
+        b">>\n"
+        b"endobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 1 0 R >>\nendobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    # Crucial: Must identify Object 2 as Root, NOT default to Object 1 (Pages)
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+    val = validate_pdf(reconstructed)
+    assert val.valid is True
+
+
+def test_pdf_catalog_detection_multiline_preceding_entries():
+    """Scenario 9 (cont): Catalog dictionary containing unrelated entries before /Type /Catalog."""
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"2 0 obj\n"
+        b"<<\n"
+        b"  /Pages 1 0 R\n"
+        b"  /ViewerPreferences << /HideToolbar true >>\n"
+        b"  /Version /1.4\n"
+        b"  /Type /Catalog\n"
+        b">>\n"
+        b"endobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 1 0 R >>\nendobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+    val = validate_pdf(reconstructed)
+    assert val.valid is True
+
+
+def test_pdf_catalog_misleading_literal_string_before_real_catalog():
+    """Scenario 2 & Phase 1 Reproduction: Literal string /Title (Document about /Type /Catalog)
+    in Object 1 must not be misidentified as the Document Catalog over real Catalog in Object 2.
+    """
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        b"<< /Title (Document about /Type /Catalog) /Pages 3 0 R >>\n"
+        b"endobj\n"
+        b"2 0 obj\n"
+        b"<< /Type /Catalog /Pages 3 0 R >>\n"
+        b"endobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Pages /Count 1 /Kids [] >>\n"
+        b"endobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+    val = validate_pdf(reconstructed)
+    assert val.valid is True
+
+
+def test_pdf_catalog_escaped_parentheses_in_literal_string():
+    """Scenario 3: Literal string with escaped parentheses \\( and \\) containing /Type /Catalog text."""
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        b"<< /Title (Complex title \\(with parens\\) mentioning /Type /Catalog inside) /Pages 3 0 R >>\n"
+        b"endobj\n"
+        b"2 0 obj\n"
+        b"<<\n"
+        b"  /Type /Catalog\n"
+        b"  /Pages 3 0 R\n"
+        b">>\n"
+        b"endobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Pages /Count 1 /Kids [] >>\n"
+        b"endobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+
+
+def test_pdf_catalog_comment_containing_misleading_text():
+    """Scenario 4 & Phase 1 Reproduction: Comments containing /Type /Catalog must be ignored."""
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        b"<<\n"
+        b"  % Warning: this comment mentions /Type /Catalog\n"
+        b"  /Type /Pages\n"
+        b"  /Count 1\n"
+        b"  /Kids [3 0 R]\n"
+        b">>\n"
+        b"endobj\n"
+        b"2 0 obj\n"
+        b"<< /Type /Catalog /Pages 1 0 R >>\n"
+        b"endobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Page /Parent 1 0 R >>\n"
+        b"endobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+
+
+def test_pdf_catalog_hexadecimal_string_containing_misleading_text():
+    """Scenario 5: Hexadecimal string <...> containing misleading /Type /Catalog bytes."""
+    # 2F54797065202F436174616C6F67 is hex for "/Type /Catalog"
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        b"<< /CustomData <2F54797065202F436174616C6F67> /Pages 3 0 R >>\n"
+        b"endobj\n"
+        b"2 0 obj\n"
+        b"<< /Type /Catalog /Pages 3 0 R >>\n"
+        b"endobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Pages /Count 1 /Kids [] >>\n"
+        b"endobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+
+
+def test_pdf_catalog_stream_content_containing_misleading_text():
+    """Scenario 6: Stream payload containing /Type /Catalog text must not be selected over true Catalog."""
+    stream_content = b"BT /F1 12 Tf (Mentioning /Type /Catalog inside content stream) Tj ET"
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        b"<< /Length " + str(len(stream_content)).encode("ascii") + b" >>\n"
+        b"stream\n" + stream_content + b"\nendstream\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<<\n"
+        b"  /Type /Catalog\n"
+        b"  /Pages 2 0 R\n"
+        b">>\nendobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 3 0 R" in reconstructed
+    assert b"/Root 1 0 R" not in reconstructed
+
+
+def test_pdf_catalog_prefers_valid_existing_trailer_root():
+    """Scenario 7: A valid existing trailer /Root reference is preserved."""
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
+        b"trailer\n<< /Size 4 /Root 2 0 R >>\nstartxref\n150\n%%EOF\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(body)
+    assert ok is True
+    assert b"/Root 2 0 R" in reconstructed
+
+
+def test_pdf_catalog_missing_or_invalid_catalog_evidence_fails_conservatively():
+    """Scenario 8: When no valid /Root exists in trailer and no Document Catalog can be structurally
+    identified, reconstruction fails conservatively rather than fabricating an arbitrary false /Root.
+    """
+    no_catalog_body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Pages /Count 1 /Kids [2 0 R] >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Page /Parent 1 0 R >>\nendobj\n"
+    )
+    reconstructed, ok = reconstruct_pdf_xref(no_catalog_body)
+    assert ok is False
+    assert reconstructed == no_catalog_body
+
+
+def test_pdf_catalog_malformed_and_truncated_input():
+    """Phase 2E: Malformed and truncated PDFs must be handled conservatively without claiming false validity."""
+    # Subcase 1: Truncated header with dangling catalog dictionary
+    truncated_catalog = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog"
+    val = validate_pdf(truncated_catalog)
+    assert val.valid is False
+    assert any("Missing PDF trailer signature" in e or "No valid indirect objects" in e for e in val.errors)
+
+    # Subcase 2: Non-PDF arbitrary text containing /Type /Catalog
+    garbage_data = b"RANDOM_NON_PDF_DATA /Type /Catalog MORE_GARBAGE"
+    val_garbage = validate_pdf(garbage_data)
+    assert val_garbage.valid is False
+    rebuilt_garbage, ok_garbage = reconstruct_pdf_xref(garbage_data)
+    assert ok_garbage is False
+
+    # Subcase 3: Object with unmatched stream markers
+    damaged_stream = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog >>\nendobj\n"
+        b"2 0 obj\n<< /Length 10 >>\nstream\ncorrupted payload lacking closing marker\nendobj\n"
+        b"trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n100\n%%EOF\n"
+    )
+    val_stream = validate_pdf(damaged_stream)
+    assert val_stream.valid is False
+    assert any("Damaged stream boundaries" in e for e in val_stream.errors)
+
