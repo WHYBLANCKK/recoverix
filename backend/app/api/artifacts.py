@@ -105,19 +105,31 @@ def explain_artifact_route(artifact_id: str, body: Optional[Dict[str, Any]] = Bo
 @router.get("/artifacts/{artifact_id}/download", status_code=status.HTTP_200_OK)
 def download_artifact(artifact_id: str) -> Response:
     """Download raw byte buffer of a recovered case artifact."""
-    artifact = store.get_artifact(artifact_id)
-    if artifact is None:
+    record = store.get_artifact_record(artifact_id)
+    if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Artifact '{artifact_id}' not found",
         )
 
-    content = store.get_artifact_bytes(artifact_id)
-    if content is None:
-        preview = artifact.content_preview or ""
-        content = preview.encode("utf-8")
+    # 1. Unrecoverable or non-downloadable artifacts must never be downloaded as valid files
+    if record.status == "UNRECOVERABLE" or not record.is_downloadable:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact '{artifact_id}' is unrecoverable and cannot be downloaded",
+        )
 
-    filename = f"recovered_artifact_{artifact_id}.{artifact.format}"
+    # 2. Retrieve authoritative recovered payload bytes
+    content = store.get_artifact_bytes(artifact_id)
+
+    # 3. If payload bytes are missing or empty, fail with 404 (never synthesize from preview)
+    if content is None or len(content) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recovered payload for artifact '{artifact_id}' is unavailable",
+        )
+
+    filename = record.recovered_filename or f"recovered_artifact_{artifact_id}.{record.format}"
     return Response(
         content=content,
         media_type="application/octet-stream",

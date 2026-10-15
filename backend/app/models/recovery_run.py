@@ -32,6 +32,8 @@ class Fragment(BaseModel):
 
     @model_validator(mode="after")
     def verify_offsets_and_length(self) -> "Fragment":
+        if self.offset < 0:
+            raise ValueError(f"Fragment offset ({self.offset}) cannot be negative")
         if self.end_offset < self.offset:
             raise ValueError(
                 f"Fragment end_offset ({self.end_offset}) cannot be less than offset ({self.offset})"
@@ -55,6 +57,8 @@ class DamageRegion(BaseModel):
 
     @model_validator(mode="after")
     def verify_offsets_and_length(self) -> "DamageRegion":
+        if self.start_offset < 0:
+            raise ValueError(f"DamageRegion start_offset ({self.start_offset}) cannot be negative")
         if self.end_offset < self.start_offset:
             raise ValueError(
                 f"DamageRegion end_offset ({self.end_offset}) cannot be less than start_offset ({self.start_offset})"
@@ -117,3 +121,4 @@ class RecoveryRun(BaseModel):
     provenance: Optional[Dict[str, Any]] = None
     output: Optional[Dict[str, Any]] = None
     detection_mode: Optional[str] = "known_file"
+    corrupted_fields: Optional[List[str]] = None

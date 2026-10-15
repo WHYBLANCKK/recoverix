@@ -99,18 +99,16 @@ async def recover_single_file(file: UploadFile = File(...)) -> FileRecoveryRespo
     score_breakdown = recovery_run.confidence
     val_details = recovery_run.validation
 
-    is_downloadable = len(recovery_run.output.get("recovered_bytes", "").encode()) > 0 if recovery_run.output else False
+    recovered_content = extract_recovered_bytes(recovery_run)
+    is_downloadable = (status_val != "UNRECOVERABLE") and (len(recovered_content) > 0)
     download_url = f"/api/recover-file/{file_id}/download"
 
     content_preview = None
-    if recovery_run.output:
-        hex_str = recovery_run.output.get("recovered_bytes", "")
-        if hex_str:
-            try:
-                raw_b = bytes.fromhex(hex_str)
-                content_preview = raw_b.decode("utf-8", errors="replace")[:300]
-            except Exception:
-                content_preview = hex_str[:300]
+    if recovered_content:
+        try:
+            content_preview = recovered_content.decode("utf-8", errors="replace")[:300]
+        except Exception:
+            content_preview = recovered_content[:100].hex()
 
     meta_dict = {
         "file_id": file_id,
@@ -137,7 +135,6 @@ async def recover_single_file(file: UploadFile = File(...)) -> FileRecoveryRespo
         "provenance": recovery_run.provenance,
     }
 
-    recovered_content = extract_recovered_bytes(recovery_run)
     store.store_recovered_file(file_id, meta_dict, recovered_content)
 
     return FileRecoveryResponse(**meta_dict)
@@ -163,7 +160,13 @@ def download_recovered_file(file_id: str) -> Response:
     meta = store.get_recovered_file_metadata(file_id)
     content = store.get_recovered_file_bytes(file_id)
 
-    if meta is None or content is None or not meta.get("is_downloadable", False):
+    if (
+        meta is None
+        or content is None
+        or meta.get("status") == "UNRECOVERABLE"
+        or not meta.get("is_downloadable", False)
+        or len(content) == 0
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Recovered file '{file_id}' not found or unrecoverable",

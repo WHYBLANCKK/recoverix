@@ -36,29 +36,82 @@ from backend.app.storage.sqlite_blob_store import SqliteBlobStore
 from backend.app.storage.sqlite_engine import SqliteEngine
 
 
+def _parse_persisted_json(
+    raw_val: Any,
+    expected_type: type,
+    default: Any = None,
+) -> tuple[Any, bool]:
+    """Parse persisted JSON from SQLite column, distinguishing absent/empty from corrupted data.
+
+    Returns:
+        tuple (parsed_value, is_corrupted):
+          - If raw_val is None or empty: (default, False)  # Legitimately absent/empty
+          - If raw_val is valid JSON of expected_type: (parsed, False)
+          - If raw_val is malformed or wrong type: (default, True)  # Corrupted!
+    """
+    if raw_val is None:
+        return default, False
+    if isinstance(raw_val, (str, bytes)):
+        s = raw_val.decode("utf-8", errors="replace") if isinstance(raw_val, bytes) else raw_val
+        s = s.strip()
+        if not s:
+            return default, False
+        try:
+            parsed = json.loads(s)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return default, True
+    elif isinstance(raw_val, (dict, list)):
+        parsed = raw_val
+    else:
+        return default, True
+
+    if not isinstance(parsed, expected_type):
+        return default, True
+
+    return parsed, False
+
+
 def _safe_json_loads(val: Any, default: Any = None) -> Any:
     """Safely decode JSON string, returning default if None, empty, or corrupted."""
-    if not val:
-        return default
-    if isinstance(val, (dict, list)):
-        return val
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return default
+    res, _ = _parse_persisted_json(val, object if default is None else type(default), default)
+    return res
 
 
 def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
-    """Convert an SQLite row from the artifacts table to an ArtifactRecord."""
-    score_breakdown = _safe_json_loads(row["score_breakdown_json"], default={})
-    provenance = _safe_json_loads(row["provenance_json"], default={})
-    validation_details = _safe_json_loads(row["validation_details_json"], default={})
-    metadata = _safe_json_loads(row["metadata_json"], default={})
-    fragments = _safe_json_loads(row["fragments_json"], default=None)
-    damage_regions = _safe_json_loads(row["damage_regions_json"], default=None)
-    reconstruction_steps = _safe_json_loads(row["reconstruction_steps_json"], default=None)
+    """Convert an SQLite row from the artifacts table to an ArtifactRecord with corruption tracking."""
+    corrupted_fields: list[str] = []
 
-    run_id = row["run_id"] or (metadata.get("run_id") if isinstance(metadata, dict) else None)
+    score_breakdown, bad = _parse_persisted_json(row["score_breakdown_json"], dict, default={})
+    if bad:
+        corrupted_fields.append("score_breakdown_json")
+
+    provenance, bad = _parse_persisted_json(row["provenance_json"], dict, default={})
+    if bad:
+        corrupted_fields.append("provenance_json")
+
+    validation_details, bad = _parse_persisted_json(row["validation_details_json"], dict, default={})
+    if bad:
+        corrupted_fields.append("validation_details_json")
+
+    metadata, bad = _parse_persisted_json(row["metadata_json"], dict, default={})
+    if bad:
+        corrupted_fields.append("metadata_json")
+
+    fragments, bad = _parse_persisted_json(row["fragments_json"], list, default=None)
+    if bad:
+        corrupted_fields.append("fragments_json")
+
+    damage_regions, bad = _parse_persisted_json(row["damage_regions_json"], list, default=None)
+    if bad:
+        corrupted_fields.append("damage_regions_json")
+
+    reconstruction_steps, bad = _parse_persisted_json(row["reconstruction_steps_json"], list, default=None)
+    if bad:
+        corrupted_fields.append("reconstruction_steps_json")
+
+    metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
+
+    run_id = row["run_id"] or (metadata_dict.get("run_id") if isinstance(metadata_dict, dict) else None)
 
     v_bytes = int(row["verified_bytes"])
     r_bytes = int(row["reconstructed_bytes"])
@@ -69,6 +122,11 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         else (v_bytes + r_bytes + m_bytes)
     )
 
+    status_val = row["status"]
+    is_dl = bool(row["is_downloadable"])
+    if status_val == "UNRECOVERABLE":
+        is_dl = False
+
     return ArtifactRecord(
         artifact_id=row["artifact_id"],
         case_id=row["case_id"],
@@ -76,7 +134,7 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         original_filename=row["original_filename"],
         recovered_filename=row["recovered_filename"],
         format=row["format"],
-        status=row["status"],
+        status=status_val,
         confidence_score=float(row["confidence_score"]),
         verified_bytes=v_bytes,
         reconstructed_bytes=r_bytes,
@@ -84,7 +142,7 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         total_input_bytes=total_inp,
         reconstruction_method=row["reconstruction_method"],
         validation_status=row["validation_status"],
-        is_downloadable=bool(row["is_downloadable"]),
+        is_downloadable=is_dl,
         download_url=row["download_url"],
         content_preview=row["content_preview"],
         score_breakdown=score_breakdown if isinstance(score_breakdown, dict) else {},
@@ -96,12 +154,13 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         category=row["category"],
         priority=row["priority"],
         ai_summary=row["ai_summary"],
-        metadata=metadata if isinstance(metadata, dict) else {},
+        metadata=metadata_dict,
+        corrupted_fields=corrupted_fields if corrupted_fields else None,
     )
 
 
 def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
-    """Convert an SQLite row from recovery_runs table to a RecoveryRun."""
+    """Convert an SQLite row from recovery_runs table to a RecoveryRun with corruption tracking."""
     started_at = datetime.fromisoformat(row["started_at"])
     completed_at = (
         datetime.fromisoformat(row["completed_at"])
@@ -109,15 +168,79 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         else None
     )
 
-    fragments_data = _safe_json_loads(row["fragments_json"], default=[])
-    damage_regions_data = _safe_json_loads(row["damage_regions_json"], default=[])
-    reconstruction_steps_data = _safe_json_loads(row["reconstruction_steps_json"], default=[])
-    events_data = _safe_json_loads(row["events_json"], default=[])
+    corrupted_fields: list[str] = []
 
-    validation = _safe_json_loads(row["validation_json"], default=None)
-    confidence = _safe_json_loads(row["confidence_json"], default=None)
-    provenance = _safe_json_loads(row["provenance_json"], default=None)
-    output = _safe_json_loads(row["output_json"], default=None)
+    raw_frags, bad = _parse_persisted_json(row["fragments_json"], list, default=[])
+    if bad:
+        corrupted_fields.append("fragments_json")
+    fragments_data: list[Fragment] = []
+    if isinstance(raw_frags, list):
+        for f in raw_frags:
+            if isinstance(f, Fragment):
+                fragments_data.append(f)
+            elif isinstance(f, dict):
+                try:
+                    fragments_data.append(Fragment.model_validate(f))
+                except Exception:
+                    corrupted_fields.append("fragments_json:invalid_item")
+
+    raw_damages, bad = _parse_persisted_json(row["damage_regions_json"], list, default=[])
+    if bad:
+        corrupted_fields.append("damage_regions_json")
+    damage_regions_data: list[DamageRegion] = []
+    if isinstance(raw_damages, list):
+        for d in raw_damages:
+            if isinstance(d, DamageRegion):
+                damage_regions_data.append(d)
+            elif isinstance(d, dict):
+                try:
+                    damage_regions_data.append(DamageRegion.model_validate(d))
+                except Exception:
+                    corrupted_fields.append("damage_regions_json:invalid_item")
+
+    raw_steps, bad = _parse_persisted_json(row["reconstruction_steps_json"], list, default=[])
+    if bad:
+        corrupted_fields.append("reconstruction_steps_json")
+    reconstruction_steps_data: list[ReconstructionStep] = []
+    if isinstance(raw_steps, list):
+        for s in raw_steps:
+            if isinstance(s, ReconstructionStep):
+                reconstruction_steps_data.append(s)
+            elif isinstance(s, dict):
+                try:
+                    reconstruction_steps_data.append(ReconstructionStep.model_validate(s))
+                except Exception:
+                    corrupted_fields.append("reconstruction_steps_json:invalid_item")
+
+    raw_events, bad = _parse_persisted_json(row["events_json"], list, default=[])
+    if bad:
+        corrupted_fields.append("events_json")
+    events_data: list[PipelineEvent] = []
+    if isinstance(raw_events, list):
+        for e in raw_events:
+            if isinstance(e, PipelineEvent):
+                events_data.append(e)
+            elif isinstance(e, dict):
+                try:
+                    events_data.append(PipelineEvent.model_validate(e))
+                except Exception:
+                    corrupted_fields.append("events_json:invalid_item")
+
+    validation, bad = _parse_persisted_json(row["validation_json"], dict, default=None)
+    if bad:
+        corrupted_fields.append("validation_json")
+
+    confidence, bad = _parse_persisted_json(row["confidence_json"], dict, default=None)
+    if bad:
+        corrupted_fields.append("confidence_json")
+
+    provenance, bad = _parse_persisted_json(row["provenance_json"], dict, default=None)
+    if bad:
+        corrupted_fields.append("provenance_json")
+
+    output, bad = _parse_persisted_json(row["output_json"], dict, default=None)
+    if bad:
+        corrupted_fields.append("output_json")
 
     case_id = row["case_id"] if ("case_id" in row.keys() and row["case_id"]) else None
 
@@ -144,6 +267,7 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         confidence=confidence,
         provenance=provenance,
         output=output,
+        corrupted_fields=corrupted_fields if corrupted_fields else None,
     )
 
 

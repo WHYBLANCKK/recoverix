@@ -5,7 +5,7 @@ artifact.py — Artifact API and storage models for Recoverix platform.
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ConfidenceBreakdownSchema(BaseModel):
@@ -81,6 +81,13 @@ class ArtifactRecord(BaseModel):
     priority: Optional[str] = None
     ai_summary: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    corrupted_fields: Optional[List[str]] = None
+
+    @model_validator(mode="after")
+    def verify_status_and_download_invariants(self) -> "ArtifactRecord":
+        if self.status == "UNRECOVERABLE":
+            self.is_downloadable = False
+        return self
 
     def to_artifact_response(self) -> ArtifactResponse:
         """Convert internal ArtifactRecord to API ArtifactResponse."""
@@ -102,6 +109,8 @@ class ArtifactRecord(BaseModel):
             validation_status=str(prov.get("validation_status", self.validation_status)),
         )
         meta = dict(self.metadata)
+        if self.corrupted_fields:
+            meta["_corrupted_fields"] = list(self.corrupted_fields)
         if self.run_id and "run_id" not in meta:
             meta["run_id"] = self.run_id
 
@@ -111,6 +120,7 @@ class ArtifactRecord(BaseModel):
             else (self.verified_bytes + self.reconstructed_bytes + self.missing_bytes)
         )
         meta["total_input_bytes"] = eff_total_input
+        meta["is_downloadable"] = self.is_downloadable
 
         # Actual recovered payload size in bytes. If unrecoverable or not downloadable, size is 0.
         if self.status == "UNRECOVERABLE" or not self.is_downloadable:
@@ -159,6 +169,7 @@ class ArtifactRecord(BaseModel):
             "reconstruction_steps": self.reconstruction_steps,
             "total_input_bytes": self.total_input_bytes,
             "provenance": self.provenance,
+            "corrupted_fields": self.corrupted_fields,
         }
 
     @classmethod
@@ -185,10 +196,17 @@ class ArtifactRecord(BaseModel):
                 + art.provenance.missing_bytes
             )
 
-        is_dl = (
-            bool(art.metadata.get("is_downloadable"))
-            if (art.metadata and "is_downloadable" in art.metadata)
-            else (art.status != "UNRECOVERABLE")
+        if art.status == "UNRECOVERABLE":
+            is_dl = False
+        elif art.metadata and "is_downloadable" in art.metadata:
+            is_dl = bool(art.metadata["is_downloadable"])
+        else:
+            is_dl = True
+
+        corrupted_fields = (
+            list(art.metadata.get("_corrupted_fields", []))
+            if (art.metadata and "_corrupted_fields" in art.metadata)
+            else None
         )
 
         return cls(
@@ -214,6 +232,7 @@ class ArtifactRecord(BaseModel):
             priority=art.priority,
             ai_summary=art.ai_summary,
             metadata=dict(art.metadata),
+            corrupted_fields=corrupted_fields,
         )
 
     @classmethod
@@ -235,10 +254,17 @@ class ArtifactRecord(BaseModel):
         else:
             total_inp = ver + rec + miss
 
-        is_dl = (
-            bool(meta["is_downloadable"])
-            if "is_downloadable" in meta
-            else (status_val != "UNRECOVERABLE")
+        if status_val == "UNRECOVERABLE":
+            is_dl = False
+        elif "is_downloadable" in meta:
+            is_dl = bool(meta["is_downloadable"])
+        else:
+            is_dl = True
+
+        corrupted_fields = meta.get("corrupted_fields") or (
+            list(meta["metadata"].get("_corrupted_fields", []))
+            if isinstance(meta.get("metadata"), dict) and "_corrupted_fields" in meta["metadata"]
+            else None
         )
 
         return cls(
@@ -266,4 +292,5 @@ class ArtifactRecord(BaseModel):
             damage_regions=meta.get("damage_regions"),
             reconstruction_steps=meta.get("reconstruction_steps"),
             metadata={"run_id": run_id} if run_id else {},
+            corrupted_fields=corrupted_fields,
         )
