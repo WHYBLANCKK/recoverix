@@ -61,6 +61,8 @@ class ObservedRecoverySegment(BaseModel):
                     raise ValueError(f"{prefix}_start must be non-negative, got {start}")
                 if end < start:
                     raise ValueError(f"{prefix}_end ({end}) must be >= {prefix}_start ({start})")
+                if end == start:
+                    raise ValueError(f"{prefix}_end ({end}) must be > {prefix}_start ({start}) (empty interval)")
             elif start is not None or end is not None:
                 raise ValueError(f"Both {prefix}_start and {prefix}_end must be provided together")
 

@@ -22,6 +22,7 @@ from benchmark.metrics import (
     compute_candidate_metrics,
     compute_evaluation_metrics,
     compute_relationship_accuracy,
+    is_valid_half_open_interval,
 )
 from benchmark.models import (
     BenchmarkGroundTruthManifest,
@@ -59,6 +60,44 @@ def audit_false_recovery(
         for d in artifact.damage_intervals
     ) or (expectation.expected_missing_bytes > 0)
 
+    # Rule 0: Malformed coordinate intervals cannot be treated as valid segments
+    orig_bytes = artifact.original_bytes
+    payload_bytes = recovery.recovered_payload_bytes
+
+    for seg in recovery.verified_segments:
+        if seg.evidence_start is not None or seg.evidence_end is not None:
+            if not is_valid_half_open_interval(seg.evidence_start, seg.evidence_end):
+                violations.append(
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                    f"has invalid evidence bounds [{seg.evidence_start}, {seg.evidence_end})"
+                )
+                break
+        if seg.recovered_start is not None or seg.recovered_end is not None:
+            if not is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes)):
+                violations.append(
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                    f"has invalid recovered bounds [{seg.recovered_start}, {seg.recovered_end}) "
+                    f"for payload length {len(payload_bytes)}"
+                )
+                break
+        if seg.original_start is not None or seg.original_end is not None:
+            if not is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes):
+                violations.append(
+                    f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                    f"has invalid original bounds [{seg.original_start}, {seg.original_end}) "
+                    f"for original size {artifact.original_size_bytes}"
+                )
+                break
+            if seg.recovered_start is not None and seg.recovered_end is not None:
+                r_len = seg.recovered_end - seg.recovered_start
+                o_len = seg.original_end - seg.original_start
+                if r_len != o_len:
+                    violations.append(
+                        f"Benchmark finding: MALFORMED_COORDINATE_INTERVAL — Verified segment {seg.segment_id} "
+                        f"length mismatch: recovered {r_len} != original {o_len}"
+                    )
+                    break
+
     # Rule 1: Damaged artifact cannot be FULLY_RECOVERED
     if is_damaged and recovery.observed_status == "FULLY_RECOVERED":
         violations.append("Benchmark finding: FALSE_FULLY_RECOVERED — Ground-truth damaged artifact reported as FULLY_RECOVERED")
@@ -83,14 +122,11 @@ def audit_false_recovery(
         )
 
     # Rule 5: Byte divergence in verified segments using original coordinates
-    orig_bytes = artifact.original_bytes
-    payload_bytes = recovery.recovered_payload_bytes
     for seg in recovery.verified_segments:
         if (
-            seg.recovered_start is not None
-            and seg.recovered_end is not None
-            and seg.original_start is not None
-            and seg.original_end is not None
+            is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes))
+            and is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=len(orig_bytes))
+            and (seg.recovered_end - seg.recovered_start) == (seg.original_end - seg.original_start)
         ):
             payload_slice = payload_bytes[seg.recovered_start : seg.recovered_end]
             orig_slice = orig_bytes[seg.original_start : seg.original_end]
@@ -114,16 +150,262 @@ def audit_false_recovery(
         if d.reconstruction_mode == "RECONSTRUCTION_DETERMINISTIC" and d.expected_reconstructed_bytes_b64:
             expected_r_b = base64.b64decode(d.expected_reconstructed_bytes_b64)
             for seg in recovery.reconstructed_segments:
-                if seg.original_start == d.original_start and seg.original_end == d.original_end:
-                    actual_r_b = payload_bytes[seg.recovered_start : seg.recovered_end]
-                    if actual_r_b != expected_r_b:
-                        violations.append(
-                            f"Benchmark finding: FALSE_RECONSTRUCTED_BYTES — Reconstructed bytes in segment {seg.segment_id} "
-                            f"diverge from expected deterministic repair: {actual_r_b!r} != {expected_r_b!r}"
-                        )
-                        break
+                if (
+                    is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes)
+                    and is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes))
+                ):
+                    if d.original_start <= seg.original_start < seg.original_end <= d.original_end:
+                        sub_s = seg.original_start - d.original_start
+                        sub_e = seg.original_end - d.original_start
+                        exp_slice = expected_r_b[sub_s:sub_e]
+                        actual_r_b = payload_bytes[seg.recovered_start : seg.recovered_end]
+                        if actual_r_b != exp_slice:
+                            violations.append(
+                                f"Benchmark finding: FALSE_RECONSTRUCTED_BYTES — Reconstructed bytes in segment {seg.segment_id} "
+                                f"diverge from expected deterministic repair: {actual_r_b!r} != {exp_slice!r}"
+                            )
+                            break
+
+    # Rule 8: Exact payload match required when observed status is FULLY_RECOVERED
+    if recovery.observed_status == "FULLY_RECOVERED":
+        if recovery.recovered_payload_bytes:
+            import hashlib
+            computed_sha = hashlib.sha256(recovery.recovered_payload_bytes).hexdigest().lower()
+            if computed_sha != artifact.original_sha256.lower():
+                violations.append(
+                    f"Benchmark finding: FALSE_FULLY_RECOVERED_HASH_MISMATCH — Observed status FULLY_RECOVERED "
+                    f"but recovered payload SHA-256 does not match original ground truth ({computed_sha[:16]}... != {artifact.original_sha256[:16]}...)"
+                )
+        elif artifact.original_size_bytes > 0:
+            violations.append(
+                "Benchmark finding: FALSE_FULLY_RECOVERED_EMPTY_PAYLOAD — Observed status FULLY_RECOVERED "
+                "but no recovered payload bytes produced"
+            )
 
     return violations
+
+
+def map_recovery_to_ground_truth(
+    recovery: ObservedArtifactRecoveryResult,
+    artifact: PhysicalArtifactRecord,
+) -> ObservedArtifactRecoveryResult:
+    """Map observed recovery segments to ground-truth original coordinates using physical placements.
+
+    Derives original coordinates strictly from known physical placements and damage intervals.
+    Never infers original coordinates from recovery output or candidate IDs.
+    Unknown coordinates remain None.
+    """
+    payload_len = len(recovery.recovered_payload_bytes)
+
+    # 1. Map verified segments
+    mapped_v_segs: List[ObservedRecoverySegment] = []
+    for seg in recovery.verified_segments:
+        # Check pre-existing original coordinates defensively
+        if seg.original_start is not None and seg.original_end is not None:
+            if (
+                is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes)
+                and (
+                    seg.recovered_start is None
+                    or (
+                        is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=payload_len)
+                        and (seg.recovered_end - seg.recovered_start == seg.original_end - seg.original_start)
+                    )
+                )
+            ):
+                mapped_v_segs.append(seg)
+                continue
+            # Strip invalid pre-existing original coordinates
+            seg = seg.model_copy(update={"original_start": None, "original_end": None})
+
+        orig_s: Optional[int] = None
+        orig_e: Optional[int] = None
+
+        if is_valid_half_open_interval(seg.evidence_start, seg.evidence_end):
+            e_s = seg.evidence_start
+            e_e = seg.evidence_end
+            e_len = e_e - e_s
+
+            r_ok = True
+            if seg.recovered_start is not None or seg.recovered_end is not None:
+                if (
+                    not is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=payload_len)
+                    or (seg.recovered_end - seg.recovered_start) != e_len
+                ):
+                    r_ok = False
+
+            if r_ok:
+                candidate_mappings = []
+                for p in artifact.placements:
+                    if p.evidence_offset <= e_s and e_e <= (p.evidence_offset + p.evidence_length):
+                        delta = e_s - p.evidence_offset
+                        cand_s = p.original_offset + delta
+                        cand_e = cand_s + e_len
+                        if is_valid_half_open_interval(cand_s, cand_e, max_bound=artifact.original_size_bytes):
+                            candidate_mappings.append((cand_s, cand_e))
+
+                if len(candidate_mappings) == 1:
+                    orig_s, orig_e = candidate_mappings[0]
+
+        if orig_s is not None and orig_e is not None:
+            mapped_v_segs.append(
+                seg.model_copy(update={"original_start": orig_s, "original_end": orig_e})
+            )
+        else:
+            mapped_v_segs.append(seg)
+
+    # 2. Map reconstructed segments
+    mapped_r_segs: List[ObservedRecoverySegment] = []
+    for seg in recovery.reconstructed_segments:
+        # Check pre-existing original coordinates defensively
+        if seg.original_start is not None and seg.original_end is not None:
+            if (
+                is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes)
+                and (
+                    seg.recovered_start is None
+                    or (
+                        is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=payload_len)
+                        and (seg.recovered_end - seg.recovered_start == seg.original_end - seg.original_start)
+                    )
+                )
+            ):
+                mapped_r_segs.append(seg)
+                continue
+            seg = seg.model_copy(update={"original_start": None, "original_end": None})
+
+        orig_s = None
+        orig_e = None
+
+        if is_valid_half_open_interval(seg.evidence_start, seg.evidence_end):
+            e_s = seg.evidence_start
+            e_e = seg.evidence_end
+            e_len = e_e - e_s
+
+            r_ok = True
+            if seg.recovered_start is not None or seg.recovered_end is not None:
+                if (
+                    not is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=payload_len)
+                    or (seg.recovered_end - seg.recovered_start) != e_len
+                ):
+                    r_ok = False
+
+            if r_ok:
+                candidate_mappings = []
+
+                # A. Within-placement damage
+                for d in artifact.damage_intervals:
+                    for p in artifact.placements:
+                        if p.original_offset <= d.original_start and d.original_end <= (p.original_offset + p.evidence_length):
+                            d_ev_s = p.evidence_offset + (d.original_start - p.original_offset)
+                            d_ev_e = d_ev_s + d.length
+                            if d_ev_s <= e_s and e_e <= d_ev_e:
+                                delta = e_s - d_ev_s
+                                cand_s = d.original_start + delta
+                                cand_e = cand_s + e_len
+                                if is_valid_half_open_interval(cand_s, cand_e, max_bound=artifact.original_size_bytes):
+                                    candidate_mappings.append((cand_s, cand_e))
+
+                # B. Inter-placement gap
+                for d in artifact.damage_intervals:
+                    for i in range(len(artifact.placements) - 1):
+                        p_curr = artifact.placements[i]
+                        p_next = artifact.placements[i + 1]
+                        if (
+                            d.original_start == (p_curr.original_offset + p_curr.evidence_length)
+                            and d.original_end == p_next.original_offset
+                        ):
+                            gap_ev_s = p_curr.evidence_offset + p_curr.evidence_length
+                            gap_ev_e = p_next.evidence_offset
+                            ev_gap_len = gap_ev_e - gap_ev_s
+                            orig_gap_len = d.original_end - d.original_start
+                            # Strict isometric constraint: evidence distance between placements
+                            # must be 1-to-1 with the original damage gap. If non-isometric (e.g.
+                            # arbitrary noise filler), mapping is ambiguous and coordinates cannot be inferred.
+                            if ev_gap_len == orig_gap_len:
+                                if gap_ev_s <= e_s and e_e <= gap_ev_e:
+                                    delta = e_s - gap_ev_s
+                                    cand_s = d.original_start + delta
+                                    cand_e = cand_s + e_len
+                                    if is_valid_half_open_interval(cand_s, cand_e, max_bound=artifact.original_size_bytes):
+                                        candidate_mappings.append((cand_s, cand_e))
+
+                if len(candidate_mappings) == 1:
+                    orig_s, orig_e = candidate_mappings[0]
+
+        if orig_s is not None and orig_e is not None:
+            mapped_r_segs.append(
+                seg.model_copy(update={"original_start": orig_s, "original_end": orig_e})
+            )
+        else:
+            mapped_r_segs.append(seg)
+
+    # 3. Map missing segments
+    mapped_m_segs: List[ObservedRecoverySegment] = []
+    for seg in recovery.missing_segments:
+        if seg.original_start is not None and seg.original_end is not None:
+            if is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes):
+                mapped_m_segs.append(seg)
+                continue
+            seg = seg.model_copy(update={"original_start": None, "original_end": None})
+
+        orig_s = None
+        orig_e = None
+
+        if is_valid_half_open_interval(seg.evidence_start, seg.evidence_end):
+            e_s = seg.evidence_start
+            e_e = seg.evidence_end
+            e_len = e_e - e_s
+
+            candidate_mappings = []
+
+            for d in artifact.damage_intervals:
+                for p in artifact.placements:
+                    if p.original_offset <= d.original_start and d.original_end <= (p.original_offset + p.evidence_length):
+                        d_ev_s = p.evidence_offset + (d.original_start - p.original_offset)
+                        d_ev_e = d_ev_s + d.length
+                        if d_ev_s <= e_s and e_e <= d_ev_e:
+                            delta = e_s - d_ev_s
+                            cand_s = d.original_start + delta
+                            cand_e = cand_s + e_len
+                            if is_valid_half_open_interval(cand_s, cand_e, max_bound=artifact.original_size_bytes):
+                                candidate_mappings.append((cand_s, cand_e))
+
+            for d in artifact.damage_intervals:
+                for i in range(len(artifact.placements) - 1):
+                    p_curr = artifact.placements[i]
+                    p_next = artifact.placements[i + 1]
+                    if (
+                        d.original_start == (p_curr.original_offset + p_curr.evidence_length)
+                        and d.original_end == p_next.original_offset
+                    ):
+                        gap_ev_s = p_curr.evidence_offset + p_curr.evidence_length
+                        gap_ev_e = p_next.evidence_offset
+                        ev_gap_len = gap_ev_e - gap_ev_s
+                        orig_gap_len = d.original_end - d.original_start
+                        if ev_gap_len == orig_gap_len:
+                            if gap_ev_s <= e_s and e_e <= gap_ev_e:
+                                delta = e_s - gap_ev_s
+                                cand_s = d.original_start + delta
+                                cand_e = cand_s + e_len
+                                if is_valid_half_open_interval(cand_s, cand_e, max_bound=artifact.original_size_bytes):
+                                    candidate_mappings.append((cand_s, cand_e))
+
+            if len(candidate_mappings) == 1:
+                orig_s, orig_e = candidate_mappings[0]
+
+        if orig_s is not None and orig_e is not None:
+            mapped_m_segs.append(
+                seg.model_copy(update={"original_start": orig_s, "original_end": orig_e})
+            )
+        else:
+            mapped_m_segs.append(seg)
+
+    return recovery.model_copy(
+        update={
+            "verified_segments": mapped_v_segs,
+            "reconstructed_segments": mapped_r_segs,
+            "missing_segments": mapped_m_segs,
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -161,11 +443,21 @@ class EvaluationReport:
         elif not self.artifact_evaluations:
             return self.expected_artifact_count == 0 and len(self.forensic_violations) == 0
 
+        # Strict correctness checks for each artifact evaluation
+        for ae in self.artifact_evaluations:
+            if not ae.status_match:
+                return False
+            # Contract requires exact payload identity for FULLY_RECOVERED
+            if ae.expected_status == "FULLY_RECOVERED" and ae.whole_payload_hash_match is not True:
+                return False
+            # If byte correctness was evaluated, must be 1.0 (no divergence in verified bytes)
+            if ae.v_byte_correctness is not None and ae.v_byte_correctness < 1.0:
+                return False
+
         return (
             len(self.forensic_violations) == 0
             and not self.has_false_fully_recovered
             and len(self.artifact_evaluations) > 0
-            and all(ae.status_match for ae in self.artifact_evaluations)
         )
 
 
@@ -204,9 +496,10 @@ def evaluate_scenario(
             art = gt_manifest.artifacts[0]
 
         if art is not None:
+            mapped_rec = map_recovery_to_ground_truth(rec, art)
             expectation = derive_expected_recovery(art)
-            metrics = compute_evaluation_metrics(art, expectation, rec)
-            violations = audit_false_recovery(art, rec, expectation)
+            metrics = compute_evaluation_metrics(art, expectation, mapped_rec)
+            violations = audit_false_recovery(art, mapped_rec, expectation)
 
             artifact_evals.append(metrics)
             all_violations.extend(violations)

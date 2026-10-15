@@ -152,6 +152,9 @@ def test_05_benchmark_results_are_deterministic():
     assert clean["status"]["expected"] == "FULLY_RECOVERED"
     assert clean["status"]["observed"] == "FULLY_RECOVERED"
     assert clean["volumes"]["accuracy"]["verified"] == 1.0
+    assert clean["original_space_intervals_iou"]["verified"] == 1.0
+    assert clean["original_space_byte_correctness"]["verified"] == 1.0
+    assert clean["whole_payload_hash_match"] is True
 
     # Deleted passes fully after Milestone 3.8.2 payload preservation fix
     deleted = sc_map["art-deleted-01"]
@@ -159,6 +162,8 @@ def test_05_benchmark_results_are_deterministic():
     assert deleted["status"]["expected"] == "FULLY_RECOVERED"
     assert deleted["status"]["observed"] == "FULLY_RECOVERED"
     assert deleted["volumes"]["accuracy"]["verified"] == 1.0
+    assert deleted["original_space_intervals_iou"]["verified"] == 1.0
+    assert deleted["original_space_byte_correctness"]["verified"] == 1.0
     assert deleted["whole_payload_hash_match"] is True
 
     # Fragmented passes fully after Milestone 3.8.3 fragmented text stitching fix
@@ -167,6 +172,8 @@ def test_05_benchmark_results_are_deterministic():
     assert frag["status"]["expected"] == "FULLY_RECOVERED"
     assert frag["status"]["observed"] == "FULLY_RECOVERED"
     assert frag["volumes"]["accuracy"]["verified"] == 1.0
+    assert frag["original_space_intervals_iou"]["verified"] == 1.0
+    assert frag["original_space_byte_correctness"]["verified"] == 1.0
     assert frag["whole_payload_hash_match"] is True
 
     # Bifragment is evaluated as an ambiguous physical layout archetype: expected and observed UNRECOVERABLE
@@ -176,6 +183,8 @@ def test_05_benchmark_results_are_deterministic():
     assert bifrag["status"]["observed"] == "UNRECOVERABLE"
     assert bifrag["status"]["match"] is True
     assert bifrag["volumes"]["accuracy"]["verified"] == 1.0
+    assert bifrag["original_space_intervals_iou"]["verified"] is None
+    assert bifrag["original_space_byte_correctness"]["verified"] is None
 
     # Corrupted has status match: expected and observed CORRUPTED
     corr = sc_map["art-corrupted-01"]
@@ -184,6 +193,8 @@ def test_05_benchmark_results_are_deterministic():
     assert corr["status"]["observed"] == "CORRUPTED"
     assert corr["status"]["match"] is True
     assert corr["volumes"]["accuracy"]["verified"] == 1.0
+    assert corr["original_space_intervals_iou"]["verified"] is None
+    assert corr["original_space_byte_correctness"]["verified"] is None
 
     # Unrecoverable has status match and 0 verified bytes after 3.8.1 fix
     unrec = sc_map["art-unrecoverable-01"]
@@ -191,6 +202,8 @@ def test_05_benchmark_results_are_deterministic():
     assert unrec["status"]["expected"] == "UNRECOVERABLE"
     assert unrec["status"]["observed"] == "UNRECOVERABLE"
     assert unrec["volumes"]["observed"]["verified"] == 0
+    assert unrec["original_space_intervals_iou"]["verified"] is None
+    assert unrec["original_space_byte_correctness"]["verified"] is None
     assert len(unrec["false_recovery_violations"]) == 0
 
 
@@ -431,20 +444,25 @@ def test_13_no_ground_truth_fields_copied_into_observed_segments():
 
 
 def test_14_unknown_coordinate_mappings_not_silently_converted_to_fake_intervals():
-    """Verify that unknown coordinate mappings remain None and are not converted to fake intervals."""
+    """Verify that mapped coordinate intervals evaluate accurately and unknown mappings remain None."""
     gt_manifest, evidence_bytes = build_ground_truth_manifest(seed=42)
     obs_manifest = run_pipeline_and_observe("damaged.img", evidence_bytes)
 
     report = evaluate_scenario(gt_manifest, obs_manifest)
 
-    # When original coordinates are not established by the recovery engine:
-    # interval IoU in original space is recorded as None (unavailable/unknown),
-    # NOT silently fabricated as 0.0 or 1.0 for artifacts with surviving intervals.
+    # When original coordinates are mapped from known ground-truth placements:
+    # art-clean-01 has 100% exact interval coverage and byte correctness
     clean_eval = next(ae for ae in report.artifact_evaluations if ae.artifact_id == "art-clean-01")
-    assert clean_eval.v_interval_iou is None
-    assert clean_eval.v_byte_correctness is None
-    # But volume accuracy is genuinely measured and 100%
+    assert clean_eval.v_interval_iou == 1.0
+    assert clean_eval.v_byte_correctness == 1.0
     assert clean_eval.v_volume_accuracy == 1.0
+
+    # When original coordinates cannot be established (e.g. unrecoverable or no verified bytes):
+    # interval IoU in original space is recorded as None (unavailable/unknown),
+    # NOT silently fabricated as fake intervals.
+    unrec_eval = next(ae for ae in report.artifact_evaluations if ae.artifact_id == "art-unrecoverable-01")
+    assert unrec_eval.v_interval_iou is None
+    assert unrec_eval.v_byte_correctness is None
 
 
 def test_15_whole_payload_hash_match_evaluated_strictly_from_bytes():

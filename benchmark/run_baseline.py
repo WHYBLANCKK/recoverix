@@ -575,10 +575,16 @@ def run_baseline_benchmark(
             elif art.is_unrecoverable and ("UNRECOVERABLE_MISCLASSIFIED" in v or "OVERSTATED_VERIFICATION" in v or "UNACCOUNTED_GAP" in v):
                 art_violations.append(v)
 
+        requires_exact_payload = (ae.expected_status == "FULLY_RECOVERED") if ae else False
+        payload_ok = (ae.whole_payload_hash_match is True) if (ae and requires_exact_payload) else True
+        byte_corr_ok = (ae.v_byte_correctness is None or ae.v_byte_correctness >= 1.0) if ae else True
+
         passed = (
             ae is not None
             and ae.status_match
             and not ae.false_fully_recovered
+            and payload_ok
+            and byte_corr_ok
             and len(art_violations) == 0
         )
 

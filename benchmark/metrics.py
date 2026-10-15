@@ -48,6 +48,23 @@ def compute_volume_ratio(observed_vol: int, expected_vol: int) -> float:
     return min(observed_vol, expected_vol) / max(observed_vol, expected_vol)
 
 
+def is_valid_half_open_interval(
+    start: Optional[int],
+    end: Optional[int],
+    max_bound: Optional[int] = None,
+) -> bool:
+    """Validate that [start, end) is a non-empty, non-inverted, non-negative half-open interval."""
+    if start is None or end is None:
+        return False
+    if not isinstance(start, int) or not isinstance(end, int):
+        return False
+    if start < 0 or end <= start:
+        return False
+    if max_bound is not None and end > max_bound:
+        return False
+    return True
+
+
 def _interval_union_length(intervals: Sequence[Tuple[int, int]]) -> int:
     """Compute the total covered byte count of a union of half-open intervals [s, e)."""
     if not intervals:
@@ -170,24 +187,24 @@ def compute_evaluation_metrics(
     # Original coordinates are ONLY valid if established by the recovery run.
     # If no segment defines original coordinates, original-space interval IoU and byte correctness MUST be None.
     has_any_orig = any(
-        s.original_start is not None and s.original_end is not None
+        is_valid_half_open_interval(s.original_start, s.original_end, max_bound=artifact.original_size_bytes)
         for s in (recovery.verified_segments + recovery.reconstructed_segments + recovery.missing_segments)
     )
 
     obs_v_intervals = [
         (s.original_start, s.original_end)
         for s in recovery.verified_segments
-        if s.original_start is not None and s.original_end is not None
+        if is_valid_half_open_interval(s.original_start, s.original_end, max_bound=artifact.original_size_bytes)
     ]
     obs_m_intervals = [
         (s.original_start, s.original_end)
         for s in recovery.missing_segments
-        if s.original_start is not None and s.original_end is not None
+        if is_valid_half_open_interval(s.original_start, s.original_end, max_bound=artifact.original_size_bytes)
     ]
     obs_r_intervals = [
         (s.original_start, s.original_end)
         for s in recovery.reconstructed_segments
-        if s.original_start is not None and s.original_end is not None
+        if is_valid_half_open_interval(s.original_start, s.original_end, max_bound=artifact.original_size_bytes)
     ]
 
     if has_any_orig:
@@ -208,10 +225,9 @@ def compute_evaluation_metrics(
 
     for seg in recovery.verified_segments:
         if (
-            seg.recovered_start is not None
-            and seg.recovered_end is not None
-            and seg.original_start is not None
-            and seg.original_end is not None
+            is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes))
+            and is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=len(orig_bytes))
+            and (seg.recovered_end - seg.recovered_start) == (seg.original_end - seg.original_start)
         ):
             seg_len = seg.recovered_end - seg.recovered_start
             total_v_bytes += seg_len
@@ -244,17 +260,19 @@ def compute_evaluation_metrics(
             total_r_eval_bytes = 0
             correct_r_eval_bytes = 0
             for seg in recovery.reconstructed_segments:
-                if seg.original_start is not None and seg.original_end is not None:
-                    span = (seg.original_start, seg.original_end)
-                    if span in expected_r_bytes_map:
-                        expected_b = expected_r_bytes_map[span]
-                        actual_b = (
-                            payload_bytes[seg.recovered_start : seg.recovered_end]
-                            if (seg.recovered_start is not None and seg.recovered_end is not None)
-                            else b""
-                        )
-                        total_r_eval_bytes += max(len(expected_b), len(actual_b))
-                        correct_r_eval_bytes += sum(1 for a, b in zip(actual_b, expected_b) if a == b)
+                if (
+                    is_valid_half_open_interval(seg.original_start, seg.original_end, max_bound=artifact.original_size_bytes)
+                    and is_valid_half_open_interval(seg.recovered_start, seg.recovered_end, max_bound=len(payload_bytes))
+                ):
+                    for (d_s, d_e), exp_b in expected_r_bytes_map.items():
+                        if d_s <= seg.original_start < seg.original_end <= d_e:
+                            sub_s = seg.original_start - d_s
+                            sub_e = seg.original_end - d_s
+                            expected_b = exp_b[sub_s:sub_e]
+                            actual_b = payload_bytes[seg.recovered_start : seg.recovered_end]
+                            total_r_eval_bytes += max(len(expected_b), len(actual_b))
+                            correct_r_eval_bytes += sum(1 for a, b in zip(actual_b, expected_b) if a == b)
+                            break
             r_byte_corr = (correct_r_eval_bytes / total_r_eval_bytes) if total_r_eval_bytes > 0 else 0.0
         else:
             r_byte_corr = None
