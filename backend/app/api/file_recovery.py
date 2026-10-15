@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import uuid
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, UploadFile, File, HTTPException, status, Response, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, Response, Body, Request
 from pydantic import BaseModel
 
 from backend.app.store import store, MAX_EVIDENCE_SIZE
+from backend.app.ingestion.reader import read_upload_bounded, UploadTooLargeError
 from backend.app.recovery.tracer import execute_traced_recovery
 from backend.app.scoring.explainer import explain_artifact
 from backend.app.recovery.adapter import extract_recovered_bytes
@@ -51,9 +52,30 @@ router = APIRouter(tags=["file_recovery"])
 
 @router.post("/recover-file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK)
 @router.post("/recover/file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK)
-async def recover_single_file(file: UploadFile = File(...)) -> FileRecoveryResponse:
+async def recover_single_file(request: Request, file: UploadFile = File(...)) -> FileRecoveryResponse:
     """Upload a single evidence file for deterministic byte recovery and validation."""
-    content = await file.read()
+    cl_header = request.headers.get("content-length")
+    if cl_header and cl_header.strip().isdigit():
+        content_len = int(cl_header.strip())
+        content_type = request.headers.get("content-type", "").lower()
+        max_allowed = MAX_EVIDENCE_SIZE + 65536 if "multipart" in content_type else MAX_EVIDENCE_SIZE
+        if content_len > max_allowed:
+            await file.close()
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="FILE_TOO_LARGE",
+            )
+
+    try:
+        content = await read_upload_bounded(file, max_size=MAX_EVIDENCE_SIZE)
+    except UploadTooLargeError:
+        await file.close()
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="FILE_TOO_LARGE",
+        )
+    finally:
+        await file.close()
 
     if len(content) == 0:
         raise HTTPException(

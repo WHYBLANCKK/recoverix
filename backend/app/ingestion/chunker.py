@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List
 
+from backend.app.generator.disk import MAX_EVIDENCE_SIZE
+
 # Default chunk size — 4096 bytes (one standard disk sector / memory page).
 DEFAULT_CHUNK_SIZE: int = 4096
 
@@ -74,6 +76,10 @@ def chunk_evidence(
     """
     if len(data) == 0:
         raise ValueError("Cannot chunk empty evidence")
+    if len(data) > MAX_EVIDENCE_SIZE:
+        raise ValueError(
+            f"Evidence size ({len(data)} bytes) exceeds limit of {MAX_EVIDENCE_SIZE} bytes"
+        )
     if chunk_size <= 0:
         raise ValueError(f"Chunk size must be positive, got {chunk_size}")
 

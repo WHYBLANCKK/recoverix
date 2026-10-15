@@ -10,6 +10,11 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Respons
 from backend.app.models.case import CaseCreate, CaseResponse
 from backend.app.models.recovery_run import RecoveryRun
 from backend.app.store import store, MAX_EVIDENCE_SIZE
+from backend.app.ingestion.reader import (
+    read_upload_bounded,
+    read_request_stream_bounded,
+    UploadTooLargeError,
+)
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -73,22 +78,48 @@ async def upload_evidence(
             detail=f"Case '{case_id}' not found",
         )
 
+    # 1. Early Content-Length check
+    cl_header = request.headers.get("content-length")
+    if cl_header and cl_header.strip().isdigit():
+        content_len = int(cl_header.strip())
+        content_type = request.headers.get("content-type", "").lower()
+        is_multipart = "multipart/form-data" in content_type
+        max_allowed = MAX_EVIDENCE_SIZE + 65536 if is_multipart else MAX_EVIDENCE_SIZE
+        if content_len > max_allowed:
+            if file is not None:
+                await file.close()
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Evidence file size ({content_len} bytes) exceeds maximum limit of 5 MiB ({MAX_EVIDENCE_SIZE} bytes)",
+            )
+
     content: bytes = b""
     filename: str = "evidence.img"
 
     if file is not None:
         filename = file.filename or "evidence.img"
         try:
-            content = await file.read()
-        except Exception:
-            content = b""
+            content = await read_upload_bounded(file, max_size=MAX_EVIDENCE_SIZE)
+        except UploadTooLargeError as err:
+            await file.close()
+            actual_sz = err.actual_size if err.actual_size is not None else MAX_EVIDENCE_SIZE + 1
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Evidence file size ({actual_sz} bytes) exceeds maximum limit of 5 MiB ({MAX_EVIDENCE_SIZE} bytes)",
+            )
+        finally:
+            await file.close()
 
-    if not content:
-        # Fallback to reading raw body if form upload wasn't used or was empty
+    if not content and file is None:
+        # Fallback to reading raw body if form upload wasn't used
         try:
-            raw_body = await request.body()
-            if raw_body:
-                content = raw_body
+            content = await read_request_stream_bounded(request, max_size=MAX_EVIDENCE_SIZE)
+        except UploadTooLargeError as err:
+            actual_sz = err.actual_size if err.actual_size is not None else MAX_EVIDENCE_SIZE + 1
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Evidence file size ({actual_sz} bytes) exceeds maximum limit of 5 MiB ({MAX_EVIDENCE_SIZE} bytes)",
+            )
         except RuntimeError:
             pass
 
