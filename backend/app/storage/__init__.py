@@ -12,7 +12,7 @@ from backend.app.storage.blob_store import InMemoryBlobStore
 from backend.app.storage.memory_store import InMemoryStore, MAX_EVIDENCE_SIZE
 from backend.app.storage.sqlite_engine import SqliteEngine
 from backend.app.storage.sqlite_blob_store import SqliteBlobStore
-from backend.app.storage.sqlite_store import SqliteStore
+from backend.app.storage.sqlite_store import SqliteStore, migrate_legacy_blobs
 
 __all__ = [
     "BlobStore",
@@ -25,4 +25,5 @@ __all__ = [
     "SqliteEngine",
     "SqliteBlobStore",
     "SqliteStore",
+    "migrate_legacy_blobs",
 ]

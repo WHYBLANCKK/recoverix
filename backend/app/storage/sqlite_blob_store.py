@@ -7,6 +7,7 @@ in SQLite BLOB storage with exact binary fidelity, atomic upserts, and transacti
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
@@ -29,6 +30,54 @@ class SqliteBlobStore:
         if not isinstance(key, str) or not key.strip():
             raise ValueError("Blob key must be a non-empty string")
         return f"{self._namespace}{key}" if self._namespace else key
+
+    def _is_legacy_key_owned(self, cursor: sqlite3.Cursor, key: str) -> bool:
+        """Verify whether an unprefixed legacy blob key safely belongs to this namespace domain."""
+        if not self._namespace:
+            return True
+
+        if self._namespace == "evidence:":
+            try:
+                cursor.execute("SELECT sha256 FROM evidence_files WHERE case_id = ?;", (key,))
+                ev_row = cursor.fetchone()
+                if ev_row is None:
+                    return False
+                expected_sha = ev_row["sha256"] if isinstance(ev_row, sqlite3.Row) else ev_row[0]
+                cursor.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?;", (key,))
+                if cursor.fetchone() is not None:
+                    cursor.execute("SELECT data FROM blobs WHERE blob_key = ?;", (key,))
+                    b_row = cursor.fetchone()
+                    if b_row is None:
+                        return False
+                    blob_bytes = bytes(b_row["data"] if isinstance(b_row, sqlite3.Row) else b_row[0])
+                    if hashlib.sha256(blob_bytes).hexdigest() != expected_sha:
+                        return False
+                return True
+            except sqlite3.OperationalError:
+                return True
+
+        elif self._namespace == "artifact:":
+            try:
+                cursor.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?;", (key,))
+                if cursor.fetchone() is None:
+                    return False
+                cursor.execute("SELECT 1 FROM evidence_files WHERE case_id = ?;", (key,))
+                if cursor.fetchone() is not None:
+                    cursor.execute("SELECT sha256 FROM evidence_files WHERE case_id = ?;", (key,))
+                    ev_row = cursor.fetchone()
+                    expected_sha = ev_row["sha256"] if isinstance(ev_row, sqlite3.Row) else ev_row[0]
+                    cursor.execute("SELECT data FROM blobs WHERE blob_key = ?;", (key,))
+                    b_row = cursor.fetchone()
+                    if b_row is not None:
+                        blob_bytes = bytes(b_row["data"] if isinstance(b_row, sqlite3.Row) else b_row[0])
+                        if hashlib.sha256(blob_bytes).hexdigest() == expected_sha:
+                            return False
+                    return False
+                return True
+            except sqlite3.OperationalError:
+                return True
+
+        return True
 
     def put(self, key: str, data: bytes) -> None:
         """Store a binary blob under key with atomic overwrite semantics."""
@@ -67,8 +116,11 @@ class SqliteBlobStore:
                 val = row["data"] if isinstance(row, sqlite3.Row) else row[0]
                 return bytes(val)
 
-            # Fallback to unprefixed key for backward compatibility with legacy databases
+            # Fallback to unprefixed key for backward compatibility with legacy databases,
+            # strictly validated by domain ownership to prevent cross-namespace leakage.
             if self._namespace:
+                if not self._is_legacy_key_owned(cursor, key):
+                    return None
                 cursor.execute("SELECT data FROM blobs WHERE blob_key = ?;", (key,))
                 legacy_row = cursor.fetchone()
                 if legacy_row is not None:
@@ -88,6 +140,8 @@ class SqliteBlobStore:
             cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (full_key,))
             deleted = cursor.rowcount > 0
             if not deleted and self._namespace:
+                if not self._is_legacy_key_owned(cursor, key):
+                    return False
                 cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (key,))
                 deleted = cursor.rowcount > 0
             return deleted
@@ -104,6 +158,8 @@ class SqliteBlobStore:
             if cursor.fetchone() is not None:
                 return True
             if self._namespace:
+                if not self._is_legacy_key_owned(cursor, key):
+                    return False
                 cursor.execute("SELECT 1 FROM blobs WHERE blob_key = ? LIMIT 1;", (key,))
                 return cursor.fetchone() is not None
             return False
