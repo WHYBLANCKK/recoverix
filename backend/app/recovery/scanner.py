@@ -1110,7 +1110,7 @@ def _scan_string(text: str, i: int) -> Tuple[int, str]:
 def _scan_number(text: str, i: int) -> Tuple[int, str]:
     """Scan a JSON number literal.
 
-    Returns (index_after_number, status) where status is "ok" or "invalid".
+    Returns (index_after_number, status) where status is "ok", "incomplete", or "invalid".
     """
     n = len(text)
     j = i
@@ -1120,13 +1120,22 @@ def _scan_number(text: str, i: int) -> Tuple[int, str]:
     while j < n and text[j].isdigit():
         j += 1
     if j == digits_start:
+        if j == n or (j < n and text[j] == "\x00"):
+            return j, "incomplete"
         return j, "invalid"
+
+    # RFC 8259: Leading zeros forbidden (e.g. 01, 00, -01, -007)
+    if text[digits_start] == "0" and (j - digits_start) > 1:
+        return j, "invalid"
+
     if j < n and text[j] == ".":
         j += 1
         frac_start = j
         while j < n and text[j].isdigit():
             j += 1
         if j == frac_start:
+            if j == n or (j < n and text[j] == "\x00"):
+                return j, "incomplete"
             return j, "invalid"
     if j < n and text[j] in "eE":
         j += 1
@@ -1136,8 +1145,10 @@ def _scan_number(text: str, i: int) -> Tuple[int, str]:
         while j < n and text[j].isdigit():
             j += 1
         if j == exp_start:
+            if j == n or (j < n and text[j] == "\x00"):
+                return j, "incomplete"
             return j, "invalid"
-    if j < n and text[j] not in _JSON_WS and text[j] not in ",}]":
+    if j < n and text[j] not in _JSON_WS and text[j] not in ",}]" and text[j] != "\x00":
         return j, "invalid"
     return j, "ok"
 
@@ -1154,8 +1165,12 @@ def _scan_literal(text: str, i: int) -> Tuple[int, str]:
             if end < n and (text[end].isalnum() or text[end] == "_"):
                 return end, "invalid"
             return end, "ok"
-        if lit.startswith(text[i:n]):
-            return n, "incomplete"
+        rem = text[i:n]
+        nul_idx = rem.find("\x00")
+        if nul_idx != -1:
+            rem = rem[:nul_idx]
+        if rem and lit.startswith(rem):
+            return i + len(rem), "incomplete"
     return i, "invalid"
 
 
@@ -1184,8 +1199,8 @@ def _find_json_container_extent(
     while i < len(text) and len(stack) <= max_depth:
         if state == "value":
             i = _skip_ws(text, i)
-            if i >= len(text):
-                return last_valid_i, False, has_content
+            if i >= len(text) or not text[i:].strip("\x00 \t\r\n"):
+                return (last_valid_i, False, has_content) if has_content else (None, False, False)
             c = text[i]
             if c == "{":
                 stack.append("{")
@@ -1204,13 +1219,13 @@ def _find_json_container_extent(
                 stack.pop()
                 last_valid_i = i
                 if not stack:
-                    return i, True, False
+                    return last_valid_i, True, False
                 state = "sep"
                 continue
             if c == '"':
                 i, st = _scan_string(text, i)
                 if st != "ok":
-                    return i, False, has_content
+                    return (last_valid_i, False, has_content) if has_content else (None, False, False)
                 has_content = True
                 last_valid_i = i
                 state = "sep"
@@ -1218,7 +1233,7 @@ def _find_json_container_extent(
             if c in "tfn":
                 i, st = _scan_literal(text, i)
                 if st == "incomplete":
-                    return i, False, has_content
+                    return (last_valid_i, False, has_content) if has_content else (None, False, False)
                 if st != "ok":
                     return None, False, False
                 has_content = True
@@ -1228,53 +1243,53 @@ def _find_json_container_extent(
             if c == "-" or c.isdigit():
                 i, st = _scan_number(text, i)
                 if st == "incomplete":
-                    return i, False, has_content
+                    return (last_valid_i, False, has_content) if has_content else (None, False, False)
                 if st != "ok":
                     return None, False, False
                 has_content = True
                 last_valid_i = i
                 state = "sep"
                 continue
-            return None, False, False
+            return (last_valid_i, False, has_content) if (has_content and not text[i:].strip("\x00 \t\r\n")) else (None, False, False)
 
         if state == "key":
             i = _skip_ws(text, i)
-            if i >= len(text):
-                return last_valid_i, False, has_content
+            if i >= len(text) or not text[i:].strip("\x00 \t\r\n"):
+                return (last_valid_i, False, has_content) if has_content else (None, False, False)
             if text[i] == "}" and stack[-1] == "{":
                 i += 1
                 stack.pop()
                 last_valid_i = i
                 if not stack:
-                    return i, True, False
+                    return last_valid_i, True, False
                 state = "sep"
                 continue
             if text[i] != '"':
-                return None, False, False
+                return (last_valid_i, False, has_content) if (has_content and not text[i:].strip("\x00 \t\r\n")) else (None, False, False)
             i, st = _scan_string(text, i)
             if st != "ok":
-                return i, False, has_content
+                return (last_valid_i, False, has_content) if has_content else (None, False, False)
             has_content = True
             state = "colon"
             continue
 
         if state == "colon":
             i = _skip_ws(text, i)
-            if i >= len(text):
-                return last_valid_i, False, has_content
+            if i >= len(text) or not text[i:].strip("\x00 \t\r\n"):
+                return (last_valid_i, False, has_content) if has_content else (None, False, False)
             if text[i] != ":":
-                return None, False, False
+                return (last_valid_i, False, has_content) if (has_content and not text[i:].strip("\x00 \t\r\n")) else (None, False, False)
             i += 1
             state = "value"
             continue
 
         if state == "sep":
             if not stack:
-                return i, True, False
+                return last_valid_i, True, False
             last_valid_i = i
             i = _skip_ws(text, i)
             if i >= len(text):
-                return last_valid_i, False, has_content
+                return (last_valid_i, False, has_content) if has_content else (None, False, False)
             c = text[i]
             closer = "}" if stack[-1] == "{" else "]"
             if c == ",":
@@ -1286,12 +1301,12 @@ def _find_json_container_extent(
                 stack.pop()
                 last_valid_i = i
                 if not stack:
-                    return i, True, False
+                    return last_valid_i, True, False
                 state = "sep"
                 continue
             return (last_valid_i, False, has_content) if has_content else (None, False, False)
 
-    return last_valid_i, False, has_content
+    return (last_valid_i, False, has_content) if has_content else (None, False, False)
 
 
 def _scan_json(

@@ -91,11 +91,11 @@ def _scan_string(text: str, i: int) -> Tuple[int, str]:
 def _scan_number(text: str, i: int) -> Tuple[int, str]:
     """Scan a JSON number literal.
 
-    Returns (index_after_number, status) where status is "ok" or "invalid".
-    A number that ends exactly at end-of-input is complete (e.g. the trailing
-    ``3`` in ``{"a":1,"b":[1,2,3`` is a whole value), so it reports "ok".
-    A trailing ``.``/``e``/``e+`` with no digits is "invalid" because the token
-    is not yet a valid JSON number.
+    Returns (index_after_number, status) where status is "ok", "incomplete", or "invalid".
+    A number that ends exactly at end-of-input or before trailing NUL padding is complete
+    (e.g. the trailing ``3`` in ``{"a":1,"b":[1,2,3`` is a whole value), so it reports "ok".
+    A trailing ``.``/``e``/``e+`` with no digits is "incomplete" at EOF/NUL and "invalid" elsewhere.
+    A leading zero followed by digits (e.g. ``01``, ``007``) is forbidden by RFC 8259 and reports "invalid".
     """
     n = len(text)
     j = i
@@ -105,13 +105,22 @@ def _scan_number(text: str, i: int) -> Tuple[int, str]:
     while j < n and text[j].isdigit():
         j += 1
     if j == digits_start:
+        if j == n or (j < n and text[j] == "\x00"):
+            return j, "incomplete"
         return j, "invalid"
+
+    # RFC 8259: Leading zeros forbidden (e.g. 01, 00, -01, -007)
+    if text[digits_start] == "0" and (j - digits_start) > 1:
+        return j, "invalid"
+
     if j < n and text[j] == ".":
         j += 1
         frac_start = j
         while j < n and text[j].isdigit():
             j += 1
         if j == frac_start:
+            if j == n or (j < n and text[j] == "\x00"):
+                return j, "incomplete"
             return j, "invalid"
     if j < n and text[j] in "eE":
         j += 1
@@ -121,8 +130,10 @@ def _scan_number(text: str, i: int) -> Tuple[int, str]:
         while j < n and text[j].isdigit():
             j += 1
         if j == exp_start:
+            if j == n or (j < n and text[j] == "\x00"):
+                return j, "incomplete"
             return j, "invalid"
-    if j < n and text[j] not in _WS and text[j] not in ",}]":
+    if j < n and text[j] not in _WS and text[j] not in ",}]" and text[j] != "\x00":
         return j, "invalid"
     return j, "ok"
 
@@ -132,19 +143,20 @@ def _scan_literal(text: str, i: int) -> Tuple[int, str]:
 
     Returns (index_after_literal, status) where status is "ok", "incomplete"
     (a genuine prefix such as ``tru``) or "invalid". A literal that matches in
-    full exactly at end-of-input is complete and reports "ok".
+    full exactly at end-of-input or before NUL padding is complete and reports "ok".
     """
     n = len(text)
     for lit in _LITERALS:
         if text.startswith(lit, i):
             end = i + len(lit)
-            if end < n and text[end] not in _WS and text[end] not in ",}]":
+            if end < n and text[end] not in _WS and text[end] not in ",}]" and text[end] != "\x00":
                 return end, "invalid"
             return end, "ok"
-    # Partial literal at end of input.
+    # Partial literal at end of input or before NUL padding.
+    rem = text[i:].split("\x00", 1)[0]
     for lit in _LITERALS:
-        if lit.startswith(text[i:]):
-            return n, "incomplete"
+        if rem and lit.startswith(rem):
+            return i + len(rem), "incomplete"
     return i, "invalid"
 
 
@@ -159,18 +171,26 @@ def _classify_prefix(text: str) -> Tuple[str, List[str], str]:
     """
     n = len(text)
     i = _skip_ws(text, 0)
-    if i >= n:
+    if i >= n or not text[i:].strip("\x00 \t\r\n"):
         return _INCOMPLETE, [], "input contains no JSON content"
 
     stack: List[str] = []
     # state: 'value' (a value may start here), 'key' (a member name or '}'),
-    #        'colon' (':' required), 'sep' (',' or a closing bracket required)
+    #        'colon' (':' required), 'sep' (',' or a closing bracket required),
+    #        'done' (root container closed, only trailing whitespace/NUL padding permitted)
     state = "value"
 
     while True:
+        if state == "done":
+            i = _skip_ws(text, i)
+            if i >= n or not text[i:].strip("\x00 \t\r\n"):
+                return _COMPLETE, [], "complete JSON document"
+            c = text[i]
+            return _INVALID, [], f"unexpected extra data {c!r} after complete JSON document"
+
         if state == "value":
             i = _skip_ws(text, i)
-            if i >= n:
+            if i >= n or not text[i:].strip("\x00 \t\r\n"):
                 # A further value could still appear, so it is unknown.
                 return _INCOMPLETE, stack, "a JSON value was expected but the evidence ends"
             c = text[i]
@@ -210,7 +230,7 @@ def _classify_prefix(text: str) -> Tuple[str, List[str], str]:
 
         if state == "key":
             i = _skip_ws(text, i)
-            if i >= n:
+            if i >= n or not text[i:].strip("\x00 \t\r\n"):
                 # The object may have been empty or may have held members; the
                 # evidence cannot distinguish, so nothing is invented.
                 return _INCOMPLETE, stack, "object body is unknown at end of evidence"
@@ -229,7 +249,7 @@ def _classify_prefix(text: str) -> Tuple[str, List[str], str]:
 
         if state == "colon":
             i = _skip_ws(text, i)
-            if i >= n:
+            if i >= n or not text[i:].strip("\x00 \t\r\n"):
                 return _INCOMPLETE, stack, "member value is unknown at end of evidence"
             if text[i] != ":":
                 return _INVALID, stack, "expected ':' after a JSON member name"
@@ -239,9 +259,14 @@ def _classify_prefix(text: str) -> Tuple[str, List[str], str]:
 
         # state == 'sep'
         if not stack:
-            return _COMPLETE, [], "complete JSON document"
+            i = _skip_ws(text, i)
+            if i >= n or not text[i:].strip("\x00 \t\r\n"):
+                return _COMPLETE, [], "complete JSON document"
+            c = text[i]
+            return _INVALID, [], f"unexpected extra data {c!r} after complete JSON document"
+
         i = _skip_ws(text, i)
-        if i >= n:
+        if i >= n or not text[i:].strip("\x00 \t\r\n"):
             # A complete value finished inside an open container: the only
             # deficiency is the closing bytes, which are uniquely determined.
             return _CLOSABLE, stack, "JSON containers are unclosed"
@@ -322,6 +347,21 @@ def reconstruct_json(
     Returns:
         ReconstructionResult with honest verified/reconstructed/missing
         accounting and an explicit ``reconstruction_method``.
+
+    Accounting contract for input slices:
+        - Scanner-bounded candidates exclude external padding: when carving from
+          evidence images, the candidate extent stops at the closing delimiter,
+          and external sector padding bytes are excluded from the candidate without
+          fabricating missing bytes.
+        - Direct raw-buffer calls may count excluded padding in missing_bytes under
+          the current input-conservation contract (verified_bytes + missing_bytes == len(data)),
+          categorizing the trimmed padding as 'UNATTRIBUTED_PADDING'.
+        - This accounting does not prove those padding bytes were original file content:
+          the engine does not claim that external slack padding belonged to the original artifact.
+        - Structural closure does not establish original identity: appending deterministic
+          closing braces/brackets ensures syntactic validity, but cannot prove that the
+          closed structure matches the original uncorrupted file (e.g. truncated containers
+          may have originally contained additional elements or longer tokens).
     """
     data = bytes(data)
 
@@ -383,25 +423,42 @@ def reconstruct_json(
 
     # ── Case 1: intact, valid JSON ────────────────────────────────────────
     if classification == _COMPLETE:
-        val = validate_json(body)
+        clean_text = text.rstrip("\x00 \t\r\n")
+        clean_body = clean_text.encode("utf-8")
+        padding_bytes = len(body) - len(clean_body)
+        val = validate_json(clean_body)
+        status = "FULLY_RECOVERED" if (val.valid and padding_bytes == 0) else ("PARTIALLY_RECOVERED" if val.valid else "CORRUPTED")
+        damage_regions = []
+        if val.valid and padding_bytes > 0:
+            damage_regions.append({
+                "offset": len(clean_body),
+                "length": padding_bytes,
+                "type": "UNATTRIBUTED_PADDING",
+                "status": "UNRECOVERABLE",
+                "details": f"Evidence contained {padding_bytes} byte(s) of trailing padding",
+            })
         return _result(
-            status="FULLY_RECOVERED" if val.valid else "CORRUPTED",
+            status=status,
             success=bool(val.valid),
-            recovered=body,
-            verified=len(body),
+            recovered=clean_body,
+            verified=len(clean_body),
             reconstructed=0,
-            missing=0,
+            missing=padding_bytes,
             methods=["JSON_STRUCTURAL_VALIDATION"],
+            damage_regions=damage_regions,
             validation_result=val,
             details={
                 **common,
                 "reconstruction_method": "JSON_STRUCTURAL_VALIDATION",
                 "synthetic_markers": had_markers,
                 "marker_overhead_bytes": marker_overhead,
-                "output_sha256": hashlib.sha256(body).hexdigest(),
+                "trailing_padding_bytes": padding_bytes,
+                "output_sha256": hashlib.sha256(clean_body).hexdigest(),
                 "notice": (
                     "The evidence parses as complete JSON, so it is preserved byte for byte "
                     "with no reconstruction and nothing missing."
+                    if padding_bytes == 0 else
+                    f"The evidence parses as complete JSON ({len(clean_body)} bytes). Trailing {padding_bytes} byte(s) of padding are accounted as missing."
                 ),
             },
             original_data=original_data,
@@ -409,8 +466,11 @@ def reconstruct_json(
 
     # ── Case 2: deterministically closable prefix ─────────────────────────
     if classification == _CLOSABLE:
+        clean_text = text.rstrip("\x00 \t\r\n")
+        clean_body = clean_text.encode("utf-8")
+        padding_bytes = len(body) - len(clean_body)
         closers = "".join("}" if c == "{" else "]" for c in reversed(stack))
-        repaired_text = text + closers
+        repaired_text = clean_text + closers
         try:
             json.loads(repaired_text)
         except json.JSONDecodeError as exc:
@@ -431,23 +491,33 @@ def reconstruct_json(
                 original_data=original_data,
             )
 
+        damage_regions = [
+            {
+                "offset": len(clean_body),
+                "length": len(closers.encode("utf-8")),
+                "type": "MISSING_STRUCTURAL_CLOSURE",
+                "status": "RECONSTRUCTABLE",
+                "details": f"Appended deterministic closing bytes {closers!r}",
+            }
+        ]
+        if padding_bytes > 0:
+            damage_regions.append({
+                "offset": len(clean_body),
+                "length": padding_bytes,
+                "type": "UNATTRIBUTED_PADDING",
+                "status": "UNRECOVERABLE",
+                "details": f"Evidence contained {padding_bytes} byte(s) of trailing padding",
+            })
+
         return _result(
             status="PARTIALLY_RECOVERED",
             success=True,
             recovered=repaired_bytes,
-            verified=len(body),
+            verified=len(clean_body),
             reconstructed=len(closers.encode("utf-8")),
-            missing=0,
+            missing=padding_bytes,
             methods=["JSON_STRUCTURAL_CLOSURE"],
-            damage_regions=[
-                {
-                    "offset": len(body),
-                    "length": len(closers.encode("utf-8")),
-                    "type": "MISSING_STRUCTURAL_CLOSURE",
-                    "status": "RECONSTRUCTABLE",
-                    "details": f"Appended deterministic closing bytes {closers!r}",
-                }
-            ],
+            damage_regions=damage_regions,
             validation_result=val,
             details={
                 **common,
@@ -455,6 +525,7 @@ def reconstruct_json(
                 "appended_closers": closers,
                 "synthetic_markers": had_markers,
                 "marker_overhead_bytes": marker_overhead,
+                "trailing_padding_bytes": padding_bytes,
                 "output_sha256": hashlib.sha256(repaired_bytes).hexdigest(),
                 "ambiguity": (
                     "The closing sequence is uniquely determined by the open container stack, "
@@ -632,7 +703,7 @@ def _verified_prefix_length(text: str) -> int:
     Trailing bytes belonging to an incomplete token are not established and are
     left out so they can be reported as missing.
     """
-    stripped = text.rstrip()
+    stripped = text.rstrip("\x00 \t\r\n")
     if not stripped:
         return 0
 

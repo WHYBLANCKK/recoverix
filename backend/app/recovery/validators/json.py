@@ -109,7 +109,7 @@ def validate_json(data: bytes | RecoveredArtifact) -> ValidationResult:
             details=details,
         )
 
-    stripped_text = text.strip()
+    stripped_text = text.strip("\x00 \t\r\n")
     if not stripped_text:
         errors.append("JSON payload text is empty after trimming whitespace")
         return ValidationResult(
@@ -120,6 +120,9 @@ def validate_json(data: bytes | RecoveredArtifact) -> ValidationResult:
             warnings=warnings,
             details=details,
         )
+
+    if text.strip(" \t\r\n") != stripped_text:
+        warnings.append("Stripped NUL padding around JSON payload")
 
     # 5. JSON parsing check
     try:
