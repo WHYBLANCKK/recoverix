@@ -271,12 +271,26 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
     )
 
 
+def _is_valid_sha256(val: object) -> bool:
+    """Check if value is a valid 64-character hexadecimal SHA-256 string."""
+    if not isinstance(val, str) or len(val) != 64:
+        return False
+    try:
+        int(val, 16)
+        return True
+    except ValueError:
+        return False
+
+
 def migrate_legacy_blobs(engine: SqliteEngine) -> dict[str, int]:
     """Migrate legacy unprefixed blobs in SQLite to isolated namespaces.
 
     Safely inspects unprefixed keys in `blobs` and deterministically assigns them
     based on authoritative ownership records:
-      - Keys present in `evidence_files` and absent in `artifacts` -> migrated to `evidence:{key}`.
+      - Keys present in `evidence_files` and absent in `artifacts`:
+          * Verified against `evidence_files.sha256` (and `file_size` if recorded).
+          * If consistent -> migrated to `evidence:{key}`.
+          * If mismatched, missing, or malformed -> preserved unmigrated as ambiguous.
       - Keys present in `artifacts` and absent in `evidence_files` -> migrated to `artifact:{key}`.
       - Keys present in both:
           * If `evidence:{key}` already exists and `artifact:{key}` does not, unprefixed key is migrated to `artifact:{key}`.
@@ -292,6 +306,7 @@ def migrate_legacy_blobs(engine: SqliteEngine) -> dict[str, int]:
       - Idempotent: safe to run multiple times without state changes or data loss.
       - Non-destructive: never overwrites existing namespaced keys.
       - Never invents synthetic data or claims corrupted data was recovered.
+      - Schema-resilient: gracefully handles older database layouts with missing optional columns.
     """
     if not isinstance(engine, SqliteEngine):
         raise TypeError("engine must be an instance of SqliteEngine")
@@ -301,9 +316,21 @@ def migrate_legacy_blobs(engine: SqliteEngine) -> dict[str, int]:
         if cursor.fetchone() is None:
             return {"migrated_evidence": 0, "migrated_artifact": 0, "ambiguous": 0, "orphaned": 0}
 
+        # Check blobs table schema defensively
+        cursor.execute("PRAGMA table_info(blobs);")
+        blob_cols = {row["name"] for row in cursor.fetchall()}
+        has_blob_size = "size_bytes" in blob_cols
+        has_blob_created_at = "created_at" in blob_cols
+
+        select_cols = ["blob_key", "data"]
+        if has_blob_size:
+            select_cols.append("size_bytes")
+        if has_blob_created_at:
+            select_cols.append("created_at")
+
         cursor.execute(
-            """
-            SELECT blob_key, data, size_bytes, created_at
+            f"""
+            SELECT {', '.join(select_cols)}
             FROM blobs
             WHERE blob_key NOT LIKE 'evidence:%'
               AND blob_key NOT LIKE 'artifact:%';
@@ -313,34 +340,99 @@ def migrate_legacy_blobs(engine: SqliteEngine) -> dict[str, int]:
         if not unprefixed_rows:
             return {"migrated_evidence": 0, "migrated_artifact": 0, "ambiguous": 0, "orphaned": 0}
 
+        # Check evidence_files table schema defensively
+        has_evidence_table = False
+        has_evidence_sha = False
+        has_evidence_size = False
         cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='evidence_files';")
-        has_evidence_table = cursor.fetchone() is not None
+        if cursor.fetchone() is not None:
+            has_evidence_table = True
+            cursor.execute("PRAGMA table_info(evidence_files);")
+            ev_cols = {r["name"] for r in cursor.fetchall()}
+            has_evidence_sha = "sha256" in ev_cols
+            has_evidence_size = "file_size" in ev_cols
 
+        # Check artifacts table schema defensively
+        has_artifacts_table = False
+        has_artifact_id = False
         cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts';")
-        has_artifacts_table = cursor.fetchone() is not None
+        if cursor.fetchone() is not None:
+            has_artifacts_table = True
+            cursor.execute("PRAGMA table_info(artifacts);")
+            art_cols = {r["name"] for r in cursor.fetchall()}
+            has_artifact_id = "artifact_id" in art_cols
 
         migrated_ev = 0
         migrated_art = 0
         ambiguous = 0
         orphaned = 0
 
+        def _insert_blob(target_key: str, blob_bytes: bytes, b_size: int, b_created: str) -> None:
+            if has_blob_size and has_blob_created_at:
+                cursor.execute(
+                    "INSERT INTO blobs (blob_key, data, size_bytes, created_at) VALUES (?, ?, ?, ?);",
+                    (target_key, sqlite3.Binary(blob_bytes), b_size, b_created),
+                )
+            elif has_blob_size:
+                cursor.execute(
+                    "INSERT INTO blobs (blob_key, data, size_bytes) VALUES (?, ?, ?);",
+                    (target_key, sqlite3.Binary(blob_bytes), b_size),
+                )
+            elif has_blob_created_at:
+                cursor.execute(
+                    "INSERT INTO blobs (blob_key, data, created_at) VALUES (?, ?, ?);",
+                    (target_key, sqlite3.Binary(blob_bytes), b_created),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO blobs (blob_key, data) VALUES (?, ?);",
+                    (target_key, sqlite3.Binary(blob_bytes)),
+                )
+
         for row in unprefixed_rows:
             blob_key = row["blob_key"]
-            data = bytes(row["data"])
-            size_bytes = row["size_bytes"]
-            created_at = row["created_at"]
+            data = bytes(row["data"]) if row["data"] is not None else b""
+            size_bytes = (
+                row["size_bytes"]
+                if (has_blob_size and row["size_bytes"] is not None)
+                else len(data)
+            )
+            created_at = (
+                row["created_at"]
+                if (has_blob_created_at and row["created_at"] is not None)
+                else datetime.now(timezone.utc).isoformat()
+            )
 
             in_evidence = False
             evidence_sha = None
+            evidence_size = None
             if has_evidence_table:
-                cursor.execute("SELECT sha256 FROM evidence_files WHERE case_id = ?;", (blob_key,))
-                ev_r = cursor.fetchone()
-                if ev_r is not None:
-                    in_evidence = True
-                    evidence_sha = ev_r["sha256"] if isinstance(ev_r, sqlite3.Row) else ev_r[0]
+                ev_query_cols = []
+                if has_evidence_sha:
+                    ev_query_cols.append("sha256")
+                if has_evidence_size:
+                    ev_query_cols.append("file_size")
+
+                if ev_query_cols:
+                    cursor.execute(
+                        f"SELECT {', '.join(ev_query_cols)} FROM evidence_files WHERE case_id = ?;",
+                        (blob_key,),
+                    )
+                    ev_r = cursor.fetchone()
+                    if ev_r is not None:
+                        in_evidence = True
+                        if has_evidence_sha:
+                            evidence_sha = ev_r["sha256"] if isinstance(ev_r, sqlite3.Row) else ev_r[0]
+                        if has_evidence_size:
+                            idx = ev_query_cols.index("file_size")
+                            evidence_size = ev_r["file_size"] if isinstance(ev_r, sqlite3.Row) else ev_r[idx]
+                else:
+                    cursor.execute("SELECT 1 FROM evidence_files WHERE case_id = ?;", (blob_key,))
+                    if cursor.fetchone() is not None:
+                        in_evidence = True
 
             in_artifacts = False
-            if has_artifacts_table:
+            if has_artifacts_table and has_artifact_id:
                 cursor.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?;", (blob_key,))
                 if cursor.fetchone() is not None:
                     in_artifacts = True
@@ -354,39 +446,38 @@ def migrate_legacy_blobs(engine: SqliteEngine) -> dict[str, int]:
             cursor.execute("SELECT 1 FROM blobs WHERE blob_key = ?;", (art_key,))
             has_art_key = cursor.fetchone() is not None
 
+            # Evidence consistency check: must have valid 64-char SHA-256 matching data,
+            # and file_size matching length if recorded.
+            blob_sha = hashlib.sha256(data).hexdigest()
+            is_sha_valid = _is_valid_sha256(evidence_sha)
+            is_hash_match = is_sha_valid and (blob_sha.lower() == str(evidence_sha).lower())
+            is_size_match = (evidence_size is None) or (evidence_size < 0) or (evidence_size == len(data))
+            is_evidence_consistent = is_hash_match and is_size_match
+
             if in_evidence and not in_artifacts:
-                if not has_ev_key:
-                    cursor.execute(
-                        "INSERT INTO blobs (blob_key, data, size_bytes, created_at) VALUES (?, ?, ?, ?);",
-                        (ev_key, sqlite3.Binary(data), size_bytes, created_at),
-                    )
-                cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
-                migrated_ev += 1
+                if is_evidence_consistent:
+                    if not has_ev_key:
+                        _insert_blob(ev_key, data, size_bytes, created_at)
+                    cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
+                    migrated_ev += 1
+                else:
+                    # Inconsistent/unverified evidence: preserve unmigrated
+                    ambiguous += 1
 
             elif in_artifacts and not in_evidence:
                 if not has_art_key:
-                    cursor.execute(
-                        "INSERT INTO blobs (blob_key, data, size_bytes, created_at) VALUES (?, ?, ?, ?);",
-                        (art_key, sqlite3.Binary(data), size_bytes, created_at),
-                    )
+                    _insert_blob(art_key, data, size_bytes, created_at)
                 cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
                 migrated_art += 1
 
             elif in_evidence and in_artifacts:
                 if has_ev_key and not has_art_key:
-                    cursor.execute(
-                        "INSERT INTO blobs (blob_key, data, size_bytes, created_at) VALUES (?, ?, ?, ?);",
-                        (art_key, sqlite3.Binary(data), size_bytes, created_at),
-                    )
+                    _insert_blob(art_key, data, size_bytes, created_at)
                     cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
                     migrated_art += 1
                 elif has_art_key and not has_ev_key:
-                    blob_sha = hashlib.sha256(data).hexdigest()
-                    if blob_sha == evidence_sha:
-                        cursor.execute(
-                            "INSERT INTO blobs (blob_key, data, size_bytes, created_at) VALUES (?, ?, ?, ?);",
-                            (ev_key, sqlite3.Binary(data), size_bytes, created_at),
-                        )
+                    if is_evidence_consistent:
+                        _insert_blob(ev_key, data, size_bytes, created_at)
                         cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
                         migrated_ev += 1
                     else:
@@ -394,12 +485,8 @@ def migrate_legacy_blobs(engine: SqliteEngine) -> dict[str, int]:
                 elif has_ev_key and has_art_key:
                     cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
                 else:
-                    blob_sha = hashlib.sha256(data).hexdigest()
-                    if blob_sha == evidence_sha:
-                        cursor.execute(
-                            "INSERT INTO blobs (blob_key, data, size_bytes, created_at) VALUES (?, ?, ?, ?);",
-                            (ev_key, sqlite3.Binary(data), size_bytes, created_at),
-                        )
+                    if is_evidence_consistent:
+                        _insert_blob(ev_key, data, size_bytes, created_at)
                         cursor.execute("DELETE FROM blobs WHERE blob_key = ?;", (blob_key,))
                         migrated_ev += 1
                     else:

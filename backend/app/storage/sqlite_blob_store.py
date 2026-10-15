@@ -15,6 +15,17 @@ from typing import Optional
 from backend.app.storage.sqlite_engine import SqliteEngine
 
 
+def _is_valid_sha256(val: object) -> bool:
+    """Check if value is a valid 64-character hexadecimal SHA-256 string."""
+    if not isinstance(val, str) or len(val) != 64:
+        return False
+    try:
+        int(val, 16)
+        return True
+    except ValueError:
+        return False
+
+
 class SqliteBlobStore:
     """Thread-safe SQLite implementation of the BlobStore contract with domain isolation support."""
 
@@ -38,44 +49,63 @@ class SqliteBlobStore:
 
         if self._namespace == "evidence:":
             try:
-                cursor.execute("SELECT sha256 FROM evidence_files WHERE case_id = ?;", (key,))
+                cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='evidence_files';")
+                if cursor.fetchone() is None:
+                    return False
+
+                cursor.execute("PRAGMA table_info(evidence_files);")
+                ev_cols = {r["name"] for r in cursor.fetchall()}
+                if "sha256" not in ev_cols:
+                    return False
+
+                has_size = "file_size" in ev_cols
+                query = "SELECT sha256, file_size FROM evidence_files WHERE case_id = ?;" if has_size else "SELECT sha256 FROM evidence_files WHERE case_id = ?;"
+                cursor.execute(query, (key,))
                 ev_row = cursor.fetchone()
                 if ev_row is None:
                     return False
+
                 expected_sha = ev_row["sha256"] if isinstance(ev_row, sqlite3.Row) else ev_row[0]
-                cursor.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?;", (key,))
-                if cursor.fetchone() is not None:
-                    cursor.execute("SELECT data FROM blobs WHERE blob_key = ?;", (key,))
-                    b_row = cursor.fetchone()
-                    if b_row is None:
-                        return False
-                    blob_bytes = bytes(b_row["data"] if isinstance(b_row, sqlite3.Row) else b_row[0])
-                    if hashlib.sha256(blob_bytes).hexdigest() != expected_sha:
-                        return False
+                expected_size = (ev_row["file_size"] if isinstance(ev_row, sqlite3.Row) else ev_row[1]) if has_size else None
+
+                if not _is_valid_sha256(expected_sha):
+                    return False
+
+                cursor.execute("SELECT data FROM blobs WHERE blob_key = ?;", (key,))
+                b_row = cursor.fetchone()
+                if b_row is None:
+                    return False
+                blob_bytes = bytes(b_row["data"] if isinstance(b_row, sqlite3.Row) else b_row[0])
+
+                if hashlib.sha256(blob_bytes).hexdigest().lower() != expected_sha.lower():
+                    return False
+                if expected_size is not None and expected_size >= 0 and len(blob_bytes) != expected_size:
+                    return False
+
                 return True
             except sqlite3.OperationalError:
-                return True
+                return False
 
         elif self._namespace == "artifact:":
             try:
+                cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts';")
+                if cursor.fetchone() is None:
+                    return False
                 cursor.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?;", (key,))
                 if cursor.fetchone() is None:
                     return False
-                cursor.execute("SELECT 1 FROM evidence_files WHERE case_id = ?;", (key,))
+
+                # Check if it collides with evidence_files
+                cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='evidence_files';")
                 if cursor.fetchone() is not None:
-                    cursor.execute("SELECT sha256 FROM evidence_files WHERE case_id = ?;", (key,))
-                    ev_row = cursor.fetchone()
-                    expected_sha = ev_row["sha256"] if isinstance(ev_row, sqlite3.Row) else ev_row[0]
-                    cursor.execute("SELECT data FROM blobs WHERE blob_key = ?;", (key,))
-                    b_row = cursor.fetchone()
-                    if b_row is not None:
-                        blob_bytes = bytes(b_row["data"] if isinstance(b_row, sqlite3.Row) else b_row[0])
-                        if hashlib.sha256(blob_bytes).hexdigest() == expected_sha:
-                            return False
-                    return False
+                    cursor.execute("SELECT 1 FROM evidence_files WHERE case_id = ?;", (key,))
+                    if cursor.fetchone() is not None:
+                        # Collision: legacy artifact payload was collapsed/ambiguous
+                        return False
+
                 return True
             except sqlite3.OperationalError:
-                return True
+                return False
 
         return True
 
