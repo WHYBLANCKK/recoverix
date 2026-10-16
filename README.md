@@ -12,6 +12,7 @@ Recoverix distinguishes between information directly supported by the available 
 
 ## Table of Contents
 
+- [Public Beta (v0.1.0-beta.1)](#public-beta-v010-beta1)
 - [Problem Statement](#problem-statement)
 - [Our Approach](#our-approach)
 - [Core Architecture](#core-architecture)
@@ -26,12 +27,53 @@ Recoverix distinguishes between information directly supported by the available 
 - [Getting Started](#getting-started)
 - [Command-Line Interface (CLI)](#command-line-interface-cli)
 - [Testing](#testing)
-- [Synthetic Evaluation](#synthetic-evaluation)
+- [Synthetic Evaluation & Benchmarks](#synthetic-evaluation--benchmarks)
 - [Security and Deployment Model](#security-and-deployment-model)
 - [Limitations](#limitations)
 - [Design Principles](#design-principles)
 - [Future Improvements](#future-improvements)
 - [License](#license)
+
+## Public Beta (v0.1.0-beta.1)
+
+Recoverix `v0.1.0-beta.1` is a controlled public beta release intended for digital forensic researchers, reverse engineers, and developers investigating damaged file recovery.
+
+### Scope and Guiding Principle
+
+> **"Recoverix does not guess what was lost. It proves what can be recovered."**
+
+Recoverix operates on strict deterministic principles:
+- **No Hallucinated Evidence:** The engine never invents missing file bytes or uses generative prediction to complete missing payload data.
+- **Explicit Provenance ($V / R / M$):** Reconstructed structural repairs are strictly accounted for and separated from verified evidence bytes.
+- **Bounded Safety:** Memory consumption is strictly bounded during file carving and HTTP streaming.
+
+### Core Capabilities in Beta 1
+
+1. **Standalone CLI (`recoverix`):**
+   Execute bounded, non-destructive file carving and reconstruction directly from the command line without starting web services:
+   ```bash
+   recoverix recover damaged_evidence.pdf --out ./recovered_files
+   ```
+2. **Supported Deterministic Formats:**
+   - **PDF:** Reconstructs broken cross-reference (`xref`) tables and missing trailers, validating object hierarchies.
+   - **JSON:** Detects syntax boundaries and deterministically closes unclosed container delimiters (`}`, `]`) without synthetic markers.
+   - **CSV & TXT:** Detects contiguous text bounds, verifies delimiter integrity, and isolates corruption zones.
+   - **XML, PNG, JPEG:** Validates signatures, headers, and container boundaries.
+3. **Transparent Byte Accounting:**
+   Every recovery produces a breakdown satisfying $\text{Total Logical Bytes} = V + R + M$:
+   - $V$ (Verified): Bytes present in and directly proven by the evidence.
+   - $R$ (Reconstructed): Deterministic structural repairs added to make the file parser-compliant.
+   - $M$ (Missing): Unrecovered damaged or omitted regions.
+4. **Interactive Dashboard & API:**
+   A Next.js frontend with Tailwind CSS and a FastAPI backend with SQLite persistence for case tracking and evidence inspection.
+
+### Critical Operational Constraints & Disclaimers
+
+- **Hard 5 MiB Size Limit:** The ingestion pipeline and CLI enforce a strict maximum input size limit of **5 MiB** (`5,242,880 bytes`). Files exceeding 5 MiB or 0-byte files are rejected before processing.
+- **Local Workstation Security:** Recoverix contains **no built-in authentication or multi-tenant authorization**. It is configured by default for single-user local loopback operation (`127.0.0.1`). Network deployments require an authenticating reverse proxy and network isolation.
+- **Verified vs. Reconstructed Bytes:** Reconstructed bytes ($R$) represent structural repairs (such as regenerated xref tables), not original verified evidence.
+- **Documented Benchmark Gaps:** The marker-free JSON benchmark includes a documented `UNACCOUNTED_GAP` in content-loss scenarios where physical gaps cannot be deduced without synthetic delimiters. Recoverix records this limitation honestly.
+- **Explicit Non-Claims:** Recoverix makes no claim of universal file recovery, legal admissibility in judicial proceedings, or forensic soundness for unsupported formats. It is an engineering and research prototype.
 
 ## Problem Statement
 
@@ -480,28 +522,55 @@ Recoverix includes automated tests covering areas such as:
 
 Regression tests are particularly important for preventing unrelated candidates from being combined and for ensuring that malformed files do not cause recovery logic to claim unsupported bytes.
 
-Run the complete backend test suite with:
+Run the complete test suite and benchmarks:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -v
+# 1. Run full pytest regression suite (1,234+ tests)
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
+
+# 2. Run the deterministic baseline recovery benchmark (6/6 scenarios)
+PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_baseline
+
+# 3. Run the marker-free JSON recovery benchmark (7 scenarios)
+PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.json_benchmark
 ```
 
-## Synthetic Evaluation
+The `PYTHONDONTWRITEBYTECODE=1` environment variable prevents Python from writing `.pyc` files into source directories.
 
-Recoverix uses controlled synthetic evidence scenarios to evaluate recovery behavior.
+## Synthetic Evaluation & Benchmarks
 
-Example scenario categories include:
+Recoverix evaluates its recovery pipeline against reproducible synthetic evidence images with known physical ground-truth placements.
 
-- Clean evidence.
-- Deleted artifacts.
-- Fragmented artifacts.
-- Bifragmented artifacts.
-- Corrupted artifacts.
-- Unrecoverable artifacts.
+### 1. Baseline Recovery Benchmark (`benchmark.run_baseline`)
 
-Synthetic generation and ground-truth information are intended for testing and evaluation. Ground truth must remain separate from the production recovery decisions.
+Evaluates multi-format candidate detection, spatial relationship preservation, and byte-level provenance across 6 core forensic scenarios:
 
-Evaluation results should be reported with the command, seed, scenario coverage, and test results used to obtain them. A successful synthetic benchmark does not establish performance on every real-world evidence source.
+| Scenario ID | Artifact Type | Expected Status | Observed Status | IoU | Payload Hash |
+|---|---|---|---|:---:|:---:|
+| `art-clean-01` | TXT | `FULLY_RECOVERED` | `FULLY_RECOVERED` | 1.000 | Match |
+| `art-deleted-01` | CSV | `FULLY_RECOVERED` | `FULLY_RECOVERED` | 1.000 | Match |
+| `art-fragmented-01` | TXT | `FULLY_RECOVERED` | `FULLY_RECOVERED` | 1.000 | Match |
+| `art-bifragment-01` | TXT | `UNRECOVERABLE` | `UNRECOVERABLE` | N/A | N/A |
+| `art-corrupted-01` | TXT | `CORRUPTED` | `CORRUPTED` | N/A | Mismatch |
+| `art-unrecoverable-01` | TXT | `UNRECOVERABLE` | `UNRECOVERABLE` | N/A | N/A |
+
+*Result:* **6 / 6 passed**, 0 forensic accounting violations.
+
+### 2. Marker-Free JSON Benchmark (`benchmark.json_benchmark`)
+
+Evaluates syntax-boundary candidate discovery, bracket-closure reconstruction, and noise resistance without synthetic framing delimiters:
+
+| Scenario | Description | Status | Byte Correctness | Finding |
+|---|---|---|:---:|---|
+| `json-clean` | Intact JSON payload | `FULLY_RECOVERED` | 1.000 | Clean Match |
+| `json-truncated-closable` | Missing closing delimiters | `PARTIALLY_RECOVERED` | 1.000 | Structural Closure Match |
+| `json-truncated-closable-content-loss` | Missing key-value content prior to closure | `PARTIALLY_RECOVERED` | 1.000 | **Documented Limitation:** `UNACCOUNTED_GAP` |
+| `json-truncated-incomplete` | Truncated mid-string/key | `PARTIALLY_RECOVERED` | 1.000 | Incomplete token dropped honestly |
+| `json-unrecoverable-noise` | Binary random noise without valid JSON | `UNRECOVERABLE` | N/A | Negative control (no false recovery) |
+| `json-with-binary-noise` | Valid JSON surrounded by binary noise | `FULLY_RECOVERED` | 1.000 | Exact payload carving |
+| `json-multi-candidate-independent` | Two independent JSON structures in one stream | `FULLY_RECOVERED` (both) | 1.000 | Isolated candidates without fusion |
+
+*Result:* **6 / 7 scenarios passed**, 1 documented limitation (`UNACCOUNTED_GAP` on content loss). Ground truth remains strictly separated from recovery execution.
 
 ## Security and Deployment Model
 
