@@ -680,3 +680,89 @@ def test_pdf_catalog_malformed_and_truncated_input():
     assert val_stream.valid is False
     assert any("Damaged stream boundaries" in e for e in val_stream.errors)
 
+
+# ── Milestone 12 Phase 5: PDF Object-Tree and Reference Integrity Suite ────
+
+
+def test_pdf_object_tree_missing_pages_reference_rejected():
+    """Milestone 12 Phase 5: A PDF with an intact xref table but dangling /Pages reference
+    in its Document Catalog must NOT pass validation or be marked FULLY_RECOVERED.
+    """
+    from backend.app.recovery.tracer import execute_traced_recovery
+
+    pdf_broken = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"xref\n"
+        b"0 2\n"
+        b"0000000000 65535 f \n"
+        b"0000000009 00000 n \n"
+        b"trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n52\n%%EOF\n"
+    )
+
+    val = validate_pdf(pdf_broken)
+    assert val.valid is False
+    assert any("Catalog object 1 references non-existent /Pages object 2" in e for e in val.errors)
+
+    run = execute_traced_recovery("broken_pages_ref.pdf", pdf_broken)
+    assert run.status != "FULLY_RECOVERED"
+    assert run.status in ("CORRUPTED", "UNRECOVERABLE")
+
+
+def test_pdf_object_tree_reconstructed_xref_with_missing_internal_objects_not_fully_recovered():
+    """Milestone 12 Phase 5: A PDF whose xref table was reconstructed but whose internal
+    objects are missing must fail structural validation and report UNRECOVERABLE / FAILED.
+    """
+    from backend.app.recovery.tracer import execute_traced_recovery
+
+    pdf_no_xref = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    )
+
+    rebuilt, ok = reconstruct_pdf_xref(pdf_no_xref)
+    assert ok is True
+    val = validate_pdf(rebuilt)
+    assert val.valid is False
+    assert any("Catalog object 1 references non-existent /Pages object 2" in e for e in val.errors)
+
+    run = execute_traced_recovery("broken_no_xref.pdf", pdf_no_xref)
+    assert run.status != "FULLY_RECOVERED"
+    assert run.status in ("CORRUPTED", "UNRECOVERABLE")
+    assert any(s.result == "FAILED" for s in run.reconstruction_steps)
+    assert any(d.status == "UNRECOVERABLE" for d in run.damage_regions)
+
+
+def test_pdf_object_tree_missing_kids_child_reference_rejected():
+    """Milestone 12 Phase 5: A PDF where a Pages node references a non-existent child Page
+    in its /Kids array must fail structural validation.
+    """
+    pdf_broken_kids = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        # Object 3 is missing!
+        b"trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n100\n%%EOF\n"
+    )
+    val = validate_pdf(pdf_broken_kids)
+    assert val.valid is False
+    assert any("Pages object 2 references non-existent /Kids child object 3" in e for e in val.errors)
+
+
+def test_pdf_object_tree_missing_contents_stream_reference_rejected():
+    """Milestone 12 Phase 5: A PDF where a Page references a non-existent /Contents stream
+    object must fail structural validation.
+    """
+    pdf_broken_contents = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n"
+        # Object 4 (/Contents stream) is missing!
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n150\n%%EOF\n"
+    )
+    val = validate_pdf(pdf_broken_contents)
+    assert val.valid is False
+    assert any("Page object 3 references non-existent /Contents stream object 4" in e for e in val.errors)
+
+

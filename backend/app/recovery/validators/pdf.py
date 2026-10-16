@@ -177,6 +177,93 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
                     if not (target_slice.startswith(b"xref") or b"obj" in target_slice or b"/XRef" in target_slice):
                         warnings.append(f"startxref pointer {reported_offset} does not point directly to 'xref' or XRef object")
 
+    # 7. Object-tree and internal reference integrity check
+    if len(raw_bytes) > 0 and len(obj_starts) > 0:
+        checks.append("object_tree_integrity")
+        defined_objects: set[int] = set()
+        for m in obj_starts:
+            try:
+                defined_objects.add(int(m.group(1)))
+            except ValueError:
+                pass
+        details["defined_object_ids"] = sorted(list(defined_objects))
+
+        missing_refs: list[str] = []
+
+        # 7a. Trailer /Root reference
+        trailer_idx = raw_bytes.rfind(b"trailer")
+        trailer_search_slice = raw_bytes[trailer_idx:] if trailer_idx != -1 else raw_bytes
+        root_match = re.search(rb"/Root\s+(\d+)\s+(\d+)\s+R\b", trailer_search_slice)
+        if root_match:
+            root_id = int(root_match.group(1))
+            details["root_object_id"] = root_id
+            if root_id not in defined_objects:
+                missing_refs.append(f"trailer /Root references non-existent object {root_id}")
+
+        # 7b. Object-tree traversal for Catalog, Pages, and Page references
+        for i, m in enumerate(obj_starts):
+            obj_num = int(m.group(1))
+            start_off = m.start()
+            next_start = obj_starts[i + 1].start() if i + 1 < len(obj_starts) else len(raw_bytes)
+            obj_slice = raw_bytes[start_off:next_start]
+
+            endobj_match = re.search(rb"\bendobj\b", obj_slice)
+            if endobj_match:
+                obj_slice = obj_slice[:endobj_match.end()]
+
+            # Catalog dictionary (/Type /Catalog)
+            if is_catalog_dictionary(obj_slice):
+                pages_match = re.search(rb"/Pages\s+(\d+)\s+(\d+)\s+R\b", obj_slice)
+                if pages_match:
+                    pages_id = int(pages_match.group(1))
+                    details["catalog_pages_id"] = pages_id
+                    if pages_id not in defined_objects:
+                        missing_refs.append(
+                            f"Catalog object {obj_num} references non-existent /Pages object {pages_id}"
+                        )
+                else:
+                    missing_refs.append(f"Catalog object {obj_num} missing required /Pages reference")
+
+            # Page tree node (/Type /Pages)
+            if re.search(rb"/Type\s*/Pages\b", obj_slice):
+                kids_match = re.search(rb"/Kids\s*\[([^\]]*)\]", obj_slice)
+                if kids_match:
+                    kids_slice = kids_match.group(1)
+                    for km in re.finditer(rb"(\d+)\s+(\d+)\s+R\b", kids_slice):
+                        kid_id = int(km.group(1))
+                        if kid_id not in defined_objects:
+                            missing_refs.append(
+                                f"Pages object {obj_num} references non-existent /Kids child object {kid_id}"
+                            )
+
+            # Page node (/Type /Page)
+            if re.search(rb"/Type\s*/Page\b", obj_slice):
+                parent_match = re.search(rb"/Parent\s+(\d+)\s+(\d+)\s+R\b", obj_slice)
+                if parent_match:
+                    p_id = int(parent_match.group(1))
+                    if p_id not in defined_objects:
+                        missing_refs.append(
+                            f"Page object {obj_num} references non-existent /Parent object {p_id}"
+                        )
+                contents_match = re.search(rb"/Contents\s+(\d+)\s+(\d+)\s+R\b", obj_slice)
+                if contents_match:
+                    c_id = int(contents_match.group(1))
+                    if c_id not in defined_objects:
+                        missing_refs.append(
+                            f"Page object {obj_num} references non-existent /Contents stream object {c_id}"
+                        )
+                contents_arr_match = re.search(rb"/Contents\s*\[([^\]]*)\]", obj_slice)
+                if contents_arr_match:
+                    for cm in re.finditer(rb"(\d+)\s+(\d+)\s+R\b", contents_arr_match.group(1)):
+                        c_id = int(cm.group(1))
+                        if c_id not in defined_objects:
+                            missing_refs.append(
+                                f"Page object {obj_num} references non-existent /Contents stream object {c_id}"
+                            )
+
+        if missing_refs:
+            errors.append(f"Damaged PDF object tree: {'; '.join(missing_refs)}")
+
     valid = len(errors) == 0
     return ValidationResult(
         valid=valid,

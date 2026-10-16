@@ -1421,14 +1421,14 @@ def _recover_standalone_candidate(
                     gap_start=None,
                     gap_end=None,
                     gap_size=None,
-                    result="SUCCESS",
+                    result="SUCCESS" if val_res.valid else "FAILED",
                     verified_bytes=ver_bytes,
                     reconstructed_bytes=rec_byte_cnt,
                     validation_status="PASSED" if val_res.valid else "FAILED",
                     confidence=float(eval_res.score_breakdown.total),
                 )
                 reconstruction_steps.append(step0)
-                damage_regions[0] = dam0.model_copy(update={"status": "RECONSTRUCTED"})
+                damage_regions[0] = dam0.model_copy(update={"status": "RECONSTRUCTED" if val_res.valid else "UNRECOVERABLE"})
             else:
                 val_res = val_initial
                 status_val = "UNRECOVERABLE"
