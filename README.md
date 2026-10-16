@@ -24,6 +24,7 @@ Recoverix distinguishes between information directly supported by the available 
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
+- [Command-Line Interface (CLI)](#command-line-interface-cli)
 - [Testing](#testing)
 - [Synthetic Evaluation](#synthetic-evaluation)
 - [Security and Deployment Model](#security-and-deployment-model)
@@ -378,6 +379,81 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -v
 The `PYTHONDONTWRITEBYTECODE=1` setting prevents Python from writing new bytecode files during the test run.
 
 Consult the repository configuration and dependency files if additional setup is required.
+
+## Command-Line Interface (CLI)
+
+Recoverix provides a standalone command-line interface (`recoverix` / `python3 -m backend.cli`) that enables direct file carving, deterministic reconstruction, structural validation, and artifact export without running FastAPI, Uvicorn, or the Next.js frontend.
+
+### Installation and Invocation
+
+You can run the CLI directly from the repository using Python, or as an installed console script:
+
+```bash
+# Direct module invocation from repo root
+python3 -m backend.cli --help
+
+# Or via installed console script
+pip install -e .
+recoverix --help
+```
+
+### Basic Usage
+
+Carve and recover a damaged evidence file to a destination directory:
+
+```bash
+# Recover a damaged PDF (auto-reconstructs xref tables and missing trailers)
+python3 -m backend.cli recover damaged_doc.pdf --out ./recovered
+
+# Recover a damaged JSON file with short flag -o
+python3 -m backend.cli recover corrupted_data.json -o ./recovered_artifacts
+
+# Output machine-readable JSON summary for automated pipelines
+python3 -m backend.cli recover evidence.dat -o ./output --json
+```
+
+### Exit Codes
+
+The CLI returns standard exit codes suitable for CI/CD pipelines, shell scripts, and automated ingestion workflows:
+
+| Exit Code | Meaning | Description |
+|:---:|---|---|
+| `0` | Recovery Successful | A valid artifact was recovered (`FULLY_RECOVERED` or `PARTIALLY_RECOVERED`) and written to the output directory. |
+| `1` | Unrecoverable / Corrupted | The evidence is unrecoverable from available bytes; no artifact file is written. |
+| `2` | Operational Error | Input file not found, permission denied, file empty or exceeds 5 MiB limit, target output file already exists, path traversal detected, or invalid arguments. |
+
+### Output Files and Safety Invariants
+
+- **Non-Overwrite Guarantee:** Recoverix writes recovered artifacts as `recovered_<original_filename>` inside the specified `--out` directory. To prevent accidental evidence loss or tampering, the CLI will refuse to overwrite an existing file (exiting with code `2`).
+- **Path Traversal Protection:** Input filenames are strictly sanitized to basenames before constructing the destination path. Attempts to traverse outside the target directory are rejected.
+- **Bounded Ingestion:** Evidence files are bounded by `MAX_EVIDENCE_SIZE` (5 MiB). Files larger than 5 MiB or 0-byte files are rejected before processing.
+- **No Artifact on Failure:** If recovery status is `UNRECOVERABLE` or zero recoverable bytes are produced, no output file is written.
+
+### Understanding the Recovery Summary
+
+Upon execution, Recoverix displays a forensic accounting summary:
+
+```text
+════════════════════════════════════════════════════════════════════════
+  RECOVERIX — FORENSIC FILE RECOVERY SUMMARY
+════════════════════════════════════════════════════════════════════════
+  Input File         : damaged_doc.pdf (1,420 bytes)
+  Detected Format    : pdf
+  Recovery Status    : PARTIALLY_RECOVERED
+  Validation Status  : PASSED
+  Verified Bytes     : 1,218 bytes (intact evidence bytes)
+  Reconstructed Bytes: 202 bytes (structural repair bytes)
+  Missing Bytes      : 0 bytes (unrecovered damage)
+  Reconstruction     : RECONSTRUCT_PDF_XREF
+  Output File        : /path/to/recovered/recovered_damaged_doc.pdf (1,420 bytes written)
+────────────────────────────────────────────────────────────────────────
+  Notice: Artifact was partially recovered. Reconstructed or missing bytes exist;
+  reconstructed bytes represent structural repairs (e.g. delimiters, xref tables),
+  not original verified content. Inspect output before forensic reliance.
+════════════════════════════════════════════════════════════════════════
+```
+
+> **Forensic Notice:** Reconstructed bytes ($R$) represent synthetically repaired structural elements (such as regenerated PDF cross-reference tables or closed JSON delimiters), not verified original payload bytes ($V$). Always inspect recovered artifacts before relying on them for forensic investigations.
 
 ## Testing
 

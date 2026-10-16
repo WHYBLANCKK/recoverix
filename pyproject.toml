@@ -16,6 +16,10 @@ dependencies = [
     "python-multipart>=0.0.9",
 ]
 
+[project.scripts]
+recoverix = "backend.cli:main"
+
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
