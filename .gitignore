@@ -9,6 +9,9 @@ venv/
 *.tsbuildinfo
 .DS_Store
 backend/generated/
+*.egg-info/
+build/
+dist/
 
 # SQLite runtime database files
 data/*.db

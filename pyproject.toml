@@ -7,6 +7,7 @@ name = "recoverix"
 version = "0.1.0"
 description = "Deterministic digital evidence recovery and analysis system"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",

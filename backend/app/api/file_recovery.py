@@ -50,8 +50,8 @@ class FileRecoveryResponse(BaseModel):
 router = APIRouter(tags=["file_recovery"])
 
 
-@router.post("/recover-file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK)
-@router.post("/recover/file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK)
+@router.post("/recover-file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="recover_single_file")
+@router.post("/recover/file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="recover_single_file_alias")
 async def recover_single_file(request: Request, file: UploadFile = File(...)) -> FileRecoveryResponse:
     """Upload a single evidence file for deterministic byte recovery and validation."""
     cl_header = request.headers.get("content-length")
@@ -162,8 +162,8 @@ async def recover_single_file(request: Request, file: UploadFile = File(...)) ->
     return FileRecoveryResponse(**meta_dict)
 
 
-@router.get("/recover-file/{file_id}", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK)
-@router.get("/recover/file/{file_id}", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK)
+@router.get("/recover-file/{file_id}", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="get_recovered_file_metadata")
+@router.get("/recover/file/{file_id}", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="get_recovered_file_metadata_alias")
 def get_recovered_file_metadata(file_id: str) -> FileRecoveryResponse:
     """Retrieve metadata and real forensic fragments of a previously recovered file."""
     meta = store.get_recovered_file_metadata(file_id)
@@ -175,8 +175,8 @@ def get_recovered_file_metadata(file_id: str) -> FileRecoveryResponse:
     return FileRecoveryResponse(**meta)
 
 
-@router.get("/recover-file/{file_id}/download", status_code=status.HTTP_200_OK)
-@router.get("/recover/file/{file_id}/download", status_code=status.HTTP_200_OK)
+@router.get("/recover-file/{file_id}/download", status_code=status.HTTP_200_OK, operation_id="download_recovered_file")
+@router.get("/recover/file/{file_id}/download", status_code=status.HTTP_200_OK, operation_id="download_recovered_file_alias")
 def download_recovered_file(file_id: str) -> Response:
     """Download raw byte buffer of a recovered single file."""
     meta = store.get_recovered_file_metadata(file_id)
@@ -202,8 +202,8 @@ def download_recovered_file(file_id: str) -> Response:
     )
 
 
-@router.post("/recover-file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
-@router.post("/recover/file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.post("/recover-file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK, operation_id="explain_recovered_file")
+@router.post("/recover/file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK, operation_id="explain_recovered_file_alias")
 def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
     """Generate or retrieve a cached grounded AI explanation for a single recovered file."""
     meta = store.get_recovered_file_metadata(file_id)

@@ -31,6 +31,7 @@ Recoverix distinguishes between information directly supported by the available 
 - [Limitations](#limitations)
 - [Design Principles](#design-principles)
 - [Future Improvements](#future-improvements)
+- [License](#license)
 
 ## Problem Statement
 
@@ -393,7 +394,7 @@ You can run the CLI directly from the repository using Python, or as an installe
 python3 -m backend.cli --help
 
 # Or via installed console script
-pip install -e .
+python3 -m pip install -e .
 recoverix --help
 ```
 
@@ -605,3 +606,7 @@ These are development directions, not claims that the features are already imple
 ## Core Statement
 
 > Recoverix does not guess what was lost. It reconstructs only what the available evidence supports, validates the result, and makes the remaining uncertainty explicit.
+
+## License
+
+Recoverix is open-source software licensed under the [MIT License](LICENSE).

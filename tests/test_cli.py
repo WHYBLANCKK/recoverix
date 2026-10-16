@@ -179,6 +179,39 @@ def test_cli_unrecoverable_input(tmp_path: Path):
     assert list(out_dir.glob("*")) == []
 
 
+def test_cli_corrupted_input_rejected_no_file(tmp_path: Path):
+    """Test corrupted input (status=CORRUPTED, val=FAILED) produces no output file and exits 1."""
+    from benchmark.run_baseline import build_ground_truth_manifest
+
+    gt_manifest, evidence_bytes = build_ground_truth_manifest(seed=42)
+    art_corr = next(a for a in gt_manifest.artifacts if a.artifact_id == "art-corrupted-01")
+    p = art_corr.placements[0]
+    corrupted_data = evidence_bytes[p.evidence_offset : p.evidence_offset + p.evidence_length]
+
+    in_file = tmp_path / "corrupted_text.txt"
+    in_file.write_bytes(corrupted_data)
+
+    out_dir = tmp_path / "corrupt_out"
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+
+    exit_code = run_recover_command(
+        input_path_str=str(in_file),
+        output_dir_str=str(out_dir),
+        as_json=False,
+        stdout_stream=out_buf,
+        stderr_stream=err_buf,
+    )
+
+    assert exit_code == EXIT_UNRECOVERABLE
+    out_text = out_buf.getvalue()
+    assert "CORRUPTED" in out_text
+    assert "FAILED" in out_text
+    assert "None (no valid recoverable artifact produced)" in out_text
+    # Invariant: Never write corrupted unvalidated output to disk
+    assert list(out_dir.glob("*")) == []
+
+
 # ── Test 6: Invalid and Missing Input Paths ──────────────────────────────────
 
 def test_cli_missing_input_file(tmp_path: Path):
@@ -338,6 +371,39 @@ def test_cli_json_output_metrics(tmp_path: Path):
     assert data["is_recoverable"] is True
     assert data["output_path"] == str(out_dir / "recovered_metrics.json")
     assert data["output_size_bytes"] == len(json_bytes)
+
+
+def test_cli_partially_recovered_json_metrics(tmp_path: Path):
+    """Test --json flag on partially recovered damaged PDF reflects accurate R>0 and PARTIALLY_RECOVERED."""
+    pdf_bytes = build_minimal_pdf()
+    corrupted_pdf = pdf_bytes.replace(b"xref", b"xxxx")
+
+    in_file = tmp_path / "damaged_doc.pdf"
+    in_file.write_bytes(corrupted_pdf)
+
+    out_dir = tmp_path / "pdf_json_out"
+    out_buf = io.StringIO()
+
+    exit_code = run_recover_command(
+        input_path_str=str(in_file),
+        output_dir_str=str(out_dir),
+        as_json=True,
+        stdout_stream=out_buf,
+    )
+
+    assert exit_code == EXIT_SUCCESS
+    data = json.loads(out_buf.getvalue())
+
+    assert data["input_filename"] == "damaged_doc.pdf"
+    assert data["format"] == "pdf"
+    assert data["status"] == "PARTIALLY_RECOVERED"
+    assert data["validation_status"] == "PASSED"
+    assert data["verified_bytes"] > 0
+    assert data["reconstructed_bytes"] > 0
+    assert data["is_recoverable"] is True
+    assert data["output_path"] == str(out_dir / "recovered_damaged_doc.pdf")
+    assert Path(data["output_path"]).exists()
+    assert Path(data["output_path"]).read_bytes().startswith(b"%PDF-")
 
 
 # ── Test 11: Bounded File Reading Limits ─────────────────────────────────────

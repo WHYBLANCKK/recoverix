@@ -201,7 +201,11 @@ def run_recover_command(
         val_status = "FAILED"
 
     recovered_content = extract_recovered_bytes(recovery_run)
-    is_downloadable = (status_val != "UNRECOVERABLE") and (len(recovered_content) > 0)
+    is_downloadable = (
+        status_val in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED")
+        and val_status == "PASSED"
+        and len(recovered_content) > 0
+    )
 
     # 5. Safe output path resolution
     output_file_path: Optional[Path] = None
