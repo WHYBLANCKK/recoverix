@@ -7,7 +7,7 @@ from physical ground-truth manifests without accessing recovery code.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Tuple
+from typing import List, Literal, Sequence, Tuple
 from benchmark.models import PhysicalArtifactRecord, PhysicalDamageInterval
 
 
@@ -36,6 +36,82 @@ class DerivedExpectation:
     expected_corrupted_intervals: List[Tuple[int, int]] = field(default_factory=list)
 
     forensic_classification_rule: str = ""
+
+
+def subtract_damage_intervals(
+    placements: Sequence[Tuple[int, int]],
+    damage_spans: Sequence[Tuple[int, int]],
+    max_bound: int,
+) -> List[Tuple[int, int]]:
+    """Compute surviving half-open intervals by subtracting damage spans from placements.
+
+    surviving_intervals = placement_intervals minus union(damage_intervals)
+
+    Enforces:
+      - Valid half-open interval endpoints: 0 <= start < end <= max_bound
+      - Merged/normalized damage intervals (handling overlaps, adjacent spans, and nesting)
+      - Explicit handling of zero-length or inverted intervals
+      - Canonical sorted, disjoint surviving subintervals
+    """
+    if max_bound <= 0:
+        return []
+
+    # 1. Validate, clamp, and filter damage spans
+    valid_dmg: List[Tuple[int, int]] = []
+    for s, e in damage_spans:
+        if isinstance(s, int) and isinstance(e, int) and s < e and e > 0 and s < max_bound:
+            clamped_s = max(0, s)
+            clamped_e = min(max_bound, e)
+            if clamped_s < clamped_e:
+                valid_dmg.append((clamped_s, clamped_e))
+    valid_dmg.sort()
+
+    # 2. Merge overlapping or adjacent damage intervals
+    merged_dmg: List[Tuple[int, int]] = []
+    for s, e in valid_dmg:
+        if not merged_dmg:
+            merged_dmg.append((s, e))
+        elif s <= merged_dmg[-1][1]:
+            merged_dmg[-1] = (merged_dmg[-1][0], max(merged_dmg[-1][1], e))
+        else:
+            merged_dmg.append((s, e))
+
+    # 3. For each placement interval, subtract merged damage spans
+    surviving: List[Tuple[int, int]] = []
+    for p_s, p_e in placements:
+        if not (isinstance(p_s, int) and isinstance(p_e, int) and p_s < p_e and p_e > 0 and p_s < max_bound):
+            continue
+        clamped_p_s = max(0, p_s)
+        clamped_p_e = min(max_bound, p_e)
+        if clamped_p_s >= clamped_p_e:
+            continue
+
+        curr = clamped_p_s
+        for d_s, d_e in merged_dmg:
+            if d_e <= curr:
+                continue
+            if d_s >= clamped_p_e:
+                break
+            if d_s > curr:
+                surviving.append((curr, min(d_s, clamped_p_e)))
+            curr = max(curr, d_e)
+            if curr >= clamped_p_e:
+                break
+        if curr < clamped_p_e:
+            surviving.append((curr, clamped_p_e))
+
+    # 4. Sort and merge surviving intervals
+    surviving.sort()
+    final_surviving: List[Tuple[int, int]] = []
+    for s, e in surviving:
+        if not final_surviving:
+            final_surviving.append((s, e))
+        elif s <= final_surviving[-1][1]:
+            final_surviving[-1] = (final_surviving[-1][0], max(final_surviving[-1][1], e))
+        else:
+            final_surviving.append((s, e))
+
+    return final_surviving
 
 
 def derive_expected_recovery(artifact: PhysicalArtifactRecord) -> DerivedExpectation:
@@ -90,19 +166,10 @@ def derive_expected_recovery(artifact: PhysicalArtifactRecord) -> DerivedExpecta
         else:
             missing_intervals.append(span)
 
-    # 3. Calculate surviving (verified) intervals from placements excluding damage
-    # Placements define which slices are present in evidence
-    surviving_intervals: List[Tuple[int, int]] = []
-    damage_spans = set(missing_intervals + corrupted_intervals + reconstructed_intervals)
-
-    for p in artifact.placements:
-        p_start = p.original_offset
-        p_end = p.original_offset + p.evidence_length
-
-        # Check if placement overlaps any corruption or gap
-        is_damaged = any(max(p_start, ds[0]) < min(p_end, ds[1]) for ds in damage_spans)
-        if not is_damaged:
-            surviving_intervals.append((p_start, p_end))
+    # 3. Calculate surviving (verified) intervals from placements excluding damage spans
+    placement_spans = [(p.original_offset, p.original_offset + p.evidence_length) for p in artifact.placements]
+    all_damage_spans = missing_intervals + corrupted_intervals + reconstructed_intervals
+    surviving_intervals = subtract_damage_intervals(placement_spans, all_damage_spans, max_bound=orig_size)
 
     total_missing = sum(end - start for start, end in missing_intervals)
     total_reconstructed = sum(end - start for start, end in reconstructed_intervals)
@@ -143,6 +210,9 @@ def derive_expected_recovery(artifact: PhysicalArtifactRecord) -> DerivedExpecta
         # Rule 4: UNREPAIRABLE_CORRUPTION
         status = "CORRUPTED"
         rule_name = "UNREPAIRABLE_CORRUPTION"
+        total_verified = 0
+        total_reconstructed = 0
+        surviving_intervals = []
     else:
         status = "PARTIALLY_RECOVERED"
         rule_name = "DEFAULT_PARTIAL"

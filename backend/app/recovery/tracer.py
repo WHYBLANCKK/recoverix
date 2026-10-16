@@ -1270,7 +1270,8 @@ def _recover_standalone_candidate(
                 relevant_fragment_ids=["frag-0"],
             )
 
-            rebuilt_bytes, xref_ok = reconstruct_pdf_xref(raw_bytes)
+            rebuilt_res = reconstruct_pdf_xref(raw_bytes)
+            rebuilt_bytes, xref_ok = rebuilt_res
             emit_event(
                 "RECONSTRUCTION_COMPLETED",
                 f"PDF xref reconstruction {'succeeded' if xref_ok else 'failed'}",
@@ -1289,10 +1290,11 @@ def _recover_standalone_candidate(
                     carving_method="XREF_RECONSTRUCTED",
                 )
                 val_res = validator(carved_rebuilt)
+                clean_base_len = getattr(rebuilt_res, "clean_base_len", len(raw_bytes))
                 pdf_input_bytes = len(raw_bytes)
-                pdf_reconstructed_bytes = max(0, len(rebuilt_bytes) - pdf_input_bytes)
-                pdf_missing_bytes = max(0, pdf_input_bytes - len(rebuilt_bytes))
-                pdf_verified_bytes = pdf_input_bytes - pdf_missing_bytes
+                pdf_verified_bytes = min(pdf_input_bytes, clean_base_len)
+                pdf_missing_bytes = max(0, pdf_input_bytes - pdf_verified_bytes)
+                pdf_reconstructed_bytes = max(0, len(rebuilt_bytes) - pdf_verified_bytes)
                 eval_res = evaluate_artifact_confidence(
                     validation_result=val_res,
                     artifact=carved_rebuilt,

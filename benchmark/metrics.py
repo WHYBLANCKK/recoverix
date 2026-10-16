@@ -32,12 +32,15 @@ VALID_STATUSES = frozenset({
 
 
 def compute_volume_ratio(observed_vol: int, expected_vol: int) -> float:
-    """Compute volume accuracy ratio min(obs, exp) / max(obs, exp).
+    """Compute aggregate volume accuracy ratio min(obs, exp) / max(obs, exp).
 
-    Returns:
-      1.0 if both are 0
-      0.0 if one is 0 and the other > 0
-      min / max ratio otherwise
+    NOTE:
+      - Returns 1.0 when both observed_vol and expected_vol are 0 (zero agreement / absence of volume).
+        This convention signifies agreement on absence, NOT proof of successful payload recovery.
+      - Returns 0.0 when one is 0 and the other > 0.
+      - Returns min / max ratio otherwise.
+      - Volume ratio measures ONLY aggregate byte count parity; it never substitutes for
+        byte-level correctness, coordinate IoU, or payload hash identity.
     """
     if observed_vol < 0 or expected_vol < 0:
         raise ValueError("Volumes must be non-negative")
@@ -170,6 +173,29 @@ class EvaluationMetrics:
 
     # Whole-Payload SHA-256 Match (actual payload bytes == original ground truth bytes; None if no payload produced)
     whole_payload_hash_match: Optional[bool] = None
+
+    # Exact byte counts for aggregate volume accounting (distinguishes 0/0 agreement from nonzero counts)
+    observed_verified_bytes: int = 0
+    expected_verified_bytes: int = 0
+    observed_reconstructed_bytes: int = 0
+    expected_reconstructed_bytes: int = 0
+    observed_missing_bytes: int = 0
+    expected_missing_bytes: int = 0
+
+    @property
+    def v_is_zero_agreement(self) -> bool:
+        """True when both observed and expected verified volumes are 0."""
+        return self.observed_verified_bytes == 0 and self.expected_verified_bytes == 0
+
+    @property
+    def r_is_zero_agreement(self) -> bool:
+        """True when both observed and expected reconstructed volumes are 0."""
+        return self.observed_reconstructed_bytes == 0 and self.expected_reconstructed_bytes == 0
+
+    @property
+    def m_is_zero_agreement(self) -> bool:
+        """True when both observed and expected missing volumes are 0."""
+        return self.observed_missing_bytes == 0 and self.expected_missing_bytes == 0
 
 
 def compute_evaluation_metrics(
@@ -315,6 +341,12 @@ def compute_evaluation_metrics(
         v_volume_accuracy=v_vol_acc,
         r_volume_accuracy=r_vol_acc,
         m_volume_accuracy=m_vol_acc,
+        observed_verified_bytes=recovery.total_verified_bytes,
+        expected_verified_bytes=expectation.expected_verified_bytes,
+        observed_reconstructed_bytes=recovery.total_reconstructed_bytes,
+        expected_reconstructed_bytes=expectation.expected_reconstructed_bytes,
+        observed_missing_bytes=recovery.total_missing_bytes,
+        expected_missing_bytes=expectation.expected_missing_bytes,
         v_interval_iou=v_iou,
         m_interval_iou=m_iou,
         r_interval_iou=r_iou,

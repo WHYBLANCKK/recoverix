@@ -617,6 +617,9 @@ def evaluate_json_scenario(
             "v_volume_accuracy": ae.v_volume_accuracy if ae else 0.0,
             "r_volume_accuracy": ae.r_volume_accuracy if ae else 0.0,
             "m_volume_accuracy": ae.m_volume_accuracy if ae else 0.0,
+            "observed_verified_bytes": ae.observed_verified_bytes if ae else 0,
+            "expected_verified_bytes": ae.expected_verified_bytes if ae else 0,
+            "v_is_zero_agreement": ae.v_is_zero_agreement if ae else False,
             "v_interval_iou": ae.v_interval_iou if ae else None,
             "r_interval_iou": ae.r_interval_iou if ae else None,
             "m_interval_iou": ae.m_interval_iou if ae else None,
@@ -739,8 +742,8 @@ def _print_json_benchmark_summary(report: Dict[str, Any]) -> None:
         print(f"{passed_tag} {sc['scenario_id']} ({sc['evidence_buffer_id']}, {sc['evidence_size_bytes']} bytes)")
         for art in sc["artifacts"]:
             status_match_str = f"Match: {art['status_match']}"
-            print(f"       Status             : Expected {art['expected_status']} | Observed {art['observed_status']} ({status_match_str})")
-            print(f"       Volume Accounting  : V_vol_acc={art['v_volume_accuracy']:.3f}, R_vol_acc={art['r_volume_accuracy']:.3f}, M_vol_acc={art['m_volume_accuracy']:.3f}")
+            v_zero_note = " (0/0 agreement)" if art.get("v_is_zero_agreement") else ""
+            print(f"       Volume Accounting  : V_vol_acc={art['v_volume_accuracy']:.3f}{v_zero_note}, R_vol_acc={art['r_volume_accuracy']:.3f}, M_vol_acc={art['m_volume_accuracy']:.3f} (aggregate counts only)")
 
             v_iou_str = f"{art['v_interval_iou']:.3f}" if art['v_interval_iou'] is not None else "N/A"
             r_iou_str = f"{art['r_interval_iou']:.3f}" if art['r_interval_iou'] is not None else "N/A"

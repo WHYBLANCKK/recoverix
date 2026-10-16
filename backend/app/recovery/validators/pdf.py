@@ -310,7 +310,22 @@ def is_catalog_dictionary(obj_bytes: bytes) -> bool:
     return False
 
 
-def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
+class PDFReconstructResult(Tuple[bytes, bool]):
+    """Tuple subclass for PDF reconstruction: (rebuilt_bytes, success_flag) with clean_base_len."""
+
+    rebuilt_bytes: bytes
+    success: bool
+    clean_base_len: int
+
+    def __new__(cls, rebuilt_bytes: bytes, success: bool, clean_base_len: int = 0):
+        obj = super().__new__(cls, (rebuilt_bytes, success))
+        obj.rebuilt_bytes = rebuilt_bytes
+        obj.success = success
+        obj.clean_base_len = clean_base_len
+        return obj
+
+
+def reconstruct_pdf_xref(pdf_bytes: bytes) -> PDFReconstructResult:
     """Deterministically rebuild xref table and startxref for damaged PDF bytes.
 
     Scans existing indirect objects in pdf_bytes, parses object numbers and byte offsets,
@@ -319,15 +334,15 @@ def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
     Does NOT invent objects or modify existing object bytes.
 
     Returns:
-        Tuple of (reconstructed_pdf_bytes, success_flag).
+        PDFReconstructResult (tuple of reconstructed_pdf_bytes, success_flag) with clean_base_len.
     """
     if not pdf_bytes.startswith(PDF_HEADER_SIGNATURE):
-        return pdf_bytes, False
+        return PDFReconstructResult(pdf_bytes, False, clean_base_len=0)
 
     # Find all obj matches: (num, gen, offset)
     obj_matches = list(re.finditer(rb"(\d+)\s+(\d+)\s+obj\b", pdf_bytes))
     if not obj_matches:
-        return pdf_bytes, False
+        return PDFReconstructResult(pdf_bytes, False, clean_base_len=0)
 
     # Build map of object_number -> byte_offset
     objects_map: Dict[int, int] = {}
@@ -341,7 +356,7 @@ def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
             max_obj_num = obj_num
 
     if not objects_map:
-        return pdf_bytes, False
+        return PDFReconstructResult(pdf_bytes, False, clean_base_len=0)
 
     # Find existing catalog / Root object reference in trailer if possible
     root_ref_match = None
@@ -370,15 +385,23 @@ def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
 
         if root_num is None:
             # Conservative failure: no valid trailer /Root exists and no Catalog can be structurally identified
-            return pdf_bytes, False
+            return PDFReconstructResult(pdf_bytes, False, clean_base_len=0)
 
     # Truncate any damaged old xref / trailer if present
     clean_base = pdf_bytes
     xref_idx = clean_base.rfind(b"\nxref")
     if xref_idx != -1 and xref_idx > len(PDF_HEADER_SIGNATURE):
+        surviving_len = xref_idx
         clean_base = clean_base[:xref_idx]
+    else:
+        clean_base_stripped = clean_base.rstrip(b"\r\n\t ")
+        if pdf_bytes[len(clean_base_stripped):len(clean_base_stripped)+1] == b"\n":
+            surviving_len = len(clean_base_stripped) + 1
+        else:
+            surviving_len = len(clean_base_stripped)
 
     clean_base = clean_base.rstrip(b"\r\n\t ")
+    clean_base_len = surviving_len
 
     xref_start_offset = len(clean_base) + 1  # 1 for leading newline
 
@@ -408,4 +431,4 @@ def reconstruct_pdf_xref(pdf_bytes: bytes) -> Tuple[bytes, bool]:
     )
 
     reconstructed = clean_base + xref_bytes + trailer_text.encode("ascii")
-    return reconstructed, True
+    return PDFReconstructResult(reconstructed, True, clean_base_len=clean_base_len)

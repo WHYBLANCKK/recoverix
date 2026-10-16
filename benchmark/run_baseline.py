@@ -740,7 +740,8 @@ def print_console_summary(report: Dict[str, Any]) -> None:
         st = sc["status"]
         print(f"       Status             : Expected {st['expected']} | Observed {st['observed']} (Match: {st['match']})")
         vol = sc["volumes"]["accuracy"]
-        print(f"       Volume Accounting  : V_vol_acc={vol['verified']:.3f}, R_vol_acc={vol['reconstructed']:.3f}, M_vol_acc={vol['missing']:.3f} (aggregate counts only)")
+        v_zero_note = " (0/0 agreement)" if (vol['verified'] == 1.0 and sc['volumes']['expected']['verified'] == 0 and sc['volumes']['observed']['verified'] == 0) else ""
+        print(f"       Volume Accounting  : V_vol_acc={vol['verified']:.3f}{v_zero_note}, R_vol_acc={vol['reconstructed']:.3f}, M_vol_acc={vol['missing']:.3f} (aggregate counts only)")
         iou = sc["intervals_iou"]
         print(f"       Original-Space IoU : V_iou={_fmt(iou['verified'])}, R_iou={_fmt(iou['reconstructed'])}, M_iou={_fmt(iou['missing'])}")
         bc = sc["byte_correctness"]
