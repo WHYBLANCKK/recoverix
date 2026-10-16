@@ -34,7 +34,7 @@ export function determinePriority(category: ArtifactCategory, previewText: strin
   return 'LOW';
 }
 
-export function parseAiSummary(rawSummary: any, artifact?: any): AIExplanation | null {
+export function parseAiSummary(rawSummary: any, _artifact?: any): AIExplanation | null {
   if (!rawSummary) return null;
   try {
     const parsed = typeof rawSummary === 'string' ? JSON.parse(rawSummary) : rawSummary;
@@ -97,7 +97,7 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   const vBytes = raw.provenance?.verified_bytes ?? raw.verified_bytes ?? 0;
   const rBytes = raw.provenance?.reconstructed_bytes ?? raw.reconstructed_bytes ?? 0;
   
-  let fragments = [];
+  const fragments = [];
   if (rBytes > 0) {
      const half = Math.floor(vBytes / 2);
      fragments.push({ id: "frag_a", start_offset: offset, end_offset: offset + half, type: "VERIFIED" });
@@ -535,7 +535,7 @@ export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
          const cached = JSON.parse(cachedStr);
          const found = cached.find((a: any) => a.id === artifactId);
          if (found) return found;
-       } catch (e) {}
+       } catch {}
     }
   }
 

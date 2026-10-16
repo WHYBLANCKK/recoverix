@@ -18,7 +18,6 @@ import {
   ChevronUp,
   Copy,
   Check,
-  ShieldAlert,
   Layers,
   FileCheck,
 } from "lucide-react";
