@@ -73,6 +73,7 @@ Recoverix operates on strict deterministic principles:
 - **Local Workstation Security:** Recoverix contains **no built-in authentication or multi-tenant authorization**. It is configured by default for single-user local loopback operation (`127.0.0.1`). Network deployments require an authenticating reverse proxy and network isolation.
 - **Verified vs. Reconstructed Bytes:** Reconstructed bytes ($R$) represent structural repairs (such as regenerated xref tables), not original verified evidence.
 - **Documented Benchmark Gaps:** The marker-free JSON benchmark includes a documented `UNACCOUNTED_GAP` in content-loss scenarios where physical gaps cannot be deduced without synthetic delimiters. Recoverix records this limitation honestly.
+- **PDF Object Stream Limitation:** Compressed object streams (`/ObjStm`) and compressed cross-reference streams (`/XRef`) introduced in PDF 1.5+ are not decompressed by the lightweight validator and remain an unsupported structure limitation.
 - **Explicit Non-Claims:** Recoverix makes no claim of universal file recovery, legal admissibility in judicial proceedings, or forensic soundness for unsupported formats. It is an engineering and research prototype.
 
 ## Problem Statement
@@ -638,6 +639,7 @@ Current limitations include:
 
 - Evidence processing is subject to configured size limits.
 - Recovery depends on supported formats and deterministic procedures.
+- Compressed PDF object streams (`/ObjStm`) and compressed cross-reference streams (`/XRef`) introduced in PDF 1.5+ are not decompressed.
 - Arbitrarily overwritten or unknowable bytes cannot be recovered reliably.
 - Some reconstruction candidates may remain ambiguous.
 - Reconstruction capabilities differ across file formats.

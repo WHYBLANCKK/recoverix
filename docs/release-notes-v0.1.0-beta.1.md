@@ -38,7 +38,7 @@ recoverix recover corrupted_data.json -o ./output --json
 * **Failure Guard:** Never writes partial or corrupted files to disk on recovery failure.
 
 ### Deterministic Format Reconstruction
-* **PDF:** Detects `%PDF-` headers and `%%EOF` markers, parses object streams, reconstructs corrupted cross-reference (`xref`) tables, rebuilds missing trailers, and verifies document hierarchy.
+* **PDF:** Detects `%PDF-` headers and `%%EOF` markers, parses indirect object declarations, reconstructs corrupted cross-reference (`xref`) tables, rebuilds missing trailers, and verifies document hierarchy (compressed PDF object streams `/ObjStm` remain a documented limitation).
 * **JSON:** Discovers candidates using syntax boundaries (without synthetic framing delimiters) and repairs unclosed arrays/objects deterministically.
 * **CSV & Plain Text:** Carves contiguous content, verifies delimiter distributions and newline consistency, and isolates damaged sectors.
 * **Image & Structured Containers (PNG, JPEG, XML):** Performs signature detection, chunk boundary inspection, and structural validation.
@@ -108,4 +108,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_realworld --manifest benchmar
 2. **Local Single-User Security Model:** Recoverix contains no built-in user authentication or role-based access controls. It must run on local loopback (`127.0.0.1`). Any deployment to shared or cloud networks requires an external authenticating reverse proxy and network isolation.
 3. **Verified ($V$) vs. Reconstructed ($R$) Bytes:** Structural repairs ($R$) are mathematically and forensically distinct from verified evidence bytes ($V$). Investigators must inspect recovered artifacts before relying on them.
 4. **Documented Gap:** The marker-free JSON benchmark retains a documented limitation (`UNACCOUNTED_GAP`) in scenarios where content is lost prior to closers.
-5. **No Unsupported Claims:** Recoverix is an open-source research prototype. It does not claim universal file recovery, legal admissibility in court proceedings, or forensic soundness for unvalidated file types.
+5. **Compressed PDF Object Streams:** Compressed object streams (`/ObjStm`) and compressed cross-reference streams (`/XRef`) introduced in PDF 1.5+ are not decompressed by the lightweight validator and remain a documented unsupported structure limitation.
+6. **Synthetic Evaluation Disclosure:** The evaluation corpus consists of 15 synthetic controlled fixtures with known ground truth. Synthetic evaluation does not establish real-world forensic effectiveness on uncontrolled data.
+7. **No Unsupported Claims:** Recoverix is an open-source research prototype. It does not claim universal file recovery, legal admissibility in court proceedings, or forensic soundness for unvalidated file types.
