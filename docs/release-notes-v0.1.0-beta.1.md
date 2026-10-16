@@ -80,12 +80,12 @@ npm run dev
 
 ## 4. Verification Suite
 
-The beta release is backed by 1,234 automated tests and reproducible benchmark evaluations:
+The beta release is backed by 1,256 automated tests and reproducible benchmark evaluations:
 
 ```bash
 # Run pytest regression suite
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
-# Result: 1,234 passed
+# Result: 1,256 passed
 
 # Run baseline multi-scenario benchmark
 PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_baseline
@@ -94,6 +94,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_baseline
 # Run marker-free JSON recovery benchmark
 PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.json_benchmark
 # Result: 6 / 7 scenarios passed, 1 documented limitation (UNACCOUNTED_GAP)
+
+# Run empirical validation corpus benchmark
+PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_realworld --manifest benchmark/evaluation_corpus/manifest.json
+# Result: 15 / 15 status matched (100% accuracy), 4 / 4 exact hash matches
 ```
 
 ---

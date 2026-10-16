@@ -1,0 +1,2 @@
+Recoverix deterministic evidence recovery validation report.
+Verified evidence is preserved without speculative 

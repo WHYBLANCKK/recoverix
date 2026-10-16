@@ -1,0 +1,3 @@
+Recoverix deterministic evidence recovery validation report.
+Verified evidence is preserved without speculative prediction.
+Reconstructed structures are separated explicitly.
