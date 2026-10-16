@@ -331,3 +331,123 @@ def test_09_cli_execution_and_report_export(tmp_path: Path):
     assert report_data["report_version"] == "1.0.0"
     assert report_data["summary"]["total_samples"] == 1
     assert report_data["summary"]["processed_samples"] == 1
+
+
+def test_10_path_traversal_confinement_prohibited(tmp_path: Path):
+    """Paths attempting to traverse out of corpus_dir (../ or external symlinks) must be blocked."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+
+    # Secret file outside corpus directory
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_bytes(b"sensitive data")
+
+    # Symlink inside corpus pointing outside
+    external_link = corpus_dir / "external_link.txt"
+    try:
+        external_link.symlink_to(secret_file)
+        has_symlink = True
+    except (OSError, NotImplementedError):
+        has_symlink = False
+
+    samples = [
+        {
+            "sample_id": "traversal-dotdot",
+            "file_path": "../secret.txt",
+            "format": "txt",
+        }
+    ]
+    if has_symlink:
+        samples.append(
+            {
+                "sample_id": "traversal-symlink",
+                "file_path": "external_link.txt",
+                "format": "txt",
+            }
+        )
+
+    manifest_data = {
+        "manifest_version": "1.0.0",
+        "corpus_name": "traversal-test",
+        "samples": samples,
+    }
+    m_path = tmp_path / "manifest.json"
+    m_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    report = run_realworld_benchmark(manifest_path=m_path, corpus_dir=corpus_dir, quiet=True)
+    summary = report["summary"]
+    expected_blocks = len(samples)
+
+    assert summary["path_traversal_count"] == expected_blocks
+    assert summary["processed_samples"] == 0
+    for res in report["samples"]:
+        assert "PATH_TRAVERSAL_PROHIBITED" in res["execution_error"]
+
+
+def test_11_output_report_refuses_to_overwrite_evidence_or_manifest(tmp_path: Path):
+    """The harness must refuse to overwrite manifest or any evidence file with report output."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    evidence_file = corpus_dir / "sample.txt"
+    evidence_file.write_bytes(b"original evidence bytes")
+
+    manifest_data = {
+        "manifest_version": "1.0.0",
+        "corpus_name": "overwrite-protection-test",
+        "samples": [{"sample_id": "s1", "file_path": "sample.txt", "format": "txt"}],
+    }
+    m_path = tmp_path / "manifest.json"
+    m_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    # 1. Overwriting manifest must fail
+    with pytest.raises(ValueError, match="matches manifest file"):
+        run_realworld_benchmark(
+            manifest_path=m_path,
+            corpus_dir=corpus_dir,
+            output_report_path=m_path,
+            quiet=True,
+        )
+
+    # 2. Overwriting evidence file must fail
+    with pytest.raises(ValueError, match="would overwrite evidence file"):
+        run_realworld_benchmark(
+            manifest_path=m_path,
+            corpus_dir=corpus_dir,
+            output_report_path=evidence_file,
+            quiet=True,
+        )
+
+    # Evidence and manifest must remain untouched
+    assert evidence_file.read_bytes() == b"original evidence bytes"
+
+
+def test_12_mathematically_defined_zero_denominators():
+    """Summary metrics must return None when denominators are zero rather than 0.0 or 1.0."""
+    # Empty result set: TP=0, FP=0, FN=0, TN=0
+    summary = calculate_corpus_summary([])
+    det = summary["detection_metrics"]
+    assert det["precision"] is None
+    assert det["recall"] is None
+    assert det["f1_score"] is None
+    assert summary["recovery_status_metrics"]["accuracy"] is None
+    assert summary["structural_validation_metrics"]["pass_rate"] is None
+
+
+def test_13_summary_complete_accounting_invariant():
+    """Summary must satisfy: processed + not_found + oversized + traversal + exec_error == total."""
+    results = [
+        {"elapsed_seconds": 0.01, "candidates_detected": 1, "recoveries": []},
+        {"elapsed_seconds": 0.01, "execution_error": "FILE_NOT_FOUND: x"},
+        {"elapsed_seconds": 0.01, "execution_error": "EXCEEDS_SIZE_LIMIT: y"},
+        {"elapsed_seconds": 0.01, "execution_error": "PATH_TRAVERSAL_PROHIBITED: z"},
+        {"elapsed_seconds": 0.01, "execution_error": "GENERIC_ERROR: w"},
+    ]
+    summary = calculate_corpus_summary(results)
+    assert summary["total_samples"] == 5
+    assert (
+        summary["processed_samples"]
+        + summary["file_not_found_count"]
+        + summary["oversized_file_count"]
+        + summary["path_traversal_count"]
+        + summary["execution_error_count"]
+    ) == summary["total_samples"]

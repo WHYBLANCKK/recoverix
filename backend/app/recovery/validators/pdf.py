@@ -24,6 +24,62 @@ from backend.app.recovery.signatures import (
 )
 
 
+def _clean_dictionary_bytes(obj_slice: bytes) -> bytes:
+    """Extract and sanitize structural dictionary bytes from an indirect object or trailer.
+
+    - Truncates at the 'stream' keyword so payload bytes are never mistaken for dictionary keys.
+    - Strips comments (% to newline).
+    - Replaces literal strings (...) and hex strings <...> with whitespace, preserving
+      dictionary delimiters (<< and >>).
+    """
+    # 1. Truncate at stream keyword if present
+    stream_match = re.search(rb"\bstream\r?\n", obj_slice)
+    dict_slice = obj_slice[:stream_match.start()] if stream_match else obj_slice
+
+    # 2. Strip comments: % to newline
+    cleaned = re.sub(rb"%[^\r\n]*", b" ", dict_slice)
+
+    # 3. Strip literal strings (...) and hex strings <...>
+    n = len(cleaned)
+    out = bytearray()
+    i = 0
+    while i < n:
+        # Preserve dictionary delimiters << and >>
+        if cleaned[i:i + 2] in (b"<<", b">>"):
+            out.extend(cleaned[i:i + 2])
+            i += 2
+            continue
+        # Literal string: (...)
+        if cleaned[i:i + 1] == b"(":
+            out.append(32)
+            paren_depth = 1
+            i += 1
+            while i < n and paren_depth > 0:
+                cb = cleaned[i:i + 1]
+                if cb == b"\\":
+                    i += 2
+                    continue
+                elif cb == b"(":
+                    paren_depth += 1
+                elif cb == b")":
+                    paren_depth -= 1
+                i += 1
+            continue
+        # Hex string: <...>
+        if cleaned[i:i + 1] == b"<":
+            out.append(32)
+            i += 1
+            while i < n and cleaned[i:i + 1] != b">":
+                i += 1
+            if i < n and cleaned[i:i + 1] == b">":
+                i += 1
+            continue
+        else:
+            out.append(cleaned[i])
+            i += 1
+    return bytes(out)
+
+
 def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
     """Validate the structural integrity of a recovered PDF artifact.
 
@@ -193,7 +249,8 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
         # 7a. Trailer /Root reference
         trailer_idx = raw_bytes.rfind(b"trailer")
         trailer_search_slice = raw_bytes[trailer_idx:] if trailer_idx != -1 else raw_bytes
-        root_match = re.search(rb"/Root\s+(\d+)\s+(\d+)\s+R\b", trailer_search_slice)
+        cleaned_trailer = _clean_dictionary_bytes(trailer_search_slice)
+        root_match = re.search(rb"/Root\s+(\d+)\s+(\d+)\s+R\b", cleaned_trailer)
         if root_match:
             root_id = int(root_match.group(1))
             details["root_object_id"] = root_id
@@ -211,9 +268,11 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
             if endobj_match:
                 obj_slice = obj_slice[:endobj_match.end()]
 
+            cleaned_obj = _clean_dictionary_bytes(obj_slice)
+
             # Catalog dictionary (/Type /Catalog)
             if is_catalog_dictionary(obj_slice):
-                pages_match = re.search(rb"/Pages\s+(\d+)\s+(\d+)\s+R\b", obj_slice)
+                pages_match = re.search(rb"/Pages\s+(\d+)\s+(\d+)\s+R\b", cleaned_obj)
                 if pages_match:
                     pages_id = int(pages_match.group(1))
                     details["catalog_pages_id"] = pages_id
@@ -225,8 +284,8 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
                     missing_refs.append(f"Catalog object {obj_num} missing required /Pages reference")
 
             # Page tree node (/Type /Pages)
-            if re.search(rb"/Type\s*/Pages\b", obj_slice):
-                kids_match = re.search(rb"/Kids\s*\[([^\]]*)\]", obj_slice)
+            if re.search(rb"/Type\s*/Pages\b", cleaned_obj):
+                kids_match = re.search(rb"/Kids\s*\[([^\]]*)\]", cleaned_obj)
                 if kids_match:
                     kids_slice = kids_match.group(1)
                     for km in re.finditer(rb"(\d+)\s+(\d+)\s+R\b", kids_slice):
@@ -237,22 +296,22 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
                             )
 
             # Page node (/Type /Page)
-            if re.search(rb"/Type\s*/Page\b", obj_slice):
-                parent_match = re.search(rb"/Parent\s+(\d+)\s+(\d+)\s+R\b", obj_slice)
+            if re.search(rb"/Type\s*/Page\b", cleaned_obj):
+                parent_match = re.search(rb"/Parent\s+(\d+)\s+(\d+)\s+R\b", cleaned_obj)
                 if parent_match:
                     p_id = int(parent_match.group(1))
                     if p_id not in defined_objects:
                         missing_refs.append(
                             f"Page object {obj_num} references non-existent /Parent object {p_id}"
                         )
-                contents_match = re.search(rb"/Contents\s+(\d+)\s+(\d+)\s+R\b", obj_slice)
+                contents_match = re.search(rb"/Contents\s+(\d+)\s+(\d+)\s+R\b", cleaned_obj)
                 if contents_match:
                     c_id = int(contents_match.group(1))
                     if c_id not in defined_objects:
                         missing_refs.append(
                             f"Page object {obj_num} references non-existent /Contents stream object {c_id}"
                         )
-                contents_arr_match = re.search(rb"/Contents\s*\[([^\]]*)\]", obj_slice)
+                contents_arr_match = re.search(rb"/Contents\s*\[([^\]]*)\]", cleaned_obj)
                 if contents_arr_match:
                     for cm in re.finditer(rb"(\d+)\s+(\d+)\s+R\b", contents_arr_match.group(1)):
                         c_id = int(cm.group(1))

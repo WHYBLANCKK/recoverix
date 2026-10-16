@@ -95,13 +95,17 @@ def evaluate_realworld_sample(
     """
     start_time = time.perf_counter()
 
-    # Resolve file path
+    # Resolve and confine file path within corpus_dir
+    resolved_corpus = corpus_dir.resolve()
     raw_path = Path(sample.file_path)
-    file_path = raw_path if raw_path.is_absolute() else (corpus_dir / raw_path)
+    if raw_path.is_absolute():
+        target_path = raw_path.resolve()
+    else:
+        target_path = (resolved_corpus / raw_path).resolve()
 
     sample_result: Dict[str, Any] = {
         "sample_id": sample.sample_id,
-        "file_path": str(file_path),
+        "file_path": str(target_path),
         "corruption_category": sample.corruption_category,
         "format": sample.format,
         "file_size_bytes": 0,
@@ -121,6 +125,17 @@ def evaluate_realworld_sample(
         },
         "elapsed_seconds": 0.0,
     }
+
+    try:
+        target_path.relative_to(resolved_corpus)
+    except ValueError:
+        sample_result["execution_error"] = (
+            f"PATH_TRAVERSAL_PROHIBITED: File path '{sample.file_path}' resolves outside corpus root '{resolved_corpus}'"
+        )
+        sample_result["elapsed_seconds"] = round(time.perf_counter() - start_time, 4)
+        return sample_result
+
+    file_path = target_path
 
     # 1. Existence check
     if not file_path.exists() or not file_path.is_file():
@@ -319,6 +334,7 @@ def calculate_corpus_summary(sample_results: List[Dict[str, Any]]) -> Dict[str, 
     total_samples = len(sample_results)
     file_not_found = 0
     oversized = 0
+    path_traversal = 0
     exec_errors = 0
     processed = 0
 
@@ -336,6 +352,7 @@ def calculate_corpus_summary(sample_results: List[Dict[str, Any]]) -> Dict[str, 
     hash_matches = 0
     hash_mismatches = 0
 
+    total_candidates = 0
     total_recoveries = 0
     val_passed = 0
     val_failed = 0
@@ -350,20 +367,22 @@ def calculate_corpus_summary(sample_results: List[Dict[str, Any]]) -> Dict[str, 
                 file_not_found += 1
             elif "EXCEEDS_SIZE_LIMIT" in err:
                 oversized += 1
+            elif "PATH_TRAVERSAL_PROHIBITED" in err:
+                path_traversal += 1
             else:
                 exec_errors += 1
             continue
 
         processed += 1
+        cand_count = s.get("candidates_detected", 0)
+        total_candidates += cand_count
 
         # Detection classification
         gt = s.get("ground_truth_evaluation", {})
         det_match = gt.get("detection_match")
-        cand_count = s.get("candidates_detected", 0)
 
         if det_match is not None:
             samples_with_detection_gt += 1
-            expected_det = s.get("corruption_category") != "noise" if cand_count > 0 else False
             # If expected_detection was explicitly set in sample:
             if det_match is True:
                 if cand_count > 0:
@@ -422,21 +441,30 @@ def calculate_corpus_summary(sample_results: List[Dict[str, Any]]) -> Dict[str, 
         else None
     )
 
+    file_detection_metrics = {
+        "samples_with_gt": samples_with_detection_gt,
+        "true_positives": tp,
+        "false_positives": fp,
+        "true_negatives": tn,
+        "false_negatives": fn,
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
+    }
+
     return {
         "total_samples": total_samples,
         "processed_samples": processed,
         "file_not_found_count": file_not_found,
         "oversized_file_count": oversized,
+        "path_traversal_count": path_traversal,
         "execution_error_count": exec_errors,
-        "detection_metrics": {
-            "samples_with_gt": samples_with_detection_gt,
-            "true_positives": tp,
-            "false_positives": fp,
-            "true_negatives": tn,
-            "false_negatives": fn,
-            "precision": precision,
-            "recall": recall,
-            "f1_score": f1,
+        "file_level_detection_metrics": file_detection_metrics,
+        "detection_metrics": file_detection_metrics,  # Backwards-compatible alias
+        "candidate_level_metrics": {
+            "total_candidates_detected": total_candidates,
+            "total_recoveries_executed": total_recoveries,
+            "candidates_per_processed_sample": round(total_candidates / processed, 2) if processed > 0 else 0.0,
         },
         "recovery_status_metrics": {
             "samples_with_gt": samples_with_status_gt,
@@ -533,6 +561,8 @@ def run_realworld_benchmark(
         print("  CORPUS VALIDATION SUMMARY")
         print("═" * 72)
         print(f"  Processed Samples   : {summary['processed_samples']} / {summary['total_samples']}")
+        if summary.get("path_traversal_count", 0) > 0:
+            print(f"  Path Traversal Block: {summary['path_traversal_count']}")
         if summary["file_not_found_count"] > 0:
             print(f"  Files Not Found     : {summary['file_not_found_count']}")
         if summary["oversized_file_count"] > 0:
@@ -540,9 +570,13 @@ def run_realworld_benchmark(
         if summary["execution_error_count"] > 0:
             print(f"  Execution Errors    : {summary['execution_error_count']}")
 
+        cand = summary.get("candidate_level_metrics", {})
+        if cand:
+            print(f"  Candidates Detected : {cand.get('total_candidates_detected', 0)} (avg {cand.get('candidates_per_processed_sample', 0.0)}/sample)")
+
         det = summary["detection_metrics"]
         if det["samples_with_gt"] > 0:
-            print("  Detection Metrics   :")
+            print("  Detection Metrics (File-Level):")
             print(f"    TP: {det['true_positives']}, FP: {det['false_positives']}, TN: {det['true_negatives']}, FN: {det['false_negatives']}")
             print(f"    Precision: {det['precision']}, Recall: {det['recall']}, F1: {det['f1_score']}")
 
@@ -559,9 +593,17 @@ def run_realworld_benchmark(
         print(f"  Total Duration      : {summary['elapsed_total_seconds']}s")
         print("═" * 72)
 
-    # Save output report if requested
+    # Save output report if requested (ensuring evidence files are never overwritten)
     if output_report_path:
         out_p = Path(output_report_path).resolve()
+        if out_p == m_path:
+            raise ValueError(f"Refusing to write report: output path matches manifest file {out_p}")
+        for s in manifest.samples:
+            sample_resolved = (c_dir / s.file_path).resolve()
+            if out_p == sample_resolved:
+                raise ValueError(
+                    f"Refusing to write report: output path {out_p} would overwrite evidence file {sample_resolved}"
+                )
         out_p.parent.mkdir(parents=True, exist_ok=True)
         out_p.write_text(json.dumps(final_report, indent=2), encoding="utf-8")
         if not quiet:

@@ -766,3 +766,77 @@ def test_pdf_object_tree_missing_contents_stream_reference_rejected():
     assert any("Page object 3 references non-existent /Contents stream object 4" in e for e in val.errors)
 
 
+# ── Milestone 12.1 Phase 2: PDF Dictionary Cleaning and Non-Dictionary Token Immunity ──
+
+
+def test_pdf_object_tree_comments_do_not_cause_false_reference_rejection():
+    """Milestone 12.1 Phase 2: Comments containing text resembling indirect references
+    (% /Parent 99 0 R or % /Pages 99 0 R) must not be falsely treated as structural references.
+    """
+    pdf_with_comments = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        b"<<\n"
+        b"  /Type /Catalog\n"
+        b"  % Comment mentioning obsolete reference: /Pages 99 0 R\n"
+        b"  /Pages 2 0 R\n"
+        b">>\n"
+        b"endobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<<\n"
+        b"  /Type /Page\n"
+        b"  % Comment mentioning obsolete reference: /Parent 99 0 R\n"
+        b"  /Parent 2 0 R\n"
+        b">>\n"
+        b"endobj\n"
+        b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000120 00000 n \n0000000175 00000 n \n"
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n280\n%%EOF\n"
+    )
+    val = validate_pdf(pdf_with_comments)
+    assert val.valid is True
+    assert len(val.errors) == 0
+
+
+def test_pdf_object_tree_literal_strings_do_not_cause_false_reference_rejection():
+    """Milestone 12.1 Phase 2: Literal strings containing text resembling indirect references
+    (e.g., /Title (Doc /Contents 99 0 R)) must not be falsely treated as structural references.
+    """
+    pdf_with_strings = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<<\n"
+        b"  /Type /Page\n"
+        b"  /Parent 2 0 R\n"
+        b"  /Title (Document referencing /Contents 99 0 R inside string title)\n"
+        b">>\n"
+        b"endobj\n"
+        b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000108 00000 n \n"
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n230\n%%EOF\n"
+    )
+    val = validate_pdf(pdf_with_strings)
+    assert val.valid is True
+    assert len(val.errors) == 0
+
+
+def test_pdf_object_tree_stream_payloads_do_not_cause_false_reference_rejection():
+    """Milestone 12.1 Phase 2: Stream content bytes resembling dictionary references
+    must not be scanned as dictionary keys.
+    """
+    stream_content = b"BT /F1 12 Tf (Text mentioning /Contents 99 0 R and /Pages 99 0 R) Tj ET\n"
+    pdf_with_stream = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Page /Parent 2 0 R /Length " + str(len(stream_content)).encode("ascii") + b" >>\n"
+        b"stream\n" + stream_content + b"endstream\n"
+        b"endobj\n"
+        b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000108 00000 n \n"
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n250\n%%EOF\n"
+    )
+    val = validate_pdf(pdf_with_stream)
+    assert val.valid is True
+    assert len(val.errors) == 0
