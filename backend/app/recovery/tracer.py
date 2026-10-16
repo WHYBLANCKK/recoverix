@@ -477,10 +477,11 @@ def _recover_contiguous_candidate(
             if (not is_complete or miss_bytes > 0 or rec_byte_cnt > 0) and status_val == "FULLY_RECOVERED":
                 status_val = "PARTIALLY_RECOVERED"
 
-                step_in_ids = [
-                    f"frag-{i}"
-                    for i in range(len(recon_res.details.get("physical_fragments", [])))
-                ] if (recon_res.details and "physical_fragments" in recon_res.details and len(recon_res.details["physical_fragments"]) > 1) else ["frag-0"]
+            step_in_ids = [
+                f"frag-{i}"
+                for i in range(len(recon_res.details.get("physical_fragments", [])))
+            ] if (recon_res.details and "physical_fragments" in recon_res.details and len(recon_res.details["physical_fragments"]) > 1) else ["frag-0"]
+            for idx_m, m in enumerate(recon_res.reconstruction_methods):
                 step = ReconstructionStep(
                     step_id=f"step-{idx_m}",
                     method=m,
@@ -538,7 +539,106 @@ def _recover_contiguous_candidate(
             status_val = eval_res.status.value
             if (not is_complete) and status_val == "FULLY_RECOVERED":
                 status_val = "PARTIALLY_RECOVERED"
-            if status_val == "UNRECOVERABLE":
+            if not val_res.valid and fmt == "pdf" and (b"xref" not in carved_bytes or any("xref" in e.lower() for e in val_res.errors)):
+                emit_event(
+                    "DAMAGE_DETECTED",
+                    "Detected damaged or missing PDF cross-reference table (xref)",
+                    relevant_fragment_ids=["frag-0"],
+                )
+                dam0 = DamageRegion(
+                    region_id="damage-0",
+                    start_offset=cand.offset,
+                    end_offset=frag_end,
+                    length=frag_len,
+                    type="CORRUPTED",
+                    status="RECONSTRUCTABLE",
+                    affected_fragment_ids=["frag-0"],
+                )
+                damage_regions.append(dam0)
+
+                emit_event(
+                    "RECONSTRUCTION_STARTED",
+                    "Attempting deterministic PDF cross-reference (xref) reconstruction",
+                    relevant_fragment_ids=["frag-0"],
+                )
+                rebuilt_res = reconstruct_pdf_xref(carved_bytes)
+                rebuilt_bytes, xref_ok = rebuilt_res
+                emit_event(
+                    "RECONSTRUCTION_COMPLETED",
+                    f"PDF xref reconstruction {'succeeded' if xref_ok else 'failed'}",
+                    relevant_fragment_ids=["frag-0"],
+                )
+
+                if xref_ok:
+                    carved_rebuilt = RecoveredArtifact(
+                        candidate_id=cand.candidate_id,
+                        format="pdf",
+                        mime_type="application/pdf",
+                        category="document",
+                        source_offset=cand.offset,
+                        recovered_bytes=rebuilt_bytes,
+                        recovered_byte_count=len(rebuilt_bytes),
+                        carving_method="XREF_RECONSTRUCTED",
+                    )
+                    val_res = validator(carved_rebuilt)
+                    val_status_str = "PASSED" if val_res.valid else "FAILED"
+                    clean_base_len = getattr(rebuilt_res, "clean_base_len", len(carved_bytes))
+                    pdf_input_bytes = len(carved_bytes)
+                    pdf_verified_bytes = min(pdf_input_bytes, clean_base_len)
+                    pdf_missing_bytes = max(0, pdf_input_bytes - pdf_verified_bytes)
+                    pdf_reconstructed_bytes = max(0, len(rebuilt_bytes) - pdf_verified_bytes)
+                    eval_res = evaluate_artifact_confidence(
+                        validation_result=val_res,
+                        artifact=carved_rebuilt,
+                        actual_verified_bytes=pdf_verified_bytes,
+                        actual_reconstructed_bytes=pdf_reconstructed_bytes,
+                        actual_missing_bytes=pdf_missing_bytes,
+                    )
+
+                    status_val = eval_res.status.value
+                    ver_bytes = eval_res.provenance.verified_bytes
+                    rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                    miss_bytes = eval_res.provenance.missing_bytes
+                    score_breakdown_dict = asdict(eval_res.score_breakdown)
+                    val_details_dict = asdict(val_res)
+                    prov_dict = asdict(eval_res.provenance)
+                    prov_dict["evidence_size"] = len(content)
+                    output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+
+                    step0 = ReconstructionStep(
+                        step_id="step-0",
+                        method="XREF_RECONSTRUCTION",
+                        input_fragment_ids=["frag-0"],
+                        gap_start=None,
+                        gap_end=None,
+                        gap_size=None,
+                        result="SUCCESS" if val_res.valid else "FAILED",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                        confidence=float(eval_res.score_breakdown.total),
+                    )
+                    reconstruction_steps.append(step0)
+                    damage_regions[0] = dam0.model_copy(update={"status": "RECONSTRUCTED" if val_res.valid else "UNRECOVERABLE"})
+                else:
+                    status_val = "UNRECOVERABLE"
+                    ver_bytes = 0
+                    rec_byte_cnt = 0
+                    miss_bytes = frag_len
+                    output_dict = {"recovered_bytes": ""}
+                    eval_res = evaluate_artifact_confidence(
+                        validation_result=val_res,
+                        artifact=None,
+                        actual_verified_bytes=0,
+                        actual_missing_bytes=frag_len,
+                        is_complete=False,
+                    )
+                    score_breakdown_dict = asdict(eval_res.score_breakdown)
+                    val_details_dict = asdict(val_res)
+                    prov_dict = asdict(eval_res.provenance)
+                    damage_regions[0] = dam0.model_copy(update={"status": "UNRECOVERABLE"})
+            elif status_val == "UNRECOVERABLE":
                 ver_bytes = 0
                 rec_byte_cnt = 0
                 miss_bytes = frag_len
@@ -2060,9 +2160,114 @@ def _recover_direct_fallback(
                         affected_fragment_ids=["frag-0"],
                     )
                 )
+        elif target_fmt == "pdf" or ext == "pdf":
+            emit_event(
+                "RECONSTRUCTION_STARTED",
+                "Attempting deterministic PDF cross-reference (xref) reconstruction",
+            )
+            rebuilt_res = reconstruct_pdf_xref(content)
+            rebuilt_bytes, xref_ok = rebuilt_res
+            emit_event(
+                "RECONSTRUCTION_COMPLETED",
+                f"PDF xref reconstruction {'succeeded' if xref_ok else 'failed'}",
+            )
+            if xref_ok:
+                from backend.app.recovery.validators.pdf import validate_pdf
+                val_res = validate_pdf(rebuilt_bytes)
+                val_status_str = "PASSED" if val_res.valid else "FAILED"
+                clean_base_len = getattr(rebuilt_res, "clean_base_len", len(content))
+                pdf_input_bytes = len(content)
+                ver_bytes = min(pdf_input_bytes, clean_base_len)
+                miss_bytes = max(0, pdf_input_bytes - ver_bytes)
+                rec_byte_cnt = max(0, len(rebuilt_bytes) - ver_bytes)
+                total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+                eval_res = evaluate_artifact_confidence(
+                    validation_result=val_res,
+                    artifact=rebuilt_bytes,
+                    actual_verified_bytes=ver_bytes,
+                    actual_reconstructed_bytes=rec_byte_cnt,
+                    actual_missing_bytes=miss_bytes,
+                )
+                fmt = "pdf"
+                status_val = eval_res.status.value
+                ver_bytes = eval_res.provenance.verified_bytes
+                rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                miss_bytes = eval_res.provenance.missing_bytes
+                score_breakdown_dict = asdict(eval_res.score_breakdown)
+                val_details_dict = asdict(val_res)
+                prov_dict = asdict(eval_res.provenance)
+                prov_dict["evidence_size"] = len(content)
+                prov_dict["reconstruction_method"] = "XREF_RECONSTRUCTION"
+                output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+
+                fragments.append(
+                    Fragment(
+                        fragment_id="frag-0",
+                        offset=0,
+                        length=ver_bytes,
+                        end_offset=ver_bytes,
+                        status="PARTIAL" if miss_bytes > 0 else "VERIFIED",
+                        source="direct_reconstruction",
+                        format="pdf",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                    )
+                )
+
+                reconstruction_steps.append(
+                    ReconstructionStep(
+                        step_id="step-0",
+                        method="XREF_RECONSTRUCTION",
+                        input_fragment_ids=["frag-0"],
+                        gap_start=None,
+                        gap_end=None,
+                        gap_size=None,
+                        result="SUCCESS" if val_res.valid else "FAILED",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                        confidence=float(score_breakdown_dict.get("total", 0.0)),
+                    )
+                )
+
+                if miss_bytes > 0:
+                    damage_regions.append(
+                        DamageRegion(
+                            region_id="damage-0",
+                            start_offset=clean_base_len,
+                            end_offset=len(content),
+                            length=miss_bytes,
+                            type="CORRUPTED",
+                            status="RECONSTRUCTED" if val_res.valid else "UNRECOVERABLE",
+                            affected_fragment_ids=["frag-0"],
+                        )
+                    )
+            else:
+                fmt = "pdf"
+                status_val = "UNRECOVERABLE"
+                val_details_dict = {"error": "PDF xref reconstruction failed"}
+                ver_bytes = 0
+                rec_byte_cnt = 0
+                miss_bytes = len(content)
+                damage_regions.append(
+                    DamageRegion(
+                        region_id="damage-0",
+                        start_offset=0,
+                        end_offset=len(content),
+                        length=len(content),
+                        type="CORRUPTED",
+                        status="UNRECOVERABLE",
+                        details="PDF reconstruction failed: no recoverable objects or catalog",
+                        affected_fragment_ids=["frag-0"],
+                    )
+                )
+                total_input_bytes = len(content)
         else:
             matched_fmt = None
-            for test_fmt in ["json", "xml", "png", "jpeg", "csv", "txt"]:
+            for test_fmt in ["pdf", "json", "xml", "png", "jpeg", "csv", "txt"]:
                 val_test = validate_artifact(test_fmt, content)
                 if val_test.valid:
                     matched_fmt = test_fmt

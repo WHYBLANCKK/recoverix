@@ -835,6 +835,59 @@ def reconstruct_artifact(
         return reconstruct_csv(data, original_data=original_data, detection_mode=detection_mode)
     elif clean_fmt == "json":
         return reconstruct_json(data, original_data=original_data)
+    elif clean_fmt == "pdf":
+        raw_pdf = data.recovered_bytes if isinstance(data, RecoveredArtifact) else data
+        from backend.app.recovery.validators.pdf import reconstruct_pdf_xref, validate_pdf
+        rebuilt_res = reconstruct_pdf_xref(raw_pdf)
+        rebuilt_bytes, xref_ok = rebuilt_res
+        if xref_ok:
+            val_res = validate_pdf(rebuilt_bytes)
+            clean_base_len = getattr(rebuilt_res, "clean_base_len", len(raw_pdf))
+            pdf_input_bytes = len(raw_pdf)
+            v_bytes = min(pdf_input_bytes, clean_base_len)
+            m_bytes = max(0, pdf_input_bytes - v_bytes)
+            r_bytes = max(0, len(rebuilt_bytes) - v_bytes)
+            status_str = (
+                "FULLY_RECOVERED"
+                if (m_bytes == 0 and r_bytes == 0 and val_res.valid)
+                else ("PARTIALLY_RECOVERED" if val_res.valid else "CORRUPTED")
+            )
+            return ReconstructionResult(
+                format="pdf",
+                status=status_str,
+                success=val_res.valid,
+                recovered_bytes=rebuilt_bytes,
+                verified_bytes=v_bytes,
+                reconstructed_bytes=r_bytes,
+                missing_bytes=m_bytes,
+                reconstruction_methods=["XREF_RECONSTRUCTION"],
+                validation_result=val_res,
+                damage_regions=[
+                    {
+                        "offset": v_bytes,
+                        "length": m_bytes,
+                        "type": "CORRUPTED",
+                        "status": "RECONSTRUCTED" if val_res.valid else "UNRECOVERABLE",
+                    }
+                ]
+                if m_bytes > 0
+                else [],
+                details={
+                    "clean_base_len": clean_base_len,
+                    "reconstruction_method": "XREF_RECONSTRUCTION",
+                },
+            )
+        else:
+            return ReconstructionResult(
+                format="pdf",
+                status="UNRECOVERABLE",
+                success=False,
+                recovered_bytes=b"",
+                verified_bytes=0,
+                reconstructed_bytes=0,
+                missing_bytes=len(raw_pdf),
+                details={"error": "PDF xref reconstruction failed: no valid objects or catalog"},
+            )
     else:
         # Unsupported format for Milestone 1
         return ReconstructionResult(
