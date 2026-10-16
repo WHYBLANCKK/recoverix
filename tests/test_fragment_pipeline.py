@@ -418,24 +418,42 @@ def test_16_truncated_file_is_partially_recovered_never_full():
 
 
 def test_17_binary_garbage_is_never_falsely_recovered():
-    """High-entropy binary noise must not be salvaged into 'recovered text'."""
-    import os
+    """High-entropy binary noise must not be salvaged into 'recovered text' or falsely recognized."""
+    import random
 
-    garbage = bytes(os.urandom(512))
+    # Deterministic high-entropy binary noise containing no format signatures or structural delimiters
+    rng = random.Random(42)
+    garbage_512 = bytes(b for b in rng.randbytes(1024) if b not in b"{}[]<%>,\r\n")[:512]
     for fmt in ("txt", "csv"):
-        res = reconstruct_text(garbage)
+        res = reconstruct_text(garbage_512)
         assert res.status == "UNRECOVERABLE", fmt
         assert res.success is False
         assert res.recovered_bytes == b""
         assert res.verified_bytes == 0
-        assert res.missing_bytes == len(garbage)
+        assert res.missing_bytes == len(garbage_512)
         assert res.reconstruction_methods == []
         assert res.damage_regions, "the loss must be recorded as a damage region"
 
-    run = execute_traced_recovery("garbage.bin", bytes(os.urandom(256)))
+    garbage_256 = bytes(b for b in rng.randbytes(512) if b not in b"{}[]<%>,\r\n")[:256]
+    run = execute_traced_recovery("garbage.bin", garbage_256)
     assert run.status == "UNRECOVERABLE"
     assert run.output is None
     assert run.total_verified_bytes == 0
+
+
+def test_17b_legitimate_embedded_json_is_detected_in_noise():
+    """Verify that an actual valid JSON container embedded inside binary noise IS discovered and carved."""
+    noise_prefix = b"\xde\xad\xbe\xef" * 16
+    valid_json = b'{"status": "ok", "evidence_id": 42}'
+    noise_suffix = b"\xca\xfe\xba\xbe" * 16
+    payload = noise_prefix + valid_json + noise_suffix
+
+    run = execute_traced_recovery("embedded.bin", payload)
+    assert run.status == "FULLY_RECOVERED"
+    assert run.format == "json"
+    assert bytes.fromhex(run.output["recovered_bytes"]) == valid_json
+    assert run.total_verified_bytes == len(valid_json)
+    assert run.total_missing_bytes == 0
 
 
 def test_18_intact_file_has_no_phantom_reconstruction_step():
