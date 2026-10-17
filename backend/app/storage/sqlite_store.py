@@ -12,7 +12,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Union
 
 from backend.app.ingestion import Chunk, chunk_evidence, compute_metadata
@@ -1096,6 +1096,54 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
     def get_recovered_file_bytes(self, file_id: str) -> Optional[bytes]:
         """Get raw bytes of a single recovered file from artifact BlobStore."""
         return self.get_artifact_bytes(file_id)
+
+    def purge_expired_recovered_files(self, ttl_hours: int = 24) -> int:
+        """Purge standalone recovered files and blobs older than ttl_hours (24h TTL policy)."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=ttl_hours)).isoformat()
+        purged = 0
+        try:
+            with self._engine.transaction() as cursor:
+                # 1. Select standalone artifacts older than cutoff
+                cursor.execute(
+                    "SELECT artifact_id FROM artifacts WHERE case_id IS NULL AND created_at < ?;",
+                    (cutoff,),
+                )
+                rows = cursor.fetchall()
+                art_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in rows]
+
+                # 2. Select expired blobs
+                cursor.execute(
+                    "SELECT blob_key FROM blobs WHERE created_at < ?;",
+                    (cutoff,),
+                )
+                blob_rows = cursor.fetchall()
+                expired_blob_keys = [r[0] if isinstance(r, (tuple, list)) else r["blob_key"] for r in blob_rows]
+
+                for b in expired_blob_keys:
+                    clean_id = b.replace("art_", "").replace("blob_", "")
+                    if clean_id not in art_ids:
+                        art_ids.append(clean_id)
+
+                if art_ids:
+                    placeholders = ",".join("?" for _ in art_ids)
+                    cursor.execute(f"DELETE FROM artifact_runs WHERE artifact_id IN ({placeholders});", art_ids)
+                    cursor.execute(
+                        f"DELETE FROM artifacts WHERE artifact_id IN ({placeholders}) AND case_id IS NULL;",
+                        art_ids,
+                    )
+                    blob_keys = list(set(expired_blob_keys + [f"art_{a}" for a in art_ids] + art_ids))
+                    blob_placeholders = ",".join("?" for _ in blob_keys)
+                    cursor.execute(
+                        f"""DELETE FROM blobs
+                            WHERE blob_key IN ({blob_placeholders})
+                              AND blob_key NOT IN (SELECT file_id FROM evidence_files);""",
+                        blob_keys,
+                    )
+                    purged = len(art_ids)
+        except Exception:
+            purged = 0
+        return purged
+
 
     # ── RecoveryRunRepository Implementation ─────────────────────────────
 

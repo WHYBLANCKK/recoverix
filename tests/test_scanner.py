@@ -381,7 +381,7 @@ def test_signature_is_frozen():
 
 def test_registry_contents():
     formats = {s.format for s in SIGNATURES}
-    assert formats == {"txt", "csv", "json", "xml", "png", "jpeg", "pdf"}
+    assert formats == {"txt", "csv", "json", "xml", "png", "jpeg", "pdf", "zip"}
 
 
 # ── 24. Content heuristic — TXT classification ─────────────────────

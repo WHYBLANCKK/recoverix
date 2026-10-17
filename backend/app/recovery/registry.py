@@ -20,6 +20,8 @@ from backend.app.recovery.signatures import (
     JPEG_EOI,
     PDF_HEADER_SIGNATURE,
     PDF_TRAILER_SIGNATURE,
+    ZIP_LOCAL_HEADER,
+    ZIP_EOCD_SIGNATURE,
 )
 from backend.app.recovery.validators import (
     validate_txt,
@@ -29,6 +31,7 @@ from backend.app.recovery.validators import (
     validate_png,
     validate_jpeg,
     validate_pdf,
+    validate_zip,
 )
 
 
@@ -128,6 +131,16 @@ FORMAT_REGISTRY: Dict[str, FormatSpec] = {
         footer_signature=PDF_TRAILER_SIGNATURE,
         validator=validate_pdf,
     ),
+    "zip": FormatSpec(
+        format="zip",
+        name="ZIP Archive",
+        mime_type="application/zip",
+        category="archive",
+        extensions=[".zip"],
+        header_signature=ZIP_LOCAL_HEADER,
+        footer_signature=ZIP_EOCD_SIGNATURE,
+        validator=validate_zip,
+    ),
 }
 
 # Alias mapping for jpg -> jpeg
@@ -138,7 +151,7 @@ def get_format_spec(fmt: str) -> Optional[FormatSpec]:
     """Retrieve format specification by format string.
 
     Args:
-        fmt: Short format identifier (e.g. 'txt', 'csv', 'png', '.json', 'pdf').
+        fmt: Short format identifier (e.g. 'txt', 'csv', 'png', '.json', 'pdf', 'zip').
 
     Returns:
         FormatSpec if found, or None.
@@ -149,4 +162,4 @@ def get_format_spec(fmt: str) -> Optional[FormatSpec]:
 
 def list_supported_formats() -> List[str]:
     """Return ordered list of supported core format keys."""
-    return ["txt", "csv", "json", "xml", "png", "jpeg", "pdf"]
+    return ["txt", "csv", "json", "xml", "png", "jpeg", "pdf", "zip"]

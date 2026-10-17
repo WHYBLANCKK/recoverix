@@ -42,6 +42,12 @@ PDF_TRAILER_SIGNATURE: bytes = b"%%EOF"
 
 XML_HEADER_SIGNATURE: bytes = b"<?xml"
 
+# ── Archive magic signatures ───────────────────────────────────────
+
+ZIP_LOCAL_HEADER: bytes = b"PK\x03\x04"
+ZIP_CENTRAL_HEADER: bytes = b"PK\x01\x02"
+ZIP_EOCD_SIGNATURE: bytes = b"PK\x05\x06"
+
 
 @dataclass(frozen=True)
 class FormatSignature:
@@ -122,6 +128,14 @@ SIGNATURES: List[FormatSignature] = [
         category="document",
         header=PDF_HEADER_SIGNATURE,
         footer=PDF_TRAILER_SIGNATURE,
+        detection_method="magic_bytes",
+    ),
+    FormatSignature(
+        format="zip",
+        mime_type="application/zip",
+        category="archive",
+        header=ZIP_LOCAL_HEADER,
+        footer=ZIP_EOCD_SIGNATURE,
         detection_method="magic_bytes",
     ),
 ]

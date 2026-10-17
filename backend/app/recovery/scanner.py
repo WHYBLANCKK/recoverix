@@ -56,6 +56,8 @@ from backend.app.recovery.signatures import (
     PDF_HEADER_SIGNATURE,
     PDF_TRAILER_SIGNATURE,
     XML_HEADER_SIGNATURE,
+    ZIP_LOCAL_HEADER,
+    ZIP_EOCD_SIGNATURE,
 )
 
 
@@ -133,6 +135,8 @@ def _classify_synthetic_content(body: bytes) -> tuple[str, str, str]:
                 return ("json", "application/json", "structured")
             elif tag == "xml":
                 return ("xml", "application/xml", "structured")
+            elif tag == "zip":
+                return ("zip", "application/zip", "archive")
 
     # Check magic byte signatures embedded in synthetic body
     if PNG_SIGNATURE in body:
@@ -141,6 +145,8 @@ def _classify_synthetic_content(body: bytes) -> tuple[str, str, str]:
         return ("jpeg", "image/jpeg", "image")
     if PDF_HEADER_SIGNATURE in body:
         return ("pdf", "application/pdf", "document")
+    if ZIP_LOCAL_HEADER in body:
+        return ("zip", "application/zip", "archive")
 
     try:
         text = body.decode("utf-8", errors="replace").strip()
@@ -375,6 +381,9 @@ def scan_evidence(data: bytes) -> List[Candidate]:
 
     # ── Pass 7: scan for blind TXT and CSV candidates ───────────
     _scan_text_and_csv(data, evidence_len, candidates)
+
+    # ── Pass 8: scan for ZIP archives ───────────────────────────
+    _scan_zip(data, evidence_len, candidates)
 
     # 1. Exact deduplication: (offset, format)
     unique_candidates = _dedup_candidates(candidates)
@@ -1075,6 +1084,88 @@ def _scan_xml(
         search_from = pos + sig_len
 
 
+def _find_zip_end(
+    data: bytes,
+    start_pos: int,
+    territory_limit: int,
+) -> Optional[int]:
+    """Locate authentic End of Central Directory (EOCD) for a ZIP archive candidate."""
+    if territory_limit - start_pos < 22:
+        return None
+
+    search_slice = data[start_pos:territory_limit]
+    eocd_rel = search_slice.rfind(ZIP_EOCD_SIGNATURE)
+    if eocd_rel == -1:
+        return None
+
+    eocd_pos = start_pos + eocd_rel
+    if eocd_pos + 22 > territory_limit:
+        return None
+
+    comment_len = struct.unpack("<H", data[eocd_pos + 20 : eocd_pos + 22])[0]
+    total_end = eocd_pos + 22 + comment_len
+    if total_end <= territory_limit:
+        return total_end
+    return None
+
+
+def _scan_zip(
+    data: bytes,
+    evidence_len: int,
+    candidates: List[Candidate],
+) -> None:
+    """Find ZIP local file headers in *data* with bounded sequential parsing."""
+    sig = ZIP_LOCAL_HEADER
+    sig_len = len(sig)
+
+    raw_starts: List[int] = []
+    search_from = 0
+    while search_from <= evidence_len - sig_len:
+        pos = data.find(sig, search_from)
+        if pos == -1:
+            break
+        raw_starts.append(pos)
+        search_from = pos + sig_len
+
+    if not raw_starts:
+        return
+
+    other_starts = [c.offset for c in candidates]
+    valid_cands: List[Candidate] = []
+
+    for idx, pos in enumerate(raw_starts):
+        if pos + 30 > evidence_len:
+            continue
+        fn_len = struct.unpack("<H", data[pos + 26 : pos + 28])[0]
+        if fn_len == 0 or pos + 30 + fn_len > evidence_len:
+            continue
+
+        if valid_cands and valid_cands[-1].estimated_end_offset is not None:
+            if pos < valid_cands[-1].estimated_end_offset:
+                continue
+
+        next_raw_start = raw_starts[idx + 1] if idx + 1 < len(raw_starts) else evidence_len
+        territory_limit = next_raw_start
+        for o in other_starts:
+            if o > pos and o < territory_limit:
+                territory_limit = o
+
+        estimated_end = _find_zip_end(data, pos, territory_limit)
+
+        cand = Candidate(
+            candidate_id="",
+            format="zip",
+            mime_type="application/zip",
+            category="archive",
+            offset=pos,
+            detected_header_length=sig_len,
+            estimated_end_offset=estimated_end,
+            detection_method="magic_bytes",
+        )
+        valid_cands.append(cand)
+        candidates.append(cand)
+
+
 _JSON_WS = " \t\n\r"
 _JSON_LITERALS = ("true", "false", "null")
 
@@ -1339,7 +1430,7 @@ def _scan_json(
                     in_prior_candidate = True
                     search_from = c_end
                     break
-            elif c.format in ("png", "jpeg", "pdf", "xml") and c.estimated_end_offset is not None:
+            elif c.format in ("png", "jpeg", "pdf", "xml", "zip") and c.estimated_end_offset is not None:
                 if c.offset <= pos < c.estimated_end_offset:
                     in_prior_candidate = True
                     search_from = c.estimated_end_offset
@@ -1468,7 +1559,7 @@ def _scan_text_and_csv(
     def _is_trustworthy_boundary(c: Candidate) -> bool:
         if c.estimated_end_offset is None:
             return False
-        if c.format in ("pdf", "xml", "png", "jpeg"):
+        if c.format in ("pdf", "xml", "png", "jpeg", "zip"):
             return True
         if c.format == "json":
             # An independent JSON candidate acts as a text boundary if it starts at offset 0
@@ -1488,7 +1579,7 @@ def _scan_text_and_csv(
 
     structured_candidates = [
         c for c in candidates
-        if c.format in ("pdf", "xml", "json", "png", "jpeg")
+        if c.format in ("pdf", "xml", "json", "png", "jpeg", "zip")
     ]
     trustworthy_structured = [
         c for c in structured_candidates

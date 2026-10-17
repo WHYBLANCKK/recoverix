@@ -60,30 +60,34 @@ def _analyze_and_reconstruct_utf8(body_bytes: bytes) -> Tuple[bytes, int, int, i
     damage_regions: List[Dict[str, Any]] = []
     reconstruction_methods: List[str] = []
 
-    # Step 1: Detect and trim truncated UTF-8 tail
+    # Step 1: Detect and trim truncated UTF-8 tail (only if body does not decode as valid UTF-8)
     working_bytes = body_bytes
     trimmed_tail_len = 0
 
-    # Determine if last bytes form an incomplete UTF-8 multi-byte sequence
-    for cutoff in range(1, min(4, len(working_bytes) + 1)):
-        try:
-            working_bytes[:-cutoff].decode("utf-8")
-            # If cutoff bytes were invalid tail, check if cutting them makes remainder valid
-            sub = working_bytes[-cutoff:]
-            # Check if sub is a leading multi-byte byte (\xc0-\xff) without enough continuation bytes
-            if sub[0] >= 0xC0:
-                trimmed_tail_len = cutoff
-                working_bytes = working_bytes[:-cutoff]
-                damage_regions.append({
-                    "offset": len(working_bytes),
-                    "length": trimmed_tail_len,
-                    "type": "TRUNCATED_UTF8_TAIL",
-                    "description": f"Truncated UTF-8 multi-byte sequence cut off at offset {len(working_bytes)}",
-                })
-                reconstruction_methods.append("TRUNCATED_TAIL_TRIM")
-                break
-        except UnicodeDecodeError:
-            continue
+    try:
+        working_bytes.decode("utf-8")
+        # Body is already valid UTF-8; no tail trimming needed
+    except UnicodeDecodeError:
+        # Determine if last bytes form an incomplete UTF-8 multi-byte sequence
+        for cutoff in range(1, min(4, len(working_bytes) + 1)):
+            try:
+                working_bytes[:-cutoff].decode("utf-8")
+                # If cutoff bytes were invalid tail, check if cutting them makes remainder valid
+                sub = working_bytes[-cutoff:]
+                # Check if sub is a leading multi-byte byte (\xc0-\xff) without enough continuation bytes
+                if sub[0] >= 0xC0:
+                    trimmed_tail_len = cutoff
+                    working_bytes = working_bytes[:-cutoff]
+                    damage_regions.append({
+                        "offset": len(working_bytes),
+                        "length": trimmed_tail_len,
+                        "type": "TRUNCATED_UTF8_TAIL",
+                        "description": f"Truncated UTF-8 multi-byte sequence cut off at offset {len(working_bytes)}",
+                    })
+                    reconstruction_methods.append("TRUNCATED_TAIL_TRIM")
+                    break
+            except UnicodeDecodeError:
+                continue
 
     # Step 2: Byte-level UTF-8 scanning and repair
     verified_bytes = 0

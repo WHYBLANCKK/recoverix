@@ -8,7 +8,11 @@ and producing downloadable recovered byte buffers.
 
 from __future__ import annotations
 
+import os
+import re
+import urllib.parse
 import uuid
+from pathlib import PurePath
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Response, Body, Request
 from pydantic import BaseModel
@@ -18,6 +22,52 @@ from backend.app.ingestion.reader import read_upload_bounded, UploadTooLargeErro
 from backend.app.recovery.tracer import execute_traced_recovery
 from backend.app.scoring.explainer import explain_artifact
 from backend.app.recovery.adapter import extract_recovered_bytes
+
+
+def sanitize_filename(filename: Optional[str], default: str = "recovered_file.bin") -> str:
+    """Sanitize user-provided filename to prevent path traversal, control characters, and header injection."""
+    if not filename or not isinstance(filename, str):
+        return default
+
+    # Normalize backslashes to forward slashes first to handle Windows paths on all platforms
+    cleaned = filename.replace("\\", "/").strip()
+
+    # Extract basename to strip directories / path traversal
+    base = PurePath(cleaned).name.strip()
+    if not base:
+        base = os.path.basename(cleaned).strip()
+
+    # Remove CRLF and control characters (ASCII 0-31 and 127)
+    base = re.sub(r"[\x00-\x1f\x7f]", "", base)
+
+    # Replace double quotes, backslashes, colons, semicolons, and angle brackets
+    base = re.sub(r'["\'\\/:;<>|?*]', "_", base)
+
+    # Collapse multiple whitespace
+    base = re.sub(r"\s+", " ", base).strip()
+
+    # If empty after sanitization, or solely dots/underscores
+    if not base or set(base).issubset({".", "_", " "}):
+        return default
+
+    # Enforce safe length limit (preserving extension if possible)
+    if len(base) > 128:
+        stem, ext = os.path.splitext(base)
+        max_stem = 128 - len(ext)
+        if max_stem > 0:
+            base = stem[:max_stem] + ext
+        else:
+            base = base[:128]
+
+    return base
+
+
+def format_content_disposition(filename: str) -> str:
+    """Format RFC 6266 / RFC 5987 compliant Content-Disposition header value."""
+    safe_ascii = re.sub(r"[^a-zA-Z0-9._-]", "_", filename) or "file.bin"
+    encoded_utf8 = urllib.parse.quote(filename, encoding="utf-8")
+    return f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{encoded_utf8}'
+
 
 
 class FileRecoveryResponse(BaseModel):
@@ -89,8 +139,8 @@ async def recover_single_file(request: Request, file: UploadFile = File(...)) ->
             detail="FILE_TOO_LARGE",
         )
 
-    orig_filename = file.filename or "uploaded_file.bin"
-    file_id = f"rec_file_{uuid.uuid4().hex[:8]}"
+    orig_filename = sanitize_filename(file.filename, default="uploaded_file.bin")
+    file_id = f"rec_file_{uuid.uuid4().hex}"
 
     # Execute and trace recovery
     recovery_run = execute_traced_recovery(
@@ -127,10 +177,26 @@ async def recover_single_file(request: Request, file: UploadFile = File(...)) ->
 
     content_preview = None
     if recovered_content:
-        try:
-            content_preview = recovered_content.decode("utf-8", errors="replace")[:300]
-        except Exception:
-            content_preview = recovered_content[:100].hex()
+        if fmt in ("txt", "csv", "json", "xml"):
+            try:
+                content_preview = recovered_content.decode("utf-8", errors="replace")[:300]
+            except Exception:
+                content_preview = recovered_content[:100].hex()
+        elif fmt in ("png", "jpeg", "jpg"):
+            dims = ""
+            if "width" in val_details and "height" in val_details:
+                dims = f" ({val_details['width']}x{val_details['height']}px)"
+            content_preview = f"Image ({fmt.upper()}){dims}, {len(recovered_content)} bytes"
+        elif fmt == "pdf":
+            content_preview = f"PDF Document, {len(recovered_content)} bytes"
+        elif fmt == "zip":
+            fc = val_details.get("file_count", 0)
+            content_preview = f"ZIP Archive, {len(recovered_content)} bytes, {fc} file(s)"
+        else:
+            try:
+                content_preview = recovered_content.decode("utf-8", errors="replace")[:300]
+            except Exception:
+                content_preview = recovered_content[:100].hex()
 
     meta_dict = {
         "file_id": file_id,
@@ -194,11 +260,25 @@ def download_recovered_file(file_id: str) -> Response:
             detail=f"Recovered file '{file_id}' not found or unrecoverable",
         )
 
-    rec_name = meta.get("recovered_filename", "recovered_file.bin")
+    raw_rec_name = meta.get("recovered_filename", "recovered_file.bin")
+    rec_name = sanitize_filename(raw_rec_name, default="recovered_file.bin")
+    fmt_key = meta.get("format", "").lower()
+    mime_map = {
+        "txt": "text/plain",
+        "csv": "text/csv",
+        "json": "application/json",
+        "xml": "application/xml",
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "jpg": "image/jpeg",
+        "pdf": "application/pdf",
+        "zip": "application/zip",
+    }
+    media_type = mime_map.get(fmt_key, "application/octet-stream")
     return Response(
         content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{rec_name}"'},
+        media_type=media_type,
+        headers={"Content-Disposition": format_content_disposition(rec_name)},
     )
 
 

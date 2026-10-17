@@ -42,6 +42,7 @@ def validate_jpeg(data: bytes | RecoveredArtifact) -> ValidationResult:
         "soi_marker",
         "marker_structure",
         "sof_presence",
+        "sos_presence",
         "eoi_termination",
     ]
     errors: list[str] = []
@@ -90,6 +91,7 @@ def validate_jpeg(data: bytes | RecoveredArtifact) -> ValidationResult:
     total_len = len(raw_bytes)
     offset = 2
     found_sof = False
+    found_sos = False
     found_eoi = False
     markers_found: List[str] = ["SOI"]
 
@@ -160,6 +162,7 @@ def validate_jpeg(data: bytes | RecoveredArtifact) -> ValidationResult:
         elif marker == 0xC4:
             markers_found.append("DHT")
         elif marker == 0xDA:
+            found_sos = True
             markers_found.append("SOS")
             # SOS is followed by compressed entropy scan stream until EOI (0xFFD9)
             # Fast scan for EOI marker in remaining bytes
@@ -180,6 +183,9 @@ def validate_jpeg(data: bytes | RecoveredArtifact) -> ValidationResult:
 
     if not found_sof:
         errors.append("Missing required SOF (Start of Frame) marker detailing image dimensions")
+
+    if not found_sos:
+        errors.append("Missing required SOS (Start of Scan) marker preceding image data")
 
     if not found_eoi:
         errors.append("Missing required EOI (End of Image) trailer marker (FF D9)")
