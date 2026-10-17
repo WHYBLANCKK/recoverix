@@ -5,6 +5,7 @@ main.py — FastAPI application entrypoint for Recoverix platform.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import time
@@ -154,22 +155,86 @@ def reset_rate_limits() -> None:
     _ip_request_history.clear()
 
 
+RFC1918_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+)
+
+
+def is_trusted_proxy(ip: str, trusted_set: set[str]) -> bool:
+    """Check if an IP address is an explicitly trusted proxy or matches private/CIDR rules."""
+    if not ip:
+        return False
+    if "*" in trusted_set or ip in trusted_set:
+        return True
+    if "private" in trusted_set or "rfc1918" in trusted_set:
+        try:
+            addr = ipaddress.ip_address(ip)
+            if any(addr in net for net in RFC1918_NETWORKS):
+                return True
+        except ValueError:
+            pass
+    for item in trusted_set:
+        if "/" in item:
+            try:
+                if ipaddress.ip_address(ip) in ipaddress.ip_network(item, strict=False):
+                    return True
+            except ValueError:
+                pass
+    return False
+
+
 def resolve_client_ip(request: Request) -> str:
     """Resolve client IP safely without blindly trusting client-supplied headers.
 
-    Only respects X-Forwarded-For if the direct peer (request.client.host) matches
-    an explicitly configured trusted reverse proxy in RECOVERIX_TRUSTED_PROXIES.
+    Only respects forwarding headers if the direct peer (request.client.host) matches
+    an explicitly configured trusted reverse proxy in RECOVERIX_TRUSTED_PROXIES
+    (e.g., explicit IPs, 'private' for cloud load balancers, or CIDR blocks).
+
+    Defends against IP spoofing:
+    - If direct peer is not trusted, all forwarded headers are ignored.
+    - Inspects tamper-proof edge headers ('cf-connecting-ip', 'true-client-ip') first.
+    - Walks 'x-forwarded-for' from right to left, discarding trusted proxy hops and selecting
+      the first non-trusted IP, preventing attackers from prepending fake IP addresses.
     """
     direct_peer = request.client.host if (request.client and request.client.host) else "127.0.0.1"
     trusted_proxies_env = os.getenv("RECOVERIX_TRUSTED_PROXIES", "").strip()
-    if trusted_proxies_env:
-        trusted_proxies = {p.strip() for p in trusted_proxies_env.split(",") if p.strip()}
-        if "*" in trusted_proxies or direct_peer in trusted_proxies:
-            forwarded_for = request.headers.get("x-forwarded-for")
-            if forwarded_for:
-                client = forwarded_for.split(",")[0].strip()
-                if client:
-                    return client
+    if not trusted_proxies_env:
+        return direct_peer
+
+    trusted_set = {p.strip() for p in trusted_proxies_env.split(",") if p.strip()}
+    if not is_trusted_proxy(direct_peer, trusted_set):
+        return direct_peer
+
+    # 1. Prefer tamper-proof provider edge headers (Cloudflare / Render edge network)
+    for header in ("cf-connecting-ip", "true-client-ip"):
+        val = request.headers.get(header)
+        if val and val.strip():
+            candidate = val.strip()
+            try:
+                ipaddress.ip_address(candidate)
+                return candidate
+            except ValueError:
+                pass
+
+    # 2. Walk X-Forwarded-For from right to left, stripping trusted proxy hops
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
+        for p in reversed(parts):
+            if not is_trusted_proxy(p, trusted_set):
+                try:
+                    ipaddress.ip_address(p)
+                    return p
+                except ValueError:
+                    pass
+        if parts:
+            return parts[0]
+
     return direct_peer
 
 

@@ -249,19 +249,34 @@ def test_trusted_proxy_rate_limit_spoof_defense(monkeypatch):
             self.client = DummyClient(client_host)
             self.headers = Headers(headers_dict)
 
-    # Untrusted client attempting to spoof IP via X-Forwarded-For
+    # 1. Untrusted client attempting to spoof IP via X-Forwarded-For
     req_untrusted = DummyRequest("203.0.113.5", {"x-forwarded-for": "198.51.100.1"})
     assert resolve_client_ip(req_untrusted) == "203.0.113.5"
 
-    # Trusted proxy forwarding real client IP
+    # 2. Trusted proxy forwarding real client IP
     monkeypatch.setenv("RECOVERIX_TRUSTED_PROXIES", "127.0.0.1,10.0.0.1")
     req_trusted = DummyRequest("10.0.0.1", {"x-forwarded-for": "198.51.100.2, 10.0.0.1"})
     assert resolve_client_ip(req_trusted) == "198.51.100.2"
 
-    # Wildcard proxy trust (for cloud platforms like Render)
-    monkeypatch.setenv("RECOVERIX_TRUSTED_PROXIES", "*")
+    # 3. Client attempting to prepend spoofed IP to XFF through trusted proxy (must pick real rightmost client)
+    req_spoof_attempt = DummyRequest("10.0.0.1", {"x-forwarded-for": "8.8.8.8, 198.51.100.2, 10.0.0.1"})
+    assert resolve_client_ip(req_spoof_attempt) == "198.51.100.2"
+
+    # 4. Cloudflare edge header (cf-connecting-ip) takes precedence and cannot be spoofed
+    req_cf = DummyRequest("10.0.0.1", {
+        "cf-connecting-ip": "198.51.100.2",
+        "x-forwarded-for": "8.8.8.8, 198.51.100.2, 10.0.0.1"
+    })
+    assert resolve_client_ip(req_cf) == "198.51.100.2"
+
+    # 5. Private network proxy trust (recommended for Render internal mesh)
+    monkeypatch.setenv("RECOVERIX_TRUSTED_PROXIES", "private")
     req_cloud_proxy = DummyRequest("10.123.45.67", {"x-forwarded-for": "203.0.113.99, 10.123.45.67"})
     assert resolve_client_ip(req_cloud_proxy) == "203.0.113.99"
+
+    # 6. Direct public client when RECOVERIX_TRUSTED_PROXIES=private must NOT be trusted
+    req_direct_public = DummyRequest("142.250.190.46", {"x-forwarded-for": "8.8.8.8"})
+    assert resolve_client_ip(req_direct_public) == "142.250.190.46"
 
 
 def test_standalone_file_purge_24h_ttl():
