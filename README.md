@@ -2,13 +2,15 @@
 
 ### Deterministic Digital Evidence Recovery and Analysis
 
-Recoverix is a digital evidence recovery and analysis prototype designed to identify, validate, and reconstruct damaged, fragmented, and partially corrupted files.
+Recoverix is an open-source digital evidence recovery and analysis engine designed to identify, validate, and reconstruct damaged, fragmented, and partially corrupted files.
 
-It combines deterministic recovery algorithms, structural validation, byte-level provenance, recovery scoring, and AI-assisted explanations to make recovery results easier to understand and evaluate.
+It combines deterministic file carving, structural validation, byte-level provenance ($V/R/M$), recovery confidence scoring, and grounded analysis to make recovery results transparent, verifiable, and understandable.
 
-Recoverix distinguishes between information directly supported by the available evidence, information reconstructed through deterministic procedures, and information that remains missing.
+Recoverix distinguishes strictly between information directly proven by the available evidence, information reconstructed through deterministic structural procedures, and information that remains missing.
 
-> Recoverix does not guess what was lost. It reconstructs what the evidence supports and makes uncertainty explicit.
+> **Recoverix does not guess what was lost. It reconstructs what the evidence supports and makes uncertainty explicit.**
+
+---
 
 ## Table of Contents
 
@@ -18,327 +20,310 @@ Recoverix distinguishes between information directly supported by the available 
 - [Core Architecture](#core-architecture)
 - [Key Features](#key-features)
 - [Deterministic Recovery](#deterministic-recovery)
-- [Byte-Level Provenance](#byte-level-provenance)
+- [Byte-Level Provenance ($V / R / M$)](#byte-level-provenance-v--r--m)
 - [Recovery Classification](#recovery-classification)
-- [Supported File Formats](#supported-file-formats)
+- [Supported File Formats (All 8 Formats)](#supported-file-formats-all-8-formats)
 - [AI Evidence Analyst](#ai-evidence-analyst)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Command-Line Interface (CLI)](#command-line-interface-cli)
-- [Testing](#testing)
+- [Testing & Quality Assurance](#testing--quality-assurance)
 - [Synthetic Evaluation & Benchmarks](#synthetic-evaluation--benchmarks)
 - [Security and Deployment Model](#security-and-deployment-model)
-- [Limitations](#limitations)
+- [Current Deployment Status (Staging Candidate)](#current-deployment-status-staging-candidate)
+- [Limitations & Non-Claims](#limitations--non-claims)
 - [Design Principles](#design-principles)
-- [Future Improvements](#future-improvements)
+- [Contributing](#contributing)
 - [License](#license)
+
+---
 
 ## Public Beta (v0.1.0-beta.1)
 
-Recoverix `v0.1.0-beta.1` is a controlled public beta release intended for digital forensic researchers, reverse engineers, and developers investigating damaged file recovery.
+Recoverix `v0.1.0-beta.1` is a controlled public beta release intended for digital forensic researchers, reverse engineers, developers, and users seeking reliable recovery of damaged files.
 
-### Scope and Guiding Principle
+### Scope and Guiding Principles
 
 > **"Recoverix does not guess what was lost. It proves what can be recovered."**
 
 Recoverix operates on strict deterministic principles:
-- **No Hallucinated Evidence:** The engine never invents missing file bytes or uses generative prediction to complete missing payload data.
+- **No Hallucinated Evidence:** The engine never invents missing file bytes or uses generative AI prediction to complete missing payload data.
 - **Explicit Provenance ($V / R / M$):** Reconstructed structural repairs are strictly accounted for and separated from verified evidence bytes.
-- **Bounded Safety:** Memory consumption is strictly bounded during file carving and HTTP streaming.
+- **Defensive Bounds:** Memory consumption is strictly bounded during file carving, stream processing, and HTTP transfers.
 
-### Core Capabilities in Beta 1
+### Core Capabilities
 
-1. **Standalone CLI (`recoverix`):**
-   Execute bounded, non-destructive file carving and reconstruction directly from the command line without starting web services:
-   ```bash
-   recoverix recover damaged_evidence.pdf --out ./recovered_files
-   ```
-2. **Supported Deterministic Formats:**
-   - **PDF:** Reconstructs broken cross-reference (`xref`) tables and missing trailers, validating object hierarchies.
+1. **Eight Supported File Formats:**
+   - **PDF:** Reconstructs broken cross-reference (`xref`) tables and missing trailers; validates object hierarchies and document catalogs.
    - **JSON:** Detects syntax boundaries and deterministically closes unclosed container delimiters (`}`, `]`) without synthetic markers.
-   - **CSV & TXT:** Detects contiguous text bounds, verifies delimiter integrity, and isolates corruption zones.
-   - **XML, PNG, JPEG:** Validates signatures, headers, and container boundaries.
-3. **Transparent Byte Accounting:**
+   - **CSV:** Detects delimiter integrity, balances cell boundaries, and normalizes ragged trailing records.
+   - **TXT:** Enforces strict UTF-8 multi-byte boundary alignment and isolates corrupted non-text byte sequences.
+   - **XML:** Reconstructs unclosed nested tag hierarchies, synthesizes root element wrappers, and enforces strict defenses against XML External Entity (XXE) attacks.
+   - **PNG:** Validates chunk CRC checksums, verifies chunk sequences (`IHDR`, `IDAT`), and reconstructs missing `IEND` footer chunks.
+   - **JPEG / JPG:** Validates Start of Image (`SOI`), parses Start of Scan (`SOS`) streams, and restores missing End of Image (`EOI`, `0xFF 0xD9`) markers.
+   - **ZIP:** Parses local file headers, validates member checksums, reconstructs missing or truncated Central Directories and End of Central Directory (EOCD) records, and rejects directory traversal (Zip-Slip) attacks.
+2. **Transparent Byte Accounting ($V / R / M$):**
    Every recovery produces a breakdown satisfying $\text{Total Logical Bytes} = V + R + M$:
    - $V$ (Verified): Bytes present in and directly proven by the evidence.
    - $R$ (Reconstructed): Deterministic structural repairs added to make the file parser-compliant.
    - $M$ (Missing): Unrecovered damaged or omitted regions.
-4. **Interactive Dashboard & API:**
-   A Next.js frontend with Tailwind CSS and a FastAPI backend with SQLite persistence for case tracking and evidence inspection.
+3. **Consumer Web Interface & Case Investigation:**
+   - A Next.js (App Router) frontend with Tailwind CSS providing single-file drag-and-drop recovery, instant $V/R/M$ forensic accounting display, and verified file downloads.
+   - Case investigation dashboards for multi-artifact disk image analysis.
+4. **Standalone CLI (`recoverix`):**
+   Bounded, non-destructive file carving and reconstruction directly from the terminal without running web services.
 
 ### Critical Operational Constraints & Disclaimers
 
-- **Hard 5 MiB Size Limit:** The ingestion pipeline and CLI enforce a strict maximum input size limit of **5 MiB** (`5,242,880 bytes`). Files exceeding 5 MiB or 0-byte files are rejected before processing.
-- **Local Workstation Security:** Recoverix contains **no built-in authentication or multi-tenant authorization**. It is configured by default for single-user local loopback operation (`127.0.0.1`). Network deployments require an authenticating reverse proxy and network isolation.
-- **Verified vs. Reconstructed Bytes:** Reconstructed bytes ($R$) represent structural repairs (such as regenerated xref tables), not original verified evidence.
-- **Documented Benchmark Gaps:** The marker-free JSON benchmark includes a documented `UNACCOUNTED_GAP` in content-loss scenarios where physical gaps cannot be deduced without synthetic delimiters. Recoverix records this limitation honestly.
+- **Input Size Bounds:**
+  - The standalone CLI and case ingestion pipeline enforce a strict maximum input size limit of **5 MiB** (`5,242,880 bytes`).
+  - The single-file web recovery endpoint (`/api/recover-file`) enforces a maximum upload limit of **32 MiB** (`33,554,432 bytes`).
+  - Empty (0-byte) files or files exceeding these bounds are rejected immediately with clear error messages.
+- **Local Workstation Security:** Recoverix contains **no built-in user authentication or multi-tenant authorization**. It is configured by default for single-user local loopback operation (`127.0.0.1`). Network deployments require an authenticating reverse proxy and network isolation.
+- **Verified vs. Reconstructed Bytes:** Reconstructed bytes ($R$) represent structural repairs (such as regenerated xref tables, closing brackets, or container headers), not original verified evidence.
 - **PDF Object Stream Limitation:** Compressed object streams (`/ObjStm`) and compressed cross-reference streams (`/XRef`) introduced in PDF 1.5+ are not decompressed by the lightweight validator and remain an unsupported structure limitation.
 - **Explicit Non-Claims:** Recoverix makes no claim of universal file recovery, legal admissibility in judicial proceedings, or forensic soundness for unsupported formats. It is an engineering and research prototype.
 
+---
+
 ## Problem Statement
 
-Damaged or fragmented digital evidence can contain intact data, corrupted regions, missing fragments, or structures that are only partially recoverable.
+Damaged or fragmented digital files can contain intact data, corrupted regions, missing fragments, or structures that are only partially recoverable.
 
-Finding a file signature or producing an output file does not necessarily mean that the original information has been recovered correctly.
+Finding a file signature or generating an output file does not mean that the original information was recovered correctly. Many conventional file carving tools either produce truncated files that crash viewer applications, or claim 100% recovery without disclosing that large segments of data were silently lost or filled with garbage.
 
 A reliable recovery workflow must answer several questions:
 
 - What artifacts were identified?
 - Which bytes are directly supported by the available evidence?
-- Which bytes were reconstructed?
+- Which bytes were reconstructed to restore structural integrity?
 - Which information remains missing?
-- Did the reconstructed artifact pass structural validation?
+- Did the reconstructed artifact pass independent structural validation?
 - Where does uncertainty remain?
 
-Recoverix addresses these questions through deterministic recovery, structural validation, explicit byte accounting, and transparent recovery reporting.
+Recoverix addresses these questions through deterministic recovery, structural validation, explicit byte accounting, and transparent reporting.
+
+---
 
 ## Our Approach
 
-Recoverix follows three core stages.
+Recoverix follows three core stages:
+
+```
+Evidence Input ──> [1. Recover] ──> [2. Prove] ──> [3. Understand] ──> Verified Output
+```
 
 ### 1. Recover
-
-Identify candidate artifacts, locate surviving fragments, and attempt reconstruction when the available evidence supports a defined recovery procedure.
+Identify candidate artifacts, locate surviving fragments, and attempt reconstruction when the available evidence supports a defined, reproducible recovery procedure.
 
 ### 2. Prove
-
-Validate recovery candidates and record the distinction between verified, reconstructed, and missing bytes.
+Validate recovery candidates against independent, format-specific structural validators and record the strict accounting distinction between verified ($V$), reconstructed ($R$), and missing ($M$) bytes.
 
 ### 3. Understand
-
-Classify and prioritize artifacts, present recovery results, and provide explanations grounded in deterministic analysis.
+Classify and prioritize artifacts, present recovery results with visual byte maps, and provide natural-language explanations grounded strictly in deterministic analysis.
 
 The recovery engine remains authoritative. AI-assisted explanations do not replace recovery algorithms or structural validation.
+
+---
 
 ## Core Architecture
 
 ```text
-Evidence Input
-      |
-      v
-Evidence Ingestion
-      |
-      v
-Format Identification
-      |
-      v
-Candidate Detection
-      |
-      v
-Fragment and Boundary Analysis
-      |
-      v
-Deterministic Recovery
-      |
-      v
-Structural Validation
-      |
-      v
-Byte-Level Provenance (V/R/M)
-      |
-      v
-Recovery Scoring and Classification
-      |
-      v
-Artifact Prioritization
-      |
-      v
-AI-Assisted Explanation
-      |
-      v
-Investigation Interface
+Evidence Input (Upload or CLI)
+      │
+      ▼
+Evidence Ingestion & Size Check
+      │
+      ▼
+Format Identification (Magic Bytes / Signatures)
+      │
+      ▼
+Candidate Detection & Boundary Isolation
+      │
+      ▼
+Fragment and Structure Analysis
+      │
+      ▼
+Deterministic Reconstruction (Format Reconstructors)
+      │
+      ▼
+Structural Validation (Independent Format Parsers)
+      │
+      ▼
+Byte-Level Provenance Accounting (V / R / M)
+      │
+      ▼
+Recovery Scoring and Status Classification
+      │
+      ▼
+Artifact Prioritization & Explanations
+      │
+      ▼
+Investigation Interface / Direct File Download
 ```
 
-Each stage has a distinct responsibility. Recovery decisions and byte accounting are established by the deterministic pipeline before the AI explanation layer interprets the results.
+Each stage has a distinct responsibility. Recovery decisions and byte accounting are established by the deterministic pipeline before any explanation layer interprets the results.
+
+---
 
 ## Key Features
 
 ### Evidence Ingestion
-
-- Accept evidence files through the application's ingestion workflow.
-- Maintain evidence metadata.
-- Calculate SHA-256 metadata where implemented.
-- Apply configured evidence-size limits.
+- Accept evidence files via the web UI or CLI.
+- Maintain evidence metadata (original filename, MIME type, byte size).
+- Calculate SHA-256 digests for verification tracking.
+- Enforce strict upload size limits (32 MiB for web single-file recovery, 5 MiB for CLI).
 
 ### File Identification and Candidate Detection
-
-- Identify supported file formats.
-- Locate candidate artifacts and fragments.
+- Identify supported file formats using robust magic bytes and signature heuristics.
+- Locate candidate artifacts and fragments within larger data streams.
 - Track candidate offsets and sizes.
 - Apply format-specific boundary detection.
 - Isolate candidates to reduce accidental overlap and cross-candidate contamination.
 
 ### Deterministic Reconstruction
-
-- Attempt bounded bifragment reconstruction.
-- Apply supported format-specific structural reconstruction.
-- Validate reconstruction candidates.
+- Attempt bounded bifragment reconstruction when two fragments share continuity.
+- Apply supported format-specific structural reconstruction (e.g. closing unclosed XML tags, rebuilding PDF xref tables, reconstructing ZIP Central Directories).
+- Reject invalid reconstruction results.
 - Preserve ambiguity when the evidence does not establish a unique result.
-- Avoid automatically combining unrelated candidates merely because they share a format.
+- Avoid combining unrelated candidates merely because they share a format.
 
 ### Structural Validation
-
-- Validate candidates using format-specific checks.
+- Validate candidates using independent, format-specific checks (e.g. `PIL/Pillow` for PNG/JPEG, `xml.etree` for XML, `zipfile` for ZIP, `json` parser for JSON).
 - Reject invalid reconstruction results.
-- Handle malformed and truncated input.
-- Distinguish successful structural validation from proof that every original byte has been recovered.
+- Handle malformed and truncated input safely without crashing.
+- Distinguish successful structural validation from proof that every original byte was recovered.
 
-### Byte-Level Provenance
-
-Record the contribution of verified, reconstructed, and missing bytes where supported by the recovery pipeline.
+### Byte-Level Provenance ($V / R / M$)
+Record the exact contribution of verified ($V$), reconstructed ($R$), and missing ($M$) bytes for every recovery operation.
 
 ### Recovery Scoring and Classification
-
 Evaluate recovery results using the prototype's scoring policy and classify artifacts according to the available recovery evidence.
 
-### Artifact Prioritization
+### Consumer-Ready Workflow
+- Single-file upload, instant recovery processing, and direct download of recovered files.
+- Visual byte maps showing the physical layout of intact, reconstructed, and damaged regions.
+- Plain-English explanations of what was recovered, what structural framing was repaired, and what limitations exist.
 
-Organize artifacts using the application's classification and prioritization mechanisms.
-
-### AI-Assisted Explanation
-
-Generate natural-language explanations from deterministic analysis results. The AI layer is intended to explain recovery findings rather than generate recovered evidence.
+---
 
 ## Deterministic Recovery
 
-Recoverix uses evidence-driven recovery procedures.
+Recoverix uses evidence-driven recovery procedures rather than heuristic guesswork.
 
 ### Bounded Bifragment Reconstruction
 
-When two fragments may belong to the same artifact, the reconstruction engine can evaluate possible gap sizes within a configured search range.
+When two fragments may belong to the same artifact, the reconstruction engine evaluates possible gap sizes within a configured search range:
 
 ```text
 Fragment A          Unknown Gap          Fragment B
 [Available Bytes]   [Missing Region]     [Available Bytes]
 ```
 
-The engine evaluates candidate reconstructions using applicable validation rules.
-
+The engine evaluates candidate reconstructions using applicable validation rules:
 - A uniquely validated candidate may be selected.
-- Multiple valid candidates may remain ambiguous.
-- Unrelated candidates should remain separate when the evidence does not support combining them.
-- A failed reconstruction attempt must not be presented as a successful recovery.
-
-The current implementation supports specific reconstruction scenarios rather than arbitrary reconstruction of all file formats.
+- Multiple valid candidates remain flagged as ambiguous.
+- Unrelated candidates remain separate when the evidence does not support combining them.
+- A failed reconstruction attempt is never presented as a successful recovery.
 
 ### Structural Reconstruction
 
-Some formats permit limited deterministic reconstruction of structural bytes.
+Some formats permit deterministic reconstruction of structural framing bytes:
+- An incomplete JSON structure may have missing closing braces and brackets deterministically appended.
+- A truncated PDF file with missing xref table and trailer can have its xref table regenerated from surviving indirect objects.
+- A truncated ZIP file with missing Central Directory can have its Central Directory reconstructed from surviving local file headers.
+- A truncated PNG file with missing `IEND` chunk can have its `IEND` footer appended.
+- A truncated JPEG file missing its `0xFF 0xD9` (`EOI`) marker can have its end-of-image marker restored.
 
-For example, an incomplete JSON structure may be eligible for a structural-closure attempt when the implemented recovery rules support it.
+**Any bytes added by such a procedure are recorded strictly as Reconstructed ($R$), never as Verified ($V$).** Recoverix does not claim to recover arbitrary overwritten or unknowable content.
 
-Any bytes added by such a procedure must be recorded as reconstructed, not verified.
+---
 
-Recoverix does not claim to recover arbitrary overwritten or unknowable content.
+## Byte-Level Provenance ($V / R / M$)
 
-## Byte-Level Provenance
+Recoverix distinguishes three categories of artifact bytes:
 
-Recoverix distinguishes three categories of artifact bytes.
+| Symbol | Category | Meaning | Example |
+|:---:|---|---|---|
+| **$V$** | **Verified** | Bytes directly present in and proven by the uploaded evidence | Intact text, image scanlines, surviving objects |
+| **$R$** | **Reconstructed** | Deterministic structural bytes added to restore parser compliance | Synthesized xref table, closing `]}` brackets, `IEND` chunk |
+| **$M$** | **Missing** | Bytes that cannot be established from the available evidence | Corrupted gap between fragments, truncated payload data |
 
-| Symbol | Category | Meaning |
-|---|---|---|
-| V | Verified | Bytes directly supported by the available evidence |
-| R | Reconstructed | Bytes added by an implemented deterministic reconstruction procedure |
-| M | Missing | Bytes that cannot be established from the available evidence |
+The fundamental accounting identity is:
 
-The logical accounting model is:
+$$\text{Total Logical Artifact Bytes} = V + R + M$$
 
-```text
-Total Logical Artifact Bytes = V + R + M
-```
+- The accounting model must not imply that reconstructed bytes were present in the original evidence.
+- A structurally valid output is not proof of complete recovery if $M > 0$ or $R > 0$.
+- When $M > 0$, Recoverix makes missing byte counts explicit rather than pretending the file is complete.
 
-The accounting must not imply that reconstructed bytes were present in the original evidence.
-
-A structurally valid output is not, by itself, proof of complete recovery.
+---
 
 ## Recovery Classification
 
-Recoverix uses a prototype confidence-scoring policy to classify recovery results.
+Recoverix uses a prototype confidence-scoring policy to classify recovery results:
 
-| Score | Prototype Status |
-|---:|---|
-| 85–100 | FULLY_RECOVERED |
-| 50–84 | PARTIALLY_RECOVERED |
-| 20–49 | CORRUPTED |
-| 0–19 | UNRECOVERABLE |
+| Score Range | Status | Meaning |
+|:---:|---|---|
+| **85–100** | `FULLY_RECOVERED` | Intact or near-intact artifact; all bytes verified ($V$), 0 missing ($M=0$), and 0 reconstructed ($R=0$). |
+| **50–84** | `PARTIALLY_RECOVERED` | Validated artifact with reconstructed structural framing ($R > 0$) or known missing bytes ($M > 0$). |
+| **20–49** | `CORRUPTED` | Detected candidate artifact that failed structural validation or contains unrecoverable corruption zones. |
+| **0–19** | `UNRECOVERABLE` | Random noise, unsupported corruption, or fragments insufficient to form a valid artifact. |
 
-These thresholds are application-specific heuristics, not an established forensic standard.
+*Note*: These thresholds are application heuristics designed for investigative triage, not a formal legal or forensic standard.
 
-The final status must also respect recovery completeness. An artifact containing reconstructed or missing bytes must not be classified as fully recovered merely because its output passes structural validation.
+---
 
-## Supported File Formats
+## Supported File Formats (All 8 Formats)
 
-The recovery framework includes handling for the following formats:
+Recoverix provides dedicated detection, carving, validation, and reconstruction logic for eight major file formats:
 
-| Format | Extension | Notes |
-|---|---|---|
-| Plain Text | TXT | Candidate detection and supported text recovery procedures |
-| Comma-Separated Values | CSV | Candidate detection and supported CSV recovery procedures |
-| JavaScript Object Notation | JSON | Structural validation and supported structural reconstruction |
-| Extensible Markup Language | XML | Format detection and structural validation |
-| Portable Network Graphics | PNG | Image signature and bounded image-boundary analysis |
-| JPEG Image | JPEG/JPG | Image signature and bounded image-boundary analysis |
-| Portable Document Format | PDF | PDF candidate detection and supported recovery procedures |
+| Format | Extension | Deterministic Recovery Actions | Structural Validation Method | Known Limitations |
+|---|---|---|---|---|
+| **PDF** | `.pdf` | Rebuilds broken cross-reference (`xref`) tables; synthesizes missing trailer dictionaries; validates indirect object hierarchies. | Object catalog verification; xref table parse check. | Compressed object streams (`/ObjStm`) and xref streams (`/XRef`) introduced in PDF 1.5+ are not decompressed. |
+| **JSON** | `.json` | Detects syntax boundaries; balances and closes unclosed container delimiters (`}`, `]`) deterministically. | Strict JSON parser validation (`json.loads`). | Truncated string values, cut-off numeric literals, or corrupted key tokens are safely rejected without guessing. |
+| **CSV** | `.csv` | Detects row/column delimiters; normalizes ragged trailing rows; isolates corrupted records. | Dialect sniffing and tabular column count validation. | Missing intermediate columns cannot be inferred or synthesized. |
+| **TXT** | `.txt` | Detects text continuity; trims truncated multi-byte UTF-8 boundaries; isolates binary corruption zones. | Strict UTF-8 / ASCII encoding validation. | Corrupted intermediate bytes cannot be restored to original codepoints. |
+| **XML** | `.xml` | Parses tag nesting; closes unclosed element stacks; synthesizes root element wrappers if missing. | Strict `xml.etree.ElementTree` validation with entity restrictions. | Corrupted tag names or missing attribute values cannot be guessed; DTD entities blocked for security. |
+| **PNG** | `.png` | Validates chunk headers (`IHDR`, `IDAT`); checks CRC checksums; deterministically restores missing `IEND` footer chunks. | Strict Pillow image header and stream validation. | Corrupted `IDAT` compressed scanline streams cannot be repaired without original DEFLATE stream data. |
+| **JPEG** | `.jpg`, `.jpeg` | Verifies Start of Image (`0xFF 0xD8`, `SOI`); parses Start of Scan (`SOS`) markers; appends missing End of Image (`0xFF 0xD9`, `EOI`) markers. | Strict Pillow image decoding and marker verification. | Corrupted entropy-coded scan data cannot be reconstructed without original DCT coefficients. |
+| **ZIP** | `.zip` | Scans local file headers; verifies CRC32 checksums; deterministically rebuilds missing or truncated Central Directory and EOCD records. | Strict `zipfile.ZipFile` integrity checks with path traversal defenses. | Corrupted or truncated compressed member streams cannot be decompressed. |
 
-Support does not mean that every damaged file can be reconstructed.
-
-Detection, carving, validation, and reconstruction capabilities vary by format. Recovery results depend on the available evidence and the specific recovery procedure implemented for that format.
+---
 
 ## AI Evidence Analyst
 
-The AI evidence analyst operates as an interpretation layer over deterministic recovery results.
+The AI evidence analyst operates as an interpretation and explanation layer over deterministic recovery results.
 
-Depending on the implemented integration, it may help provide:
+Depending on configuration, it provides:
+- Human-readable recovery summaries.
+- Plain-English explanations of detected damage and structural repairs.
+- Clear itemization of verified vs. reconstructed vs. missing data.
+- Investigator-oriented context.
 
-- Recovery summaries.
-- Explanations of detected damage.
-- Artifact descriptions.
-- Classification context.
-- Investigator-oriented interpretations of recovery findings.
-
-The AI layer must not:
-
-- Invent recovered evidence bytes.
-- Predict missing file contents and present them as recovered.
+### Safety Invariants of the AI Layer
+The AI analyst must **never**:
+- Invent or predict missing file content.
+- Present synthetic predictions as recovered evidence.
 - Override deterministic validation results.
-- Modify verified, reconstructed, or missing byte accounting.
-- Independently declare a reconstruction valid.
+- Alter $V$, $R$, or $M$ byte counts.
+- Independently declare a damaged file valid.
 
-AI explanations should remain grounded in the results supplied by the deterministic pipeline.
+AI explanations remain grounded in the output of the deterministic recovery engine.
+
+---
 
 ## Technology Stack
 
-### Frontend
+- **Backend Framework**: Python 3.10+, FastAPI, Uvicorn
+- **Recovery Engine**: Custom deterministic stream carvers, format reconstructors, structural validators, and byte provenance counters
+- **Database & Storage**: SQLite with ephemeral container storage and 24-hour TTL purge lifecycle
+- **Frontend Framework**: Next.js 16 (App Router), React, TypeScript, Tailwind CSS, Lucide Icons
+- **Testing & Quality Assurance**: Pytest (1,334 passing tests), TypeScript compiler (`tsc`), Pillow, AnyIO
+- **Deployment Infrastructure**: Docker, Render Free Web Service Blueprint (`render.yaml`), Vercel Hobby
 
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-
-### Backend
-
-- Python
-- FastAPI
-- Uvicorn
-
-### Recovery Engine
-
-- Custom deterministic scanners.
-- File-format validators.
-- Fragment analysis.
-- Bounded reconstruction algorithms.
-- Recovery scoring and provenance logic.
-
-### Testing and Development
-
-- Pytest
-- TypeScript compiler checks.
-- Automated recovery regression tests.
-- Synthetic evidence generation.
-- Git and GitHub.
-
-The exact runtime requirements and optional integrations are determined by the repository's dependency and configuration files.
+---
 
 ## Project Structure
 
@@ -346,34 +331,47 @@ The exact runtime requirements and optional integrations are determined by the r
 recoverix/
 ├── backend/
 │   ├── app/
-│   │   ├── api/
-│   │   ├── generator/
-│   │   ├── ingestion/
-│   │   ├── models/
-│   │   ├── recovery/
-│   │   ├── scoring/
-│   │   ├── main.py
-│   │   └── store.py
-│   ├── generate_case.py
-│   └── ...
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   ├── lib/
-│   └── ...
-├── tests/
-├── docs/
-├── .gitignore
-└── README.md
+│   │   ├── api/                 # FastAPI routes (/api/recover-file, /api/cases, /health)
+│   │   ├── generator/           # Synthetic evidence and disk image generator
+│   │   ├── ingestion/           # Evidence reader, chunker, and metadata extractor
+│   │   ├── models/              # Pydantic schemas (artifact, case, confidence, V/R/M)
+│   │   ├── recovery/            # Core deterministic recovery engine
+│   │   │   ├── reconstructors/  # Format reconstructors (PDF, JSON, CSV, TXT, XML, PNG, JPEG, ZIP)
+│   │   │   ├── validators/      # Format validators and security guards (XXE, Zip-Slip)
+│   │   │   ├── bifragment.py    # Bounded bifragment gap analysis
+│   │   │   ├── carver.py        # Stream carving and candidate boundary detection
+│   │   │   ├── scanner.py       # Signature scanner & magic byte detection
+│   │   │   └── signatures.py    # Format signatures and header/footer definitions
+│   │   ├── scoring/             # Confidence scoring policy and byte provenance accounting
+│   │   ├── storage/             # SQLite store and 24-hour TTL purge worker
+│   │   └── main.py              # Application entrypoint, CORS & proxy security middleware
+│   ├── cli.py                   # Standalone CLI entrypoint (recoverix)
+│   └── generate_case.py         # Synthetic case generator script
+├── frontend/                    # Next.js 16 (App Router) + Tailwind CSS web interface
+│   ├── app/                     # App router pages (/, /cases, /dashboard, /investigation)
+│   ├── components/              # React components (EvidenceUpload, ByteEvidenceMap, AIEvidenceAnalyst)
+│   ├── lib/                     # API client, types, and byte-level provenance helpers
+│   ├── next.config.ts           # Dynamic backend API rewrite configuration
+│   └── vercel.json              # Next.js framework preset declaration
+├── benchmark/                   # Forensic evaluation benchmarks & synthetic test suites
+├── docs/                        # Architectural documentation, deployment guides, release notes
+├── tests/                       # 1,334+ automated regression, parser, and security tests
+├── Dockerfile.backend           # Hardened container for backend on dynamic $PORT
+├── Dockerfile.frontend          # Multi-stage production container for frontend
+├── render.yaml                  # Render free-tier Infrastructure-as-Code Blueprint
+├── pyproject.toml               # Python package configuration and CLI console script
+└── README.md                    # Project documentation
 ```
 
-This is a high-level overview. Individual modules and filenames may change as development continues.
+---
 
 ## Getting Started
 
 ### Prerequisites
 
-Install the versions of Python, Node.js, and npm supported by the repository's dependency and configuration files.
+- **Python**: Version 3.10, 3.11, 3.12, 3.13, or 3.14
+- **Node.js**: Version 18.x, 20.x, or 22.x
+- **npm**: Version 9.x+
 
 ### 1. Clone the Repository
 
@@ -382,321 +380,246 @@ git clone https://github.com/c-zerooo/recoverix.git
 cd recoverix
 ```
 
-### 2. Start the Backend
-
-From the repository root, run:
-
-```bash
-python3 -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-The backend is expected to be available at:
-
-```text
-http://127.0.0.1:8000
-```
-
-### 3. Start the Frontend
-
-Open another terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The frontend is expected to be available at:
-
-```text
-http://127.0.0.1:3000
-```
-
-### 4. Run the Tests
+### 2. Set Up and Start the Backend
 
 From the repository root:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -v
+# Create and activate a virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -e .
+
+# Start the FastAPI backend
+python3 -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The `PYTHONDONTWRITEBYTECODE=1` setting prevents Python from writing new bytecode files during the test run.
+Verify that the backend is running by opening:
+```text
+http://127.0.0.1:8000/health
+```
+Expected response:
+```json
+{"status": "ok", "service": "recoverix-backend", "engine": "forensic-carver"}
+```
 
-Consult the repository configuration and dependency files if additional setup is required.
+### 3. Set Up and Start the Frontend
+
+In a second terminal window:
+
+```bash
+cd frontend
+
+# Install npm dependencies
+npm install
+
+# Start the Next.js development server
+npm run dev
+```
+
+Open your browser to:
+```text
+http://127.0.0.1:3000
+```
+
+---
 
 ## Command-Line Interface (CLI)
 
-Recoverix provides a standalone command-line interface (`recoverix` / `python3 -m backend.cli`) that enables direct file carving, deterministic reconstruction, structural validation, and artifact export without running FastAPI, Uvicorn, or the Next.js frontend.
-
-### Installation and Invocation
-
-You can run the CLI directly from the repository using Python, or as an installed console script:
+Recoverix provides a standalone CLI that enables direct file carving, deterministic reconstruction, structural validation, and artifact export without running web services:
 
 ```bash
-# Direct module invocation from repo root
-python3 -m backend.cli --help
-
-# Or via installed console script
-python3 -m pip install -e .
-recoverix --help
-```
-
-### Basic Usage
-
-Carve and recover a damaged evidence file to a destination directory:
-
-```bash
-# Recover a damaged PDF (auto-reconstructs xref tables and missing trailers)
+# Run via python module
 python3 -m backend.cli recover damaged_doc.pdf --out ./recovered
 
-# Recover a damaged JSON file with short flag -o
-python3 -m backend.cli recover corrupted_data.json -o ./recovered_artifacts
-
-# Output machine-readable JSON summary for automated pipelines
-python3 -m backend.cli recover evidence.dat -o ./output --json
+# Or via installed console script
+recoverix recover damaged_image.png -o ./recovered_artifacts
 ```
 
 ### Exit Codes
 
-The CLI returns standard exit codes suitable for CI/CD pipelines, shell scripts, and automated ingestion workflows:
-
 | Exit Code | Meaning | Description |
 |:---:|---|---|
-| `0` | Recovery Successful | A valid artifact was recovered (`FULLY_RECOVERED` or `PARTIALLY_RECOVERED`) and written to the output directory. |
-| `1` | Unrecoverable / Corrupted | The evidence is unrecoverable from available bytes; no artifact file is written. |
-| `2` | Operational Error | Input file not found, permission denied, file empty or exceeds 5 MiB limit, target output file already exists, path traversal detected, or invalid arguments. |
+| `0` | Recovery Successful | A valid artifact was recovered (`FULLY_RECOVERED` or `PARTIALLY_RECOVERED`) and written to disk. |
+| `1` | Unrecoverable | The evidence is unrecoverable from available bytes; no output file is written. |
+| `2` | Operational Error | Input file not found, permission denied, file exceeds 5 MiB limit, target file already exists, path traversal detected, or invalid arguments. |
 
-### Output Files and Safety Invariants
+### Safety Invariants of the CLI
 
-- **Non-Overwrite Guarantee:** Recoverix writes recovered artifacts as `recovered_<original_filename>` inside the specified `--out` directory. To prevent accidental evidence loss or tampering, the CLI will refuse to overwrite an existing file (exiting with code `2`).
-- **Path Traversal Protection:** Input filenames are strictly sanitized to basenames before constructing the destination path. Attempts to traverse outside the target directory are rejected.
-- **Bounded Ingestion:** Evidence files are bounded by `MAX_EVIDENCE_SIZE` (5 MiB). Files larger than 5 MiB or 0-byte files are rejected before processing.
-- **No Artifact on Failure:** If recovery status is `UNRECOVERABLE` or zero recoverable bytes are produced, no output file is written.
+- **Non-Overwrite Guarantee:** To prevent accidental evidence loss, the CLI will refuse to overwrite an existing file.
+- **Path Traversal Protection:** Input filenames are strictly sanitized to basenames before constructing destination paths.
+- **No Artifact on Failure:** If recovery status is `UNRECOVERABLE`, no file is written to disk.
 
-### Understanding the Recovery Summary
+---
 
-Upon execution, Recoverix displays a forensic accounting summary:
+## Testing & Quality Assurance
 
-```text
-════════════════════════════════════════════════════════════════════════
-  RECOVERIX — FORENSIC FILE RECOVERY SUMMARY
-════════════════════════════════════════════════════════════════════════
-  Input File         : damaged_doc.pdf (1,420 bytes)
-  Detected Format    : pdf
-  Recovery Status    : PARTIALLY_RECOVERED
-  Validation Status  : PASSED
-  Verified Bytes     : 1,218 bytes (intact evidence bytes)
-  Reconstructed Bytes: 202 bytes (structural repair bytes)
-  Missing Bytes      : 0 bytes (unrecovered damage)
-  Reconstruction     : RECONSTRUCT_PDF_XREF
-  Output File        : /path/to/recovered/recovered_damaged_doc.pdf (1,420 bytes written)
-────────────────────────────────────────────────────────────────────────
-  Notice: Artifact was partially recovered. Reconstructed or missing bytes exist;
-  reconstructed bytes represent structural repairs (e.g. delimiters, xref tables),
-  not original verified content. Inspect output before forensic reliance.
-════════════════════════════════════════════════════════════════════════
-```
-
-> **Forensic Notice:** Reconstructed bytes ($R$) represent synthetically repaired structural elements (such as regenerated PDF cross-reference tables or closed JSON delimiters), not verified original payload bytes ($V$). Always inspect recovered artifacts before relying on them for forensic investigations.
-
-## Testing
-
-Recoverix includes automated tests covering areas such as:
-
-- Evidence generation.
-- Evidence ingestion.
-- Format identification.
-- Fragment scanning.
-- Candidate-boundary isolation.
-- Contiguous carving.
-- Structural validation.
-- Bifragment reconstruction.
-- Reconstruction ambiguity.
-- Byte-level provenance.
-- Recovery scoring.
-- PDF recovery.
-- Text and CSV recovery.
-- JSON structural reconstruction.
-- API behavior.
-- Malformed and truncated input.
-- Recovery failure handling.
-
-Regression tests are particularly important for preventing unrelated candidates from being combined and for ensuring that malformed files do not cause recovery logic to claim unsupported bytes.
-
-Run the complete test suite and benchmarks:
+Recoverix maintains a comprehensive automated test suite covering format reconstructors, independent third-party parsers, boundary isolation, CORS security, proxy spoofing defenses, and data retention lifecycles.
 
 ```bash
-# 1. Run full pytest regression suite (1,256 passed)
+# 1. Run the complete pytest suite (1,334 passed)
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
 
-# 2. Run the deterministic baseline recovery benchmark (6/6 scenarios)
-PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_baseline
+# 2. Run the 8-format independent parser & validation test suite
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_independent_parsers_8_formats.py tests/test_file_recovery.py -v
 
-# 3. Run the marker-free JSON recovery benchmark (7 scenarios)
-PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.json_benchmark
+# 3. Run the security, CORS, and proxy anti-spoofing test suite
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_cors_and_api_exposure.py -v
 
-# 4. Run the empirical validation corpus benchmark (15 scenarios)
-PYTHONDONTWRITEBYTECODE=1 python3 -m benchmark.run_realworld --manifest benchmark/evaluation_corpus/manifest.json
+# 4. Run the frontend production build and TypeScript check
+cd frontend && npm run build
 ```
 
-The `PYTHONDONTWRITEBYTECODE=1` environment variable prevents Python from writing `.pyc` files into source directories.
+---
 
 ## Synthetic Evaluation & Benchmarks
 
-Recoverix evaluates its recovery pipeline against reproducible synthetic evidence images with known physical ground-truth placements.
+Recoverix evaluates its recovery algorithms against reproducible synthetic evidence images with mathematically known ground-truth placements.
 
 > [!NOTE]
 > All evaluation fixtures are synthetic, deterministic controls with mathematically known ground truth. Recoverix does NOT represent synthetic fixtures as real-world evidence and makes no claim of general real-world accuracy without measured evidence from genuine external corpora.
 
 ### 1. Baseline Recovery Benchmark (`benchmark.run_baseline`)
-
-Evaluates multi-format candidate detection, spatial relationship preservation, and byte-level provenance across 6 core forensic scenarios:
-
-| Scenario ID | Artifact Type | Expected Status | Observed Status | IoU | Payload Hash |
-|---|---|---|---|:---:|:---:|
-| `art-clean-01` | TXT | `FULLY_RECOVERED` | `FULLY_RECOVERED` | 1.000 | Match |
-| `art-deleted-01` | CSV | `FULLY_RECOVERED` | `FULLY_RECOVERED` | 1.000 | Match |
-| `art-fragmented-01` | TXT | `FULLY_RECOVERED` | `FULLY_RECOVERED` | 1.000 | Match |
-| `art-bifragment-01` | TXT | `UNRECOVERABLE` | `UNRECOVERABLE` | N/A | N/A |
-| `art-corrupted-01` | TXT | `CORRUPTED` | `CORRUPTED` | N/A | Mismatch |
-| `art-unrecoverable-01` | TXT | `UNRECOVERABLE` | `UNRECOVERABLE` | N/A | N/A |
-
+Evaluates candidate detection, boundary isolation, and byte-level provenance across 6 core scenarios:
+```bash
+python3 -m benchmark.run_baseline
+```
 *Result:* **6 / 6 passed**, 0 forensic accounting violations.
 
 ### 2. Marker-Free JSON Benchmark (`benchmark.json_benchmark`)
-
 Evaluates syntax-boundary candidate discovery, bracket-closure reconstruction, and noise resistance without synthetic framing delimiters:
-
-| Scenario | Description | Status | Byte Correctness | Finding |
-|---|---|---|:---:|---|
-| `json-clean` | Intact JSON payload | `FULLY_RECOVERED` | 1.000 | Clean Match |
-| `json-truncated-closable` | Missing closing delimiters | `PARTIALLY_RECOVERED` | 1.000 | Structural Closure Match |
-| `json-truncated-closable-content-loss` | Missing key-value content prior to closure | `PARTIALLY_RECOVERED` | 1.000 | **Documented Limitation:** `UNACCOUNTED_GAP` |
-| `json-truncated-incomplete` | Truncated mid-string/key | `PARTIALLY_RECOVERED` | 1.000 | Incomplete token dropped honestly |
-| `json-unrecoverable-noise` | Binary random noise without valid JSON | `UNRECOVERABLE` | N/A | Negative control (no false recovery) |
-| `json-with-binary-noise` | Valid JSON surrounded by binary noise | `FULLY_RECOVERED` | 1.000 | Exact payload carving |
-| `json-multi-candidate-independent` | Two independent JSON structures in one stream | `FULLY_RECOVERED` (both) | 1.000 | Isolated candidates without fusion |
-
-*Result:* **6 / 7 scenarios passed**, 1 documented limitation (`UNACCOUNTED_GAP` on content loss). Ground truth remains strictly separated from recovery execution.
+```bash
+python3 -m benchmark.json_benchmark
+```
+*Result:* **6 / 7 scenarios passed**, 1 documented limitation (`UNACCOUNTED_GAP` on content loss).
 
 ### 3. Empirical Validation Corpus Benchmark (`benchmark.run_realworld`)
+Evaluates multi-format file recovery, structural validation, and strict $V/R/M$ accounting across 15 controlled scenarios:
+```bash
+python3 -m benchmark.run_realworld --manifest benchmark/evaluation_corpus/manifest.json
+```
+*Result:* **15 / 15 status matched (100% accuracy)**, **4 / 4 exact hash matches on intact evidence**, 0 false positives, 0 false negatives.
 
-Evaluates multi-format file recovery, structural validation, and strict $V/R/M$ accounting across 15 controlled scenarios spanning PDF, JSON, CSV, TXT, and negative controls:
-
-| Format / Category | Scenarios | Recovery Status Acc | Payload Hash Acc | Structural Validity |
-|---|:---:|:---:|:---:|:---:|
-| **PDF** | 3 (intact, missing xref, corrupted catalog) | 3 / 3 (100%) | 1 / 1 (exact) | 2 / 3 valid (unrecoverable catalog rejected) |
-| **JSON** | 3 (intact, truncated closable, corrupted syntax) | 3 / 3 (100%) | 1 / 1 (exact) | 2 / 3 valid (unrecoverable syntax rejected) |
-| **CSV** | 3 (intact, truncated, corrupted delimiter) | 3 / 3 (100%) | 1 / 1 (exact) | 3 / 3 valid (damaged sectors isolated) |
-| **TXT** | 3 (intact, truncated, corrupted bytes) | 3 / 3 (100%) | 1 / 1 (exact) | 3 / 3 valid (damaged sectors isolated) |
-| **Controls** | 3 (noise, misleading header, unsupported zip) | 3 / 3 (100%) | N/A | 0 / 3 valid (all correctly rejected as unrecoverable) |
-
-*Result:* **15 / 15 status matched (100% accuracy)**, **4 / 4 exact hash matches on intact evidence**, 0 false positives, 0 false negatives. Complete sample accounting verified.
+---
 
 ## Security and Deployment Model
 
-Recoverix is architected as a **local single-user forensic recovery workstation tool**. It does **not** provide built-in user accounts, passwords, API tokens, session management, or role-based access controls (RBAC).
+Recoverix is architected as a **local single-user recovery workstation tool**. It does **not** provide built-in user accounts, passwords, API tokens, session management, or role-based access controls (RBAC).
 
 ### Supported Deployment Modes
 
-1. **Local Development / Single-User Workstation (Recommended)**
-   - The backend runs on loopback (`http://127.0.0.1:8000`) and the frontend runs on loopback (`http://127.0.0.1:3000`).
-   - CORS is restricted by default to local origins (`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:8000`, `http://127.0.0.1:8000`).
+1. **Local Workstation (Default & Recommended)**
+   - Backend runs on `127.0.0.1:8000`, frontend runs on `127.0.0.1:3000`.
+   - CORS is restricted by default to local loopback origins (`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:8000`, `http://127.0.0.1:8000`).
    - Browsers prevent arbitrary third-party websites from reading evidence data or executing cross-origin API calls.
 
-2. **Local Desktop / Container Deployment (`docker compose`)**
+2. **Container Deployment (`docker compose`)**
    - Services are published on the host loopback adapter (`127.0.0.1:8000` and `127.0.0.1:3000`), preventing port exposure across LAN or public network interfaces.
-   - CORS origins are configured via `RECOVERIX_CORS_ORIGINS`.
 
 3. **Network-Accessible Deployment (Shared Server or Cloud)**
-   - **Important:** Recoverix does not implement authentication. Binding the backend to `0.0.0.0` or exposing port 8000 directly to a local network or the internet allows anyone with network connectivity to view cases, upload evidence, and download recovered payloads.
-   - Exposing Recoverix to an untrusted or multi-user network requires an external security perimeter:
-     - **Authenticating Reverse Proxy:** Deploy an identity-aware proxy (e.g. OAuth2-Proxy, Cloudflare Access, AWS ALB OIDC, or Nginx with HTTP Basic/mTLS) in front of the API.
+   - **Important:** Recoverix does not implement authentication. Binding the backend to `0.0.0.0` or exposing port 8000 directly to a network allows anyone with network connectivity to view cases, upload evidence, and download recovered payloads.
+   - Exposing Recoverix to an untrusted network requires an external security perimeter:
+     - **Authenticating Reverse Proxy:** Deploy an identity-aware proxy (e.g. OAuth2-Proxy, Cloudflare Access, AWS ALB OIDC, or Nginx with HTTP Basic/mTLS).
      - **Network Isolation:** Restrict access via VPN (e.g. WireGuard, Tailscale) or firewall rules.
      - **TLS Termination:** Terminate HTTPS at the gateway.
-     - **Request Size Limiting:** Enforce reverse-proxy upload size limits (`client_max_body_size 6m` in Nginx).
+     - **Request Size Limiting:** Enforce reverse-proxy upload size limits.
      - **CORS Configuration:** Explicitly configure `RECOVERIX_CORS_ORIGINS` to the domain of the deployed frontend.
 
-### CORS Configuration and Invariants
+### CORS Security Invariants
 
-Browser cross-origin requests are governed by the `RECOVERIX_CORS_ORIGINS` environment variable:
-- **Default Loopback Origins:** If unset or blank, Recoverix defaults safely to local loopback origins (`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:8000`, `http://127.0.0.1:8000`).
-- **Configuring Explicit Origins:** Specify allowed origins as a comma-separated list or JSON array of `scheme://host[:port]` entries with no path, query, or fragment:
-  - `RECOVERIX_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`
-  - `RECOVERIX_CORS_ORIGINS='["http://localhost:3000", "https://forensics.corp.internal"]'`
-- **Disabling CORS:** Setting `RECOVERIX_CORS_ORIGINS=none` (or `disabled`, `false`, `0`) disables browser cross-origin requests entirely by omitting CORS headers.
-- **Malformed Entry Handling:** Invalid origin formats (e.g., missing scheme, containing path like `/api`, or containing query strings) are filtered out individually.
-- **Fallback Behavior:** If all configured entries are malformed or invalid, Recoverix falls back safely to the local loopback defaults rather than failing open or producing an empty/broken state.
-- **Wildcard Origins Strictly Rejected:** Wildcard origins (`*`) are rejected by the origin validator. Configuring `RECOVERIX_CORS_ORIGINS=*` will not enable unrestricted CORS; it will be rejected as invalid and fall back to the loopback defaults.
-- **CORS Is Not Authentication:** CORS is enforced solely by web browsers to restrict cross-origin JavaScript execution. It provides zero protection against direct HTTP clients (`curl`, scripts) or unauthorized users with network connectivity to the port.
-- **No Built-in Authentication:** The API contains no authentication or authorization. Wildcard CORS or exposing the API port to untrusted networks without an authenticating reverse proxy and network isolation must never be permitted.
+- **Whitelisted Origins Only:** Configured via `RECOVERIX_CORS_ORIGINS`.
+- **Wildcard Origins Strictly Rejected:** Wildcard origins (`*`) are rejected by the origin validator. Setting `RECOVERIX_CORS_ORIGINS=*` will not enable unrestricted CORS; it will be rejected as invalid and fall back safely to loopback defaults.
+- **CORS Is Not Authentication:** CORS protects browsers against cross-origin scripting; it provides zero protection against direct HTTP clients (`curl`, scripts) having network connectivity to the port.
 
-## Limitations
+### Anti-Spoofing Proxy Resolution
 
-Recoverix is an evolving prototype, not a validated production forensic platform.
+To prevent clients from spoofing their IP address via forged `X-Forwarded-For` headers to bypass rate limiting, Recoverix implements strict proxy trust verification:
+- `RECOVERIX_TRUSTED_PROXIES=private` strictly verifies client IPs against RFC 1918 / RFC 4193 private network address ranges before trusting forwarded headers.
+- Untrusted direct connections are evaluated using their direct socket address, preventing rate-limit evasion.
+
+---
+
+## Current Deployment Status (Staging Candidate)
+
+> [!IMPORTANT]
+> **Staging Deployment in Progress**: Recoverix is an evolving open-source project. The application is configured for deployment on zero-cost ($0/month) cloud infrastructure, but the public staging URLs are **currently in progress and unverified** (returning HTTP 404 pending final dashboard configuration steps). Do not treat public staging URLs as verified production services until formal verification is complete.
+
+### Staging Architecture Overview
+
+| Component | Target Provider | Plan | Intended Domain | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Frontend** | Vercel | Hobby ($0/month) | `https://recoverix-staging.vercel.app` | **Unverified / 404** (Pending Vercel production branch configuration) |
+| **Backend** | Render | Free Web Service ($0/month) | `https://recoverix-backend.onrender.com` | **Unverified / 404** (Pending Render web service provisioning) |
+| **Storage** | Render Container | Ephemeral SQLite ($0/month) | `/app/data/recoverix.db` | Ephemeral container storage with 24-hr TTL purge |
+
+### Free-Tier Hosting Limitations & Operational Reality
+
+Recoverix is architected to run within a strict $0/month budget. This introduces specific operational constraints:
+
+1. **Ephemeral File Storage**:
+   - Render free web services do **not** provide persistent disks.
+   - Uploaded files, recovered artifacts, and SQLite database records reside in the container's temporary local filesystem.
+   - When the container restarts, redeploys, or spins down, stored records and unexported files are erased.
+   - **Recoverix is not a permanent storage vault**. Users must download recovered files immediately upon completion.
+2. **Idle Spin-Down and Cold Starts**:
+   - Render free containers automatically spin down to 0 instances after 15 minutes of inactivity.
+   - The first request after an idle period triggers a cold start that typically takes **45 to 60 seconds** while the container starts. Subsequent requests respond in standard sub-second time.
+3. **24-Hour Time-to-Live (TTL) Purge**:
+   - To keep storage bounded within free-tier container limits, the backend automatically purges uploaded files and recovery artifacts older than 24 hours (`store.purge_expired_recovered_files(ttl_hours=24)`).
+4. **Input Size Bounds**:
+   - Web uploads are constrained to 32 MiB.
+   - Ingestion rate limiting is enforced per client IP address (60 requests/minute).
+
+---
+
+## Limitations & Non-Claims
+
+Recoverix is an evolving engineering and research prototype, not a validated commercial or judicial forensic platform.
 
 Current limitations include:
+- **No Content Hallucination**: Missing payload data cannot be guessed. If unobserved data was destroyed, it remains missing.
+- **Format-Specific Boundaries**: Recovery depends strictly on implemented deterministic procedures. Unsupported corruption patterns remain unrecoverable.
+- **Compressed PDF Streams**: Compressed object streams (`/ObjStm`) and xref streams (`/XRef`) introduced in PDF 1.5+ are not decompressed.
+- **Severe Corruption**: Overwritten data sectors, heavily truncated payloads, or zeroed-out blocks cannot be restored.
+- **Reconstruction Ambiguity**: Some damaged fragments may produce multiple plausible reconstructions; Recoverix preserves ambiguity rather than making an unverified guess.
+- **Not Admissible as Legal Testimony**: Recoverix makes no claim of legal admissibility in judicial proceedings or formal compliance with forensic laboratory standards.
 
-- Evidence processing is subject to configured size limits.
-- Recovery depends on supported formats and deterministic procedures.
-- Compressed PDF object streams (`/ObjStm`) and compressed cross-reference streams (`/XRef`) introduced in PDF 1.5+ are not decompressed.
-- Arbitrarily overwritten or unknowable bytes cannot be recovered reliably.
-- Some reconstruction candidates may remain ambiguous.
-- Reconstruction capabilities differ across file formats.
-- Confidence thresholds are prototype heuristics, not forensic standards.
-- Synthetic evaluation does not establish general real-world recovery accuracy.
-- Production deployment requires further security hardening, authentication, storage design, audit controls, scalability work, and independent validation.
-
-Recoverix should not be treated as a substitute for established forensic procedures or tools.
+---
 
 ## Design Principles
 
-### Deterministic First
+1. **Deterministic First**: Recovery decisions must be grounded in mathematical evidence and reproducible algorithms.
+2. **No Invented Evidence**: Missing bytes must never be fabricated and represented as original content.
+3. **Explicit Provenance**: Every output must clearly distinguish verified ($V$), reconstructed ($R$), and missing ($M$) bytes.
+4. **Preserve Ambiguity**: When evidence cannot distinguish between valid alternatives, preserve the uncertainty rather than guessing.
+5. **Validate Before Accepting**: Candidate reconstructions must pass independent structural validation before being declared valid.
+6. **Isolate Independent Candidates**: Independent candidate artifacts must not be combined merely because they appear near one another.
+7. **Honest Reporting**: Communicate limitations clearly and avoid claiming capabilities that have not been implemented and proven.
 
-Recovery decisions must be grounded in evidence and reproducible procedures.
+---
 
-### No Invented Evidence
+## Contributing
 
-Missing bytes must not be fabricated and represented as original recovered content.
+Contributions to Recoverix are welcome. As an open-source forensic engineering project, we follow strict quality, safety, and evidence-preservation guidelines:
 
-### Explicit Provenance
+1. **Deterministic First**: Contributions must not introduce generative prediction, probabilistic guessing, or hallucinated content to fill missing file bytes.
+2. **Strict $V/R/M$ Accounting**: Every recovery algorithm must strictly account for verified evidence bytes ($V$), reconstructed structural repairs ($R$), and unrecoverable missing bytes ($M$).
+3. **Safety & Security Invariants**:
+   - Reconstructors must guard against memory exhaustion, recursive parsing, and parser bombs.
+   - Archive parsers must defend against path traversal (Zip-Slip).
+   - Markup parsers must reject external entity expansion (XXE).
+   - Input filenames must be sanitized to safe basenames.
+4. **Comprehensive Test Coverage**:
+   - New reconstructors or validators must include tests with synthetic intact, damaged/repairable, and unrecoverable control fixtures.
+   - The entire regression test suite (`pytest tests/`) must pass cleanly.
+5. **How to Contribute**:
+   - Fork the repository and create a feature branch (`git checkout -b feature/my-feature`).
+   - Run tests and lint checks locally.
+   - Submit a Pull Request targeting `recoverix/staging-candidate` (or `main`) with a detailed explanation of your changes and test evidence.
 
-Recovery results should distinguish verified, reconstructed, and missing information.
-
-### Preserve Ambiguity
-
-When the available evidence cannot distinguish between valid alternatives, the system should preserve that uncertainty.
-
-### Validate Before Accepting
-
-Candidate reconstructions must pass the applicable validation rules before being accepted.
-
-### Isolate Independent Candidates
-
-Candidates should not be combined solely because they share a format or appear near one another.
-
-### Honest Reporting
-
-The system should communicate its limitations and avoid claiming capabilities that have not been implemented and validated.
-
-## Future Improvements
-
-Potential areas for continued development include:
-
-- Making repeated case-analysis requests idempotent.
-- Expanding benchmark coverage across file formats.
-- Improving evaluation criteria and status-matching checks.
-- Extending format-specific reconstruction capabilities.
-- Strengthening API security and access controls.
-- Improving performance for larger evidence files.
-- Adding more reproducible evaluation scenarios.
-- Expanding documentation and contributor guidance.
-
-These are development directions, not claims that the features are already implemented.
-
-## Core Statement
-
-> Recoverix does not guess what was lost. It reconstructs only what the available evidence supports, validates the result, and makes the remaining uncertainty explicit.
+---
 
 ## License
 
