@@ -258,6 +258,11 @@ def test_trusted_proxy_rate_limit_spoof_defense(monkeypatch):
     req_trusted = DummyRequest("10.0.0.1", {"x-forwarded-for": "198.51.100.2, 10.0.0.1"})
     assert resolve_client_ip(req_trusted) == "198.51.100.2"
 
+    # Wildcard proxy trust (for cloud platforms like Render)
+    monkeypatch.setenv("RECOVERIX_TRUSTED_PROXIES", "*")
+    req_cloud_proxy = DummyRequest("10.123.45.67", {"x-forwarded-for": "203.0.113.99, 10.123.45.67"})
+    assert resolve_client_ip(req_cloud_proxy) == "203.0.113.99"
+
 
 def test_standalone_file_purge_24h_ttl():
     """Verify that standalone recovered files older than 24 hours are purged."""

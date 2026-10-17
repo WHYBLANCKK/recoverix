@@ -164,7 +164,7 @@ def resolve_client_ip(request: Request) -> str:
     trusted_proxies_env = os.getenv("RECOVERIX_TRUSTED_PROXIES", "").strip()
     if trusted_proxies_env:
         trusted_proxies = {p.strip() for p in trusted_proxies_env.split(",") if p.strip()}
-        if direct_peer in trusted_proxies:
+        if "*" in trusted_proxies or direct_peer in trusted_proxies:
             forwarded_for = request.headers.get("x-forwarded-for")
             if forwarded_for:
                 client = forwarded_for.split(",")[0].strip()
