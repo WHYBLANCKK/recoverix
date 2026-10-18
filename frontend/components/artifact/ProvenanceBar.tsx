@@ -98,7 +98,7 @@ export function ProvenanceBar({ artifact }: { artifact: Artifact }) {
       </div>
 
       <div className="bg-slate-50 border border-slate-200 text-slate-600 rounded-lg p-3.5 text-xs text-center">
-        <span className="font-semibold text-slate-900">Zero AI Byte Fabrication:</span> AI never invents or infills missing evidence bytes.
+        <span className="font-semibold text-slate-900">Zero Synthetic Byte Fabrication:</span> Missing evidence bytes are never guessed, infilled, or fabricated.
       </div>
     </div>
   );

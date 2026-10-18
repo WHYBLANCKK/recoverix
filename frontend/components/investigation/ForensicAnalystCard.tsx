@@ -15,17 +15,17 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-interface AIEvidenceAnalystProps {
+interface ForensicAnalystCardProps {
   fileId: string;
   evidenceFacts?: Record<string, any>;
   initialBrief?: AIExplanation | null;
 }
 
-export function AIEvidenceAnalyst({
+export function ForensicAnalystCard({
   fileId,
   evidenceFacts,
   initialBrief,
-}: AIEvidenceAnalystProps) {
+}: ForensicAnalystCardProps) {
   const [brief, setBrief] = useState<AIExplanation | null>(initialBrief || null);
   const [loading, setLoading] = useState(!initialBrief);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
@@ -45,21 +45,21 @@ export function AIEvidenceAnalyst({
           setBrief(res);
         }
       } catch (err) {
-        console.warn("Failed to load AI evidence analysis", err);
+        console.warn("Failed to load forensic evidence interpretation", err);
         if (isMounted) {
           if (evidenceFacts) {
             setBrief(generateLocalGroundedExplanation(fileId, evidenceFacts));
           } else {
             setBrief({
-              summary: "AI interpretation could not be generated.",
+              summary: "Forensic interpretation could not be generated.",
               details: ["Deterministic recovery results remain available."],
               available: false,
               assessment:
-                "Deterministic recovery results remain available. AI interpretation could not be generated.",
+                "Deterministic recovery results remain available. Forensic interpretation could not be generated.",
               priority: "MEDIUM",
-              why_it_matters: "Backend AI service is unavailable or returned an error.",
+              why_it_matters: "Backend interpretation service is unavailable or returned an error.",
               recovery_limitation:
-                "AI interpretation could not be retrieved. Deterministic evidence is unaffected.",
+                "Forensic interpretation could not be retrieved. Deterministic evidence is unaffected.",
               recommended_next_step:
                 "Rely on deterministic findings and verify evidence byte offsets manually.",
               cached: false,
@@ -85,7 +85,7 @@ export function AIEvidenceAnalyst({
       const fresh = await fetchInvestigationExplanation(fileId, evidenceFacts, true);
       setBrief(fresh);
     } catch (err) {
-      console.warn("Failed to refresh AI analysis", err);
+      console.warn("Failed to refresh forensic evidence interpretation", err);
     } finally {
       setLoading(false);
     }
@@ -123,7 +123,7 @@ export function AIEvidenceAnalyst({
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-bold uppercase tracking-wider text-slate-900">
-                AI Evidence Analyst
+                Forensic Evidence Analyst
               </h3>
             </div>
           </div>
@@ -133,7 +133,7 @@ export function AIEvidenceAnalyst({
             </span>
             <span className="hidden sm:inline text-slate-300">•</span>
             <span className="text-slate-500">
-              AI cannot modify recovered evidence.
+              Interpretation cannot modify recovered evidence.
             </span>
           </div>
         </div>
@@ -162,7 +162,7 @@ export function AIEvidenceAnalyst({
             onClick={handleRefresh}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs rounded-lg transition-colors font-semibold shadow-2xs disabled:opacity-50"
-            title="Re-query AI evidence analysis"
+            title="Re-query forensic evidence interpretation"
           >
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin text-emerald-600" : ""}`} />
             <span>{loading ? "Analyzing..." : "Refresh"}</span>
@@ -185,10 +185,10 @@ export function AIEvidenceAnalyst({
         <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-5 sm:p-6 space-y-3 text-xs">
           <div className="flex items-center gap-2 text-amber-900 font-bold uppercase tracking-wider text-xs">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>AI EVIDENCE ANALYST · STATUS: UNAVAILABLE</span>
+            <span>FORENSIC EVIDENCE ANALYST · STATUS: UNAVAILABLE</span>
           </div>
           <p className="text-slate-800 font-sans leading-relaxed text-sm">
-            Deterministic recovery results remain available. AI interpretation could not be generated.
+            Deterministic recovery results remain available. Forensic interpretation could not be generated.
           </p>
           <div className="pt-2 text-[11px] text-slate-600 border-t border-amber-200/60 flex items-center gap-2">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />

@@ -8,7 +8,7 @@ import { PriorityBadge, StatusBadge } from "@/components/dashboard/PriorityBadge
 import { ConfidenceBreakdown } from "@/components/artifact/ConfidenceBreakdown";
 import { ProvenanceBar } from "@/components/artifact/ProvenanceBar";
 import { ValidationResults } from "@/components/artifact/ValidationResults";
-import { AIEvidenceBrief } from "@/components/artifact/AIEvidenceBrief";
+import { ForensicEvidenceBrief } from "@/components/artifact/ForensicEvidenceBrief";
 import { Artifact } from "@/lib/types";
 
 export default function ArtifactPage({ params }: { params: Promise<{ id: string }> }) {
@@ -104,8 +104,8 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
             <ValidationResults artifact={artifact} />
           </div>
           <div className="space-y-8">
-            {/* AI Interpretation */}
-            <AIEvidenceBrief artifact={artifact} />
+            {/* Forensic Interpretation */}
+            <ForensicEvidenceBrief artifact={artifact} />
             
             {/* Recovered Byte Preview */}
             <div className="bg-white border border-slate-200/90 rounded-xl p-6 shadow-xs">

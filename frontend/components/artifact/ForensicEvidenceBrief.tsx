@@ -17,7 +17,7 @@ import {
   Loader2,
 } from "lucide-react";
 
-interface AIEvidenceBriefProps {
+interface ForensicEvidenceBriefProps {
   artifact?: Artifact;
   artifactId?: string;
   initialBrief?: unknown;
@@ -41,7 +41,7 @@ function formatGeneratedTime(isoString: string): string {
   }
 }
 
-export function AIEvidenceBrief({ artifact, artifactId }: AIEvidenceBriefProps) {
+export function ForensicEvidenceBrief({ artifact, artifactId }: ForensicEvidenceBriefProps) {
   const targetId = artifactId || artifact?.id;
 
   const [interpretation, setInterpretation] = useState<GroundedArtifactInterpretation | null>(null);
@@ -125,7 +125,7 @@ export function AIEvidenceBrief({ artifact, artifactId }: AIEvidenceBriefProps) 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <BrainCircuit className="w-6 h-6 text-emerald-600 animate-pulse" />
-            <h2 className="text-xl font-bold text-slate-900">AI Interpretation</h2>
+            <h2 className="text-xl font-bold text-slate-900">Forensic Interpretation</h2>
           </div>
         </div>
         <div className="space-y-3 py-6">
@@ -150,7 +150,7 @@ export function AIEvidenceBrief({ artifact, artifactId }: AIEvidenceBriefProps) 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <BrainCircuit className="w-6 h-6 text-rose-600" />
-            <h2 className="text-xl font-bold text-slate-900">AI Interpretation</h2>
+            <h2 className="text-xl font-bold text-slate-900">Forensic Interpretation</h2>
           </div>
         </div>
         <div className="bg-rose-50 border border-rose-200 rounded-lg p-4 text-xs text-rose-800 space-y-2">
@@ -178,7 +178,7 @@ export function AIEvidenceBrief({ artifact, artifactId }: AIEvidenceBriefProps) 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <BrainCircuit className="w-6 h-6 text-slate-400" />
-            <h2 className="text-xl font-bold text-slate-900">AI Interpretation</h2>
+            <h2 className="text-xl font-bold text-slate-900">Forensic Interpretation</h2>
           </div>
         </div>
 
@@ -236,7 +236,7 @@ export function AIEvidenceBrief({ artifact, artifactId }: AIEvidenceBriefProps) 
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <BrainCircuit className="w-6 h-6 text-emerald-600" />
-          <h2 className="text-xl font-bold text-slate-900">AI Interpretation</h2>
+          <h2 className="text-xl font-bold text-slate-900">Forensic Interpretation</h2>
         </div>
         <button
           type="button"

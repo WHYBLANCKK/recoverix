@@ -20,7 +20,7 @@ import { API_BASE, fetchRecoveredFile, fetchRecoveryRun } from "@/lib/api";
 import { SingleFileRecoveryResult, InvestigationContext } from "@/lib/types";
 import { FragmentGraph } from "@/components/investigation/FragmentGraph";
 import { ByteEvidenceMap } from "@/components/investigation/ByteEvidenceMap";
-import { AIEvidenceAnalyst } from "@/components/investigation/AIEvidenceAnalyst";
+import { ForensicAnalystCard } from "@/components/investigation/ForensicAnalystCard";
 import { ClusterInterpretationCard } from "@/components/investigation/ClusterInterpretationCard";
 
 export default function InvestigationPage({
@@ -276,7 +276,7 @@ export default function InvestigationPage({
               { id: "map", label: "Evidence Map" },
               { id: "preview", label: "Recovery" },
               { id: "provenance", label: "Provenance" },
-              { id: "analyst", label: "AI Analyst" },
+              { id: "analyst", label: "Forensic Analyst" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -308,7 +308,7 @@ export default function InvestigationPage({
               {/* Large Status */}
               <div>
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold block mb-1">
-                  FORENSIC ADMISSIBILITY CLASSIFICATION
+                  RECOVERY STATUS CLASSIFICATION
                 </span>
                 <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
                   <span
@@ -463,7 +463,7 @@ export default function InvestigationPage({
               <strong>{result.missing_bytes.toLocaleString()} bytes</strong> could not be deterministically established and were preserved as missing.
             </p>
             <p className="text-xs text-slate-600 font-sans leading-relaxed">
-              In digital forensics, unobserved bytes remain strictly classified as missing evidence to maintain strict chain of custody and legal admissibility. Recoverix guarantees that missing regions are never backfilled with hallucinated or synthetic filler.
+              Unobserved bytes remain strictly classified as missing evidence to maintain byte-accurate auditability. Recoverix guarantees that missing regions are never backfilled with guessed or synthetic filler.
             </p>
           </section>
         )}
@@ -620,7 +620,7 @@ export default function InvestigationPage({
                 <span>Evidence Provenance</span>
               </h3>
               <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-semibold">
-                CHAIN OF CUSTODY
+                BYTE PROVENANCE
               </span>
             </div>
 
@@ -682,7 +682,7 @@ export default function InvestigationPage({
                 Evidence file <strong className="text-slate-900 font-mono">{result.original_filename}</strong> was evaluated across format-specific structural parsers. Header signature validated. Structural validation executed via <code className="text-sky-700 font-mono font-semibold">{result.reconstruction_method}</code> returning <span className="text-emerald-700 font-bold">{result.validation_status}</span>.
               </p>
               <div className="text-[11px] text-slate-500 pt-1">
-                Zero heuristic AI predictions were used to generate or alter raw evidence byte offsets.
+                Zero synthetic predictions were used to generate or alter raw evidence byte offsets.
               </div>
             </div>
 
@@ -738,9 +738,9 @@ export default function InvestigationPage({
         </section>
 
         {/* ========================================================================= */}
-        {/* SECTION 8 — AI EVIDENCE ANALYST (ASSISTANT & INTERPRETATION LAYER) */}
+        {/* SECTION 8 — FORENSIC EVIDENCE ANALYST (INTERPRETATION LAYER) */}
         {/* ========================================================================= */}
-        <AIEvidenceAnalyst fileId={fileId} evidenceFacts={result} />
+        <ForensicAnalystCard fileId={fileId} evidenceFacts={result} />
 
         {/* Bottom Investigation Footer */}
         <div className="text-center pt-4 pb-12">

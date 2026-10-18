@@ -434,7 +434,7 @@ export default function EvidenceUpload() {
                     {singleResult.missing_bytes.toLocaleString()} bytes could not be deterministically established from the supplied evidence buffer.
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    <strong>Forensic Standard:</strong> Recoverix does NOT invent unobserved data to fill missing gaps. In digital forensics, unobserved bytes remain strictly classified as missing evidence to maintain chain of custody and legal admissibility.
+                    <strong>Integrity Standard:</strong> Recoverix does NOT invent unobserved data to fill missing gaps. Unobserved bytes remain strictly classified as missing evidence to maintain byte-accurate auditability.
                   </p>
                 </div>
               </div>

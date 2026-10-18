@@ -122,3 +122,94 @@ def test_consumer_web_nonexistent_file_metadata_and_download_404():
 
     dl_res = client.get("/api/recover-file/rec_file_nonexistent_12345/download")
     assert dl_res.status_code == 404
+    assert "not found or unrecoverable" in dl_res.json()["detail"]
+
+
+def test_consumer_web_purged_file_download_returns_clear_404():
+    """Verify that when a recovered file has expired or was purged, download fails with clear 404 detail."""
+    payload = b'{"case_id":"CASE-77","target":"purge_test"}'
+    res = client.post(
+        "/api/recover-file",
+        files={"file": ("purge_test.json", payload, "application/json")},
+    )
+    assert res.status_code == 200
+    file_id = res.json()["file_id"]
+
+    # Verify download succeeds initially
+    dl1 = client.get(f"/api/recover-file/{file_id}/download")
+    assert dl1.status_code == 200
+
+    # Purge file from store (simulating 24h TTL expiration)
+    store.clear()
+
+    # Verify subsequent download fails with honest 404 detail
+    dl2 = client.get(f"/api/recover-file/{file_id}/download")
+    assert dl2.status_code == 404
+    assert "not found or unrecoverable" in dl2.json()["detail"]
+
+
+def test_consumer_web_alias_endpoints_match():
+    """Verify that alias endpoints /api/recover/file and /api/recover/file/{id}/download function identically."""
+    payload = b"id,name,role\n1,Alice,Lead\n2,Bob,Analyst\n"
+    res = client.post(
+        "/api/recover/file",
+        files={"file": ("alias_test.csv", payload, "text/csv")},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    file_id = data["file_id"]
+    assert data["format"] == "csv"
+    assert data["status"] == "FULLY_RECOVERED"
+
+    # Download via alias path
+    dl_alias = client.get(f"/api/recover/file/{file_id}/download")
+    assert dl_alias.status_code == 200
+    assert dl_alias.content == payload
+    assert "text/csv" in dl_alias.headers["content-type"]
+
+
+def test_consumer_web_all_8_formats_single_file_recovery_matrix():
+    """Verify single-file consumer workflow for all 8 supported evidence formats."""
+    from tests.test_independent_parsers_8_formats import _make_minimal_png
+    from tests.test_pdf_recovery import build_minimal_pdf
+    valid_png = _make_minimal_png(width=8, height=8, include_iend=True)
+    valid_pdf = build_minimal_pdf()
+
+    test_cases = [
+        ("evidence.txt", b"Incident report log text.\n", "txt", "text/plain"),
+        ("config.json", b'{"service":"proxy","port":8080}', "json", "application/json"),
+        ("metrics.csv", b"timestamp,cpu,mem\n1000,12.5,45.2\n", "csv", "text/csv"),
+        ("report.xml", b'<?xml version="1.0"?><note><to>IR</to></note>', "xml", "application/xml"),
+        ("photo.png", valid_png, "png", "image/png"),
+        ("photo.jpg", b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.' \",#\x1c\x1c(7),01444\x1f'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9", "jpeg", "image/jpeg"),
+        ("document.pdf", valid_pdf, "pdf", "application/pdf"),
+        ("archive.zip", b"PK\x03\x04\x14\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00testPK\x01\x02\x14\x00\x14\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00testPK\x05\x06\x00\x00\x00\x00\x01\x00\x01\x002\x00\x00\x00\x1e\x00\x00\x00\x00\x00", "zip", "application/zip"),
+    ]
+
+    for fname, content, expected_fmt, mime in test_cases:
+        res = client.post(
+            "/api/recover-file",
+            files={"file": (fname, content, mime)},
+        )
+        assert res.status_code == 200, f"Failed recovery for {fname}: {res.text}"
+        data = res.json()
+        assert data["format"] == expected_fmt
+        assert data["is_downloadable"] is True, f"Format {fname} ({expected_fmt}) was not downloadable. Details: {data}"
+        assert data["verified_bytes"] > 0
+        assert data["status"] in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED")
+
+        # Verify download
+        dl = client.get(data["download_url"])
+        assert dl.status_code == 200
+        assert len(dl.content) > 0
+        assert mime in dl.headers["content-type"]
+
+
+def test_consumer_web_download_endpoint_path_traversal_protection():
+    """Verify backend rejects traversal attempts on download endpoints with 404."""
+    res1 = client.get("/api/recover-file/..%2f..%2fetc%2fpasswd/download")
+    assert res1.status_code in (404, 422)
+
+    res2 = client.get("/api/recover-file/rec_file_invalid_99999/download")
+    assert res2.status_code == 404
+    assert "not found or unrecoverable" in res2.json()["detail"]

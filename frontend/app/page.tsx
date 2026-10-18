@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, ChangeEvent, DragEvent } from "react";
+import { useState, useRef, useEffect, ChangeEvent, DragEvent } from "react";
 import Link from "next/link";
 import {
   Shield,
@@ -30,12 +30,11 @@ import { recoverSingleFile } from "@/lib/api";
 import { SingleFileRecoveryResult } from "@/lib/types";
 
 const RECOVERY_STAGES = [
-  "Reading byte buffer & calculating SHA-256",
-  "Scanning format magic signatures & boundaries",
-  "Executing deterministic container reconstruction",
-  "Validating structural integrity & RFC compliance",
+  "Reading local byte buffer & calculating SHA-256",
+  "Transmitting evidence payload to recovery engine",
+  "Recovery engine processing & mathematical verification",
   "Auditing verified, reconstructed & missing byte invariants",
-  "Finalizing court-ready recovery package",
+  "Finalizing verified recovery package",
 ];
 
 // Presets for instant 1-click live browser evaluation
@@ -61,27 +60,54 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentStageIdx, setCurrentStageIdx] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [result, setResult] = useState<SingleFileRecoveryResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedPreview, setCopiedPreview] = useState(false);
   const [showScoreDetails, setShowScoreDetails] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isAnalyzingRef = useRef(false);
+  const isDownloadingRef = useRef(false);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const stageIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
+    };
+  }, []);
 
   const executeRecovery = async (evidenceFile: File) => {
+    if (isAnalyzingRef.current) return;
+    isAnalyzingRef.current = true;
+
     setFile(evidenceFile);
     setIsAnalyzing(true);
     setCurrentStageIdx(0);
+    setElapsedSeconds(0);
     setErrorMessage(null);
+    setDownloadError(null);
     setResult(null);
 
-    const stageInterval = setInterval(() => {
-      setCurrentStageIdx((prev) => (prev < RECOVERY_STAGES.length - 1 ? prev + 1 : prev));
-    }, 400);
+    const startTime = Date.now();
+    timerIntervalRef.current = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setElapsedSeconds(elapsed);
+    }, 1000);
+
+    // Realistic progression through transmission and engine verification
+    stageIntervalRef.current = setInterval(() => {
+      setCurrentStageIdx((prev) => (prev < RECOVERY_STAGES.length - 2 ? prev + 1 : prev));
+    }, 1500);
 
     try {
       const res = await recoverSingleFile(evidenceFile);
-      clearInterval(stageInterval);
+      if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       setCurrentStageIdx(RECOVERY_STAGES.length - 1);
       setResult(res);
 
@@ -89,11 +115,53 @@ export default function Home() {
         localStorage.setItem(`recoverix_result_${res.file_id}`, JSON.stringify(res));
       }
     } catch (err: any) {
-      clearInterval(stageInterval);
+      if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       console.error("Recovery error:", err);
       setErrorMessage(err.message || "Forensic analysis failed to recover file.");
     } finally {
       setIsAnalyzing(false);
+      isAnalyzingRef.current = false;
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!result || !result.is_downloadable || !result.download_url) return;
+    if (isDownloadingRef.current) return;
+    isDownloadingRef.current = true;
+    setIsDownloading(true);
+    setDownloadError(null);
+
+    try {
+      const res = await fetch(result.download_url);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error(
+            "This recovered file has expired or was removed from server memory (24-hour retention limit). Please upload your file again to generate a fresh recovery package."
+          );
+        }
+        throw new Error(`Download failed with server status HTTP ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const tempLink = document.createElement("a");
+      tempLink.href = objectUrl;
+      tempLink.download = result.recovered_filename || "recovered_file.bin";
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+        if (tempLink.parentNode) {
+          tempLink.parentNode.removeChild(tempLink);
+        }
+      }, 1000);
+    } catch (err: any) {
+      console.error("Download error:", err);
+      setDownloadError(err.message || "Failed to download recovered file.");
+    } finally {
+      setIsDownloading(false);
+      isDownloadingRef.current = false;
     }
   };
 
@@ -141,10 +209,15 @@ export default function Home() {
   };
 
   const handleReset = () => {
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
     setFile(null);
     setResult(null);
     setErrorMessage(null);
+    setDownloadError(null);
     setIsAnalyzing(false);
+    isAnalyzingRef.current = false;
+    setElapsedSeconds(0);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -265,6 +338,13 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => loadTextPreset("contacts_ragged.csv", FIXTURE_CSV, "text/csv")}
+                    className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
+                  >
+                    Truncated CSV
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => loadTextPreset("incident_escalation.txt", FIXTURE_TXT, "text/plain")}
                     className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
                   >
@@ -290,23 +370,34 @@ export default function Home() {
 
             {/* Error Message */}
             {errorMessage && (
-              <div className="mt-4 bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl flex items-start justify-between gap-3 font-mono text-xs">
+              <div className="mt-4 bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono text-xs">
                 <div className="flex items-start gap-3">
                   <AlertCircle className="w-5 h-5 shrink-0 text-rose-600 mt-0.5" />
-                  <div>
+                  <div className="space-y-0.5">
                     <strong className="block font-bold uppercase tracking-wider text-rose-700">
-                      Recovery Error
+                      Recovery Did Not Complete
                     </strong>
-                    <span>{errorMessage}</span>
+                    <span className="font-sans text-rose-700 leading-relaxed block">{errorMessage}</span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleReset}
-                  className="px-3 py-1 bg-white border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-100 transition-colors shrink-0"
-                >
-                  Try Again
-                </button>
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                  {file && (
+                    <button
+                      type="button"
+                      onClick={() => executeRecovery(file)}
+                      className="px-3 py-1.5 bg-rose-600 text-white font-bold rounded-lg hover:bg-rose-700 transition-colors"
+                    >
+                      Try Again
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="px-3 py-1.5 bg-white border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-100 transition-colors"
+                  >
+                    Choose New File
+                  </button>
+                </div>
               </div>
             )}
 
@@ -337,6 +428,28 @@ export default function Home() {
                     }}
                   />
                 </div>
+
+                {/* Live Elapsed & Timeout Guard Info */}
+                <div className="text-[11px] text-slate-400 font-mono flex items-center justify-center gap-3">
+                  <span>Elapsed: {elapsedSeconds}s</span>
+                  <span>·</span>
+                  <span>Timeout Guard: 75s</span>
+                </div>
+
+                {/* Render Cold-Start Alert when elapsed >= 6s */}
+                {elapsedSeconds >= 6 && (
+                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs text-left font-mono flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="font-bold text-amber-800 uppercase tracking-wide">
+                        Backend Spinning Up from Inactivity
+                      </div>
+                      <p className="text-[11px] text-amber-700 font-sans leading-relaxed">
+                        The Recoverix engine runs on Render free tier and goes idle after 15 minutes of inactivity. Waking up typically takes 20–35 seconds. Your file is actively being uploaded and analyzed.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -620,17 +733,40 @@ export default function Home() {
                     </div>
                   )}
 
+                  {/* Download Error Alert */}
+                  {downloadError && (
+                    <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-mono flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <strong className="block font-bold uppercase tracking-wider text-rose-700">
+                          Download Failed
+                        </strong>
+                        <span className="font-sans text-rose-700 leading-relaxed block">{downloadError}</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Primary Download Button */}
                   <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
                     {result.is_downloadable ? (
-                      <a
-                        href={result.download_url}
-                        download={result.recovered_filename}
-                        className="w-full sm:w-auto flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-bold text-sm px-6 py-4 rounded-xl shadow-md hover:shadow-emerald-500/20 transition-all flex items-center justify-center gap-2"
+                      <button
+                        type="button"
+                        onClick={handleDownload}
+                        disabled={isDownloading}
+                        className="w-full sm:w-auto flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-bold text-sm px-6 py-4 rounded-xl shadow-md hover:shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75 disabled:cursor-wait"
                       >
-                        <Download className="w-4 h-4" />
-                        <span>DOWNLOAD RECOVERED FILE ({result.recovered_filename})</span>
-                      </a>
+                        {isDownloading ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>PREPARING RECOVERED FILE...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4" />
+                            <span>DOWNLOAD RECOVERED FILE ({result.recovered_filename})</span>
+                          </>
+                        )}
+                      </button>
                     ) : (
                       <button
                         disabled
@@ -647,6 +783,12 @@ export default function Home() {
                     >
                       Deep Forensic Trace →
                     </Link>
+                  </div>
+
+                  {/* Retention & Ephemeral Purge Notice */}
+                  <div className="pt-2 flex items-center justify-center gap-2 text-[11px] font-mono text-slate-400 text-center">
+                    <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>Automatic 24h Purge · Ephemeral container storage (purged on restart) · No external data sharing</span>
                   </div>
                 </div>
               </div>
@@ -692,7 +834,7 @@ export default function Home() {
               <h4 className="text-lg font-bold text-slate-900 tracking-tight">PROVE</h4>
               <p className="text-xs text-slate-600 leading-relaxed font-sans">
                 Track verified, reconstructed, and missing bytes. Every single byte is audited under our strict V/R/M model,
-                preserving exact offsets and continuous chain of custody.
+                preserving exact byte offsets and provenance.
               </p>
             </div>
 

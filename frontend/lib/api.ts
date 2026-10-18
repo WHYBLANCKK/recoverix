@@ -10,12 +10,25 @@ import {
   GroundedCaseInterpretation,
 } from './types';
 
-export const API_BASE = (
-  process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://recoverix-backend-staging.onrender.com'
-    : 'http://127.0.0.1:8000')
-).replace(/\/+$/, '');
+export function getApiBase(): string {
+  // If explicitly forced via environment variable (e.g., custom external backend override)
+  if (process.env.NEXT_PUBLIC_FORCE_DIRECT_API === 'true' && process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+  // When running in the browser, always use the same-origin Next.js proxy rewrite to eliminate CORS and cross-origin blocking
+  if (typeof window !== 'undefined') {
+    return '/backend-api';
+  }
+  // Server-side context (Node.js SSR / static page pre-rendering / test runners)
+  return (
+    process.env.NEXT_PUBLIC_API_URL ||
+    (process.env.NODE_ENV === 'production'
+      ? 'https://recoverix-backend-staging.onrender.com'
+      : 'http://127.0.0.1:8000')
+  ).replace(/\/+$/, '');
+}
+
+export const API_BASE = getApiBase();
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
 // Cache for AI Explanations to prevent redundant calls and enable instant live demos
@@ -654,44 +667,194 @@ export async function fetchGroundTruth(caseId = 'case_001'): Promise<import('./t
   return mockGroundTruth;
 }
 
-export async function recoverSingleFile(file: File): Promise<SingleFileRecoveryResult> {
+/**
+ * Strict regex pattern matching legitimate Recoverix download endpoints:
+ * - /api/recover-file/{fileId}/download
+ * - /api/recover/file/{fileId}/download
+ * - /api/artifacts/{artifactId}/download
+ * Only allows safe characters in the ID: alphanumeric, underscores, hyphens, and dots.
+ * Strictly forbids path traversal (..), encoded characters (%..), query strings, and fragments.
+ */
+const VALID_DOWNLOAD_PATH_REGEX =
+  /^\/api\/(?:recover-file|recover\/file|artifacts)\/([a-zA-Z0-9_.-]+)\/download$/;
+
+/**
+ * Sanitize and normalize download URLs received from API responses.
+ * Guarantees that:
+ * 1. Protocol-relative (//, /\, \\) and untrusted third-party origins are strictly rejected.
+ * 2. Traversal segments (..), encoded characters (%..), query strings, and fragments are eliminated.
+ * 3. Relative paths are properly prefixed with getApiBase().
+ * 4. Duplicated /backend-api prefixes are cleanly stripped.
+ * 5. Falls back to canonical /api/recover-file/{fileId}/download.
+ */
+export function sanitizeDownloadUrl(rawUrl: string | undefined | null, fileId: string): string {
+  const base = getApiBase();
+  const safeFileId = encodeURIComponent(fileId);
+  const canonicalPath = `/api/recover-file/${safeFileId}/download`;
+
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return `${base}${canonicalPath}`;
+  }
+
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return `${base}${canonicalPath}`;
+  }
+
+  // Reject protocol-relative or backslash paths (//, /\, \\)
+  if (trimmed.startsWith('//') || trimmed.startsWith('/\\') || trimmed.startsWith('\\')) {
+    return `${base}${canonicalPath}`;
+  }
+
+  let pathname = '';
+
+  if (trimmed.startsWith('/')) {
+    // Relative path: extract pathname before query string or fragment
+    const queryIdx = trimmed.indexOf('?');
+    const hashIdx = trimmed.indexOf('#');
+    let endIdx = trimmed.length;
+    if (queryIdx !== -1) endIdx = Math.min(endIdx, queryIdx);
+    if (hashIdx !== -1) endIdx = Math.min(endIdx, hashIdx);
+
+    let clean = trimmed.slice(0, endIdx);
+    // Strip all repeated /backend-api prefixes
+    clean = clean.replace(/^(\/backend-api)+/, '');
+    pathname = clean.startsWith('/') ? clean : `/${clean}`;
+  } else {
+    // Absolute URL: parse and verify origin
+    try {
+      const parsed = new URL(trimmed);
+      // In the browser, only same-origin URLs are acceptable
+      if (typeof window !== 'undefined' && parsed.origin !== window.location.origin) {
+        return `${base}${canonicalPath}`;
+      }
+      let clean = parsed.pathname.replace(/^(\/backend-api)+/, '');
+      pathname = clean.startsWith('/') ? clean : `/${clean}`;
+    } catch {
+      return `${base}${canonicalPath}`;
+    }
+  }
+
+  // Strictly validate the resulting pathname against the whitelist regex
+  if (VALID_DOWNLOAD_PATH_REGEX.test(pathname)) {
+    return `${base}${pathname}`;
+  }
+
+  // Reject traversal, encoded characters, unrecognized endpoints, or mismatched formats
+  return `${base}${canonicalPath}`;
+}
+
+export async function recoverSingleFile(
+  file: File,
+  options?: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  }
+): Promise<SingleFileRecoveryResult> {
+  // 1. Guard against browser offline state
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Your browser is currently offline. Please check your internet connection and try again.');
+  }
+
+  const timeoutMs = options?.timeoutMs ?? 75000; // 75s generous timeout for Render free-tier cold-start + file analysis
+  const controller = new AbortController();
+  let isTimedOut = false;
+
+  const timeoutId = setTimeout(() => {
+    isTimedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  let abortHandler: (() => void) | null = null;
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timeoutId);
+      throw new Error('The recovery request was cancelled.');
+    }
+    abortHandler = () => controller.abort();
+    options.signal.addEventListener('abort', abortHandler, { once: true });
+  }
+
   try {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${API_BASE}/api/recover-file`, {
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recover-file`, {
       method: 'POST',
       body: formData,
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: controller.signal,
     });
+
     if (res.ok) {
       const data = await res.json();
-      // Ensure absolute download_url if needed
-      if (data.download_url && data.download_url.startsWith('/')) {
-        data.download_url = `${API_BASE}${data.download_url}`;
-      }
+      data.download_url = sanitizeDownloadUrl(data.download_url, data.file_id);
       return data;
     }
+
+    // Parse server error response
     const errData = await res.json().catch(() => ({}));
-    const message = typeof errData.detail === 'string' ? errData.detail : (errData.detail ? JSON.stringify(errData.detail) : `Server returned ${res.status}`);
+    const rawDetail = errData.detail || '';
+
+    if (res.status === 413 || rawDetail === 'FILE_TOO_LARGE') {
+      throw new Error(
+        'File exceeds the 5 MiB maximum upload limit. Please upload a file smaller than 5 MiB.'
+      );
+    }
+    if (res.status === 429 || rawDetail === 'RATE_LIMIT_EXCEEDED') {
+      const retryAfter = errData.retry_after ? ` (${errData.retry_after}s)` : '';
+      throw new Error(
+        `Rate limit reached (max 60 requests/minute). Please wait a moment${retryAfter} before submitting another file.`
+      );
+    }
+    if (res.status === 400 && rawDetail === 'EMPTY_FILE') {
+      throw new Error(
+        'The submitted file is completely empty (0 bytes). Recoverix requires at least 1 byte of evidence to analyze.'
+      );
+    }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(
+        'The recovery engine is currently waking from sleep (Render free-tier inactivity). Please wait 15–20 seconds and click Try Again.'
+      );
+    }
+
+    const message =
+      typeof rawDetail === 'string' && rawDetail.trim()
+        ? rawDetail
+        : (rawDetail ? JSON.stringify(rawDetail) : `Server returned HTTP ${res.status}`);
     throw new Error(message);
   } catch (e: any) {
+    if (e.name === 'AbortError') {
+      if (isTimedOut) {
+        throw new Error(
+          'The recovery request timed out after 75 seconds. The backend engine may still be processing your file or waking up from sleep. Please wait a moment and click Try Again.'
+        );
+      }
+      throw new Error('The recovery request was cancelled.');
+    }
     if (e.message && !e.message.startsWith('TypeError: Failed to fetch') && !e.message.includes('fetch failed')) {
       throw e;
     }
     throw new Error(
-      `Recovery backend unavailable at ${API_BASE}. No result is shown because verified, ` +
-      `reconstructed and missing byte counts must come from the live forensic engine.`
+      'Unable to connect to the Recoverix recovery engine. The service may be waking up from sleep or temporarily unreachable. Please wait a moment and try again.'
     );
+  } finally {
+    clearTimeout(timeoutId);
+    if (options?.signal && abortHandler) {
+      options.signal.removeEventListener('abort', abortHandler);
+    }
   }
 }
 
 export function getArtifactDownloadUrl(artifactId: string): string {
-  return `${API_BASE}/api/artifacts/${artifactId}/download`;
+  const base = getApiBase();
+  return `${base}/api/artifacts/${encodeURIComponent(artifactId)}/download`;
 }
 
 export async function fetchRecoveryRun(runId: string): Promise<any | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/recovery-runs/${runId}`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recovery-runs/${encodeURIComponent(runId)}`, { cache: 'no-store' });
     if (res.ok) return await res.json();
   } catch (e) {
     console.warn("Failed to fetch recovery run", e);
@@ -701,12 +864,11 @@ export async function fetchRecoveryRun(runId: string): Promise<any | null> {
 
 export async function fetchRecoveredFile(fileId: string): Promise<SingleFileRecoveryResult | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/recover-file/${fileId}`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recover-file/${encodeURIComponent(fileId)}`, { cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
-      if (data.download_url && data.download_url.startsWith('/')) {
-        data.download_url = `${API_BASE}${data.download_url}`;
-      }
+      data.download_url = sanitizeDownloadUrl(data.download_url, data.file_id);
       return data;
     }
   } catch (e) {
@@ -764,7 +926,7 @@ export function generateLocalGroundedExplanation(
   } else if (r_bytes > 0 && m_bytes === 0) {
     assessment = `This ${fmt} artifact is structurally repaired. ${v_bytes} bytes were mathematically verified from evidence and ${r_bytes} bytes were deterministically reconstructed via ${method}.`;
     why_it_matters = `All reconstructed bytes were derived from strict format specifications without heuristic speculation.`;
-    recovery_limitation = `Deterministic syntax repair only. Zero heuristic AI predictions or synthetic filler bytes were used.`;
+    recovery_limitation = `Deterministic syntax repair only. Zero heuristic predictions or synthetic filler bytes were used.`;
     recommended_next_step = `Inspect the reconstructed boundaries and verify schema conformity.`;
   } else if (r_bytes > 0 && m_bytes > 0) {
     assessment = `This artifact is partially recovered. ${v_bytes} bytes were mathematically verified from the uploaded evidence, ${r_bytes} bytes were structurally reconstructed via ${method}, and an unobserved ${m_bytes}-byte gap was preserved.`;
@@ -773,8 +935,8 @@ export function generateLocalGroundedExplanation(
     recommended_next_step = `Review original evidence source or examine adjacent storage clusters for matching fragments.`;
   } else if (status === "FULLY_RECOVERED" || (m_bytes === 0 && r_bytes === 0 && v_bytes > 0)) {
     assessment = `This artifact is fully recovered. All ${v_bytes} bytes were mathematically verified from the uploaded evidence with 0 missing and 0 reconstructed bytes.`;
-    why_it_matters = `The artifact adheres completely to the ${fmt} specification with authoritative validation. Evidence integrity is verified for judicial chain of custody.`;
-    recovery_limitation = `Exact deterministic recovery. Zero heuristic AI predictions or synthetic filler bytes were used.`;
+    why_it_matters = `The artifact adheres completely to the ${fmt} specification with authoritative validation. Evidence integrity is mathematically verified against the format specification.`;
+    recovery_limitation = `Exact deterministic recovery. Zero heuristic predictions or synthetic filler bytes were used.`;
     recommended_next_step = `Export the recovered file and log the deterministic validation digest into the investigation case file.`;
   } else {
     assessment = `This artifact is partially recovered. ${v_bytes} bytes were mathematically verified from the uploaded evidence, and an unobserved ${m_bytes}-byte region remains missing.`;
@@ -876,13 +1038,13 @@ export async function fetchInvestigationExplanation(
 
   // 4. Safe fallback only if no deterministic facts exist at all
   return {
-    summary: "AI interpretation could not be generated.",
+    summary: "Forensic interpretation could not be generated.",
     details: ["Deterministic recovery results remain available."],
     available: false,
-    assessment: "Deterministic recovery results remain available. AI interpretation could not be generated.",
+    assessment: "Deterministic recovery results remain available. Forensic interpretation could not be generated.",
     priority: "MEDIUM",
-    why_it_matters: "Backend AI service was unreachable or returned an error.",
-    recovery_limitation: "AI interpretation could not be retrieved. Deterministic evidence is unaffected.",
+    why_it_matters: "Backend interpretation service was unreachable or returned an error.",
+    recovery_limitation: "Forensic interpretation could not be retrieved. Deterministic evidence is unaffected.",
     recommended_next_step: "Rely on deterministic findings and verify evidence byte offsets manually.",
     cached: false
   };
