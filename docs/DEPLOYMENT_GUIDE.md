@@ -64,7 +64,7 @@ User Browser (Phone / Laptop)
 
 | Variable | Value | Purpose |
 | :--- | :--- | :--- |
-| `NEXT_PUBLIC_API_URL` | `https://<your-backend>.onrender.com` | Base URL for backend API requests |
+| `NEXT_PUBLIC_API_URL` | `https://recoverix-backend-staging.onrender.com` | Base URL for backend API requests |
 
 ---
 
@@ -73,10 +73,10 @@ User Browser (Phone / Laptop)
 ### Step 1: Deploy Backend to Render
 
 1. Log into [dashboard.render.com](https://dashboard.render.com/).
-2. Click **New +** → **Web Service**.
+2. Click **New +** → **Web Service** (or use the Blueprint in `render.yaml`).
 3. Connect your GitHub repository (`recoverix`) and select branch `recoverix/staging-candidate`.
 4. Configure the service:
-   - **Name**: `recoverix-backend`
+   - **Name**: `recoverix-backend-staging`
    - **Runtime**: `Docker`
    - **Dockerfile Path**: `Dockerfile.backend`
    - **Docker Context**: `.`
@@ -85,33 +85,34 @@ User Browser (Phone / Laptop)
    - `RECOVERIX_DB_PATH` = `/app/data/recoverix.db`
    - `RECOVERIX_TRUSTED_PROXIES` = `private`
    - `PYTHONUNBUFFERED` = `1`
-   - `RECOVERIX_CORS_ORIGINS` = `http://localhost:3000` *(You will update this with your Vercel URL in Step 3)*
+   - `RECOVERIX_CORS_ORIGINS` = `https://recoverix-staging.vercel.app,http://localhost:3000`
 6. Click **Create Web Service**.
 7. Wait ~2–3 minutes for the build to finish. Verify backend health:
    ```bash
-   curl https://<your-backend>.onrender.com/health
+   curl https://recoverix-backend-staging.onrender.com/health
    # Expected response: {"status":"ok","service":"recoverix-api"}
    ```
 
 ### Step 2: Deploy Frontend to Vercel
 
 1. Log into [vercel.com](https://vercel.com/).
-2. Click **Add New...** → **Project**.
+2. Click **Add New...** → **Project** (or open existing project `recoverix-staging`).
 3. Import your GitHub repository (`recoverix`) on branch `recoverix/staging-candidate`.
 4. Configure project settings:
    - **Framework Preset**: `Next.js`
    - **Root Directory**: `frontend`
+   - **Production Branch**: `recoverix/staging-candidate`
 5. In **Environment Variables**, add:
-   - `NEXT_PUBLIC_API_URL` = `https://<your-backend>.onrender.com`
-6. Click **Deploy**.
-7. Note the assigned frontend URL (e.g., `https://recoverix-staging.vercel.app`).
+   - `NEXT_PUBLIC_API_URL` = `https://recoverix-backend-staging.onrender.com`
+6. Click **Deploy** (or **Redeploy** existing deployment without build cache).
+7. Note the assigned frontend URL: `https://recoverix-staging.vercel.app`.
 
 ### Step 3: Link CORS on Backend
 
-1. Return to the Render dashboard for `recoverix-backend`.
+1. Return to the Render dashboard for `recoverix-backend-staging`.
 2. Go to **Environment** and update:
-   - `RECOVERIX_CORS_ORIGINS` = `https://<your-assigned-vercel-domain>`
-3. Click **Save Changes** (Render will automatically redeploy the backend with the new CORS origin).
+   - `RECOVERIX_CORS_ORIGINS` = `https://recoverix-staging.vercel.app`
+3. Click **Save Changes** (Render will automatically apply the new CORS origin).
 
 ---
 

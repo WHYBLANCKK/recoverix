@@ -16,7 +16,7 @@ import {
   FileCode,
   ExternalLink,
 } from "lucide-react";
-import { fetchRecoveredFile, fetchRecoveryRun } from "@/lib/api";
+import { API_BASE, fetchRecoveredFile, fetchRecoveryRun } from "@/lib/api";
 import { SingleFileRecoveryResult, InvestigationContext } from "@/lib/types";
 import { FragmentGraph } from "@/components/investigation/FragmentGraph";
 import { ByteEvidenceMap } from "@/components/investigation/ByteEvidenceMap";
@@ -117,7 +117,7 @@ export default function InvestigationPage({
               reconstruction_method: run.reconstruction_steps?.[0]?.method ?? "NONE",
               validation_status: run.validation?.valid ? "PASSED" : "FAILED",
               is_downloadable: Boolean(run.output?.recovered_bytes),
-              download_url: `/api/recover-file/${run.artifact_id || run.run_id}/download`,
+              download_url: `${API_BASE}/api/recover-file/${run.artifact_id || run.run_id}/download`,
               content_preview: preview,
               score_breakdown: run.confidence ?? {},
               validation_details: run.validation ?? {},

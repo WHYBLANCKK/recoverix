@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: recoverix-backend
+    name: recoverix-backend-staging
     runtime: docker
     dockerfilePath: Dockerfile.backend
     dockerContext: .

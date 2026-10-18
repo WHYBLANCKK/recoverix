@@ -551,7 +551,7 @@ To prevent clients from spoofing their IP address via forged `X-Forwarded-For` h
 | Component | Target Provider | Plan | Intended Domain | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **Frontend** | Vercel | Hobby ($0/month) | `https://recoverix-staging.vercel.app` | **Unverified / 404** (Pending Vercel production branch configuration) |
-| **Backend** | Render | Free Web Service ($0/month) | `https://recoverix-backend.onrender.com` | **Unverified / 404** (Pending Render web service provisioning) |
+| **Backend** | Render | Free Web Service ($0/month) | `https://recoverix-backend-staging.onrender.com` | **Live & Verified** (Health check OK; all 8 formats verified end-to-end) |
 | **Storage** | Render Container | Ephemeral SQLite ($0/month) | `/app/data/recoverix.db` | Ephemeral container storage with 24-hr TTL purge |
 
 ### Free-Tier Hosting Limitations & Operational Reality

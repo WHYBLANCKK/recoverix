@@ -10,7 +10,12 @@ import {
   GroundedCaseInterpretation,
 } from './types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+export const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://recoverix-backend-staging.onrender.com'
+    : 'http://127.0.0.1:8000')
+).replace(/\/+$/, '');
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
 // Cache for AI Explanations to prevent redundant calls and enable instant live demos
