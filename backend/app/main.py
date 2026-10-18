@@ -73,6 +73,7 @@ DEFAULT_ALLOWED_ORIGINS: list[str] = [
     "http://127.0.0.1:3000",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
+    "https://recoverix-staging.vercel.app",
 ]
 
 
