@@ -9,8 +9,9 @@ This guide details the procedure for deploying Recoverix to publicly accessible 
 ```
 User Browser (Phone / Laptop)
    ├── 1. Loads UI (0s cold start) ──> Vercel Hobby ($0) [Next.js Frontend]
-   └── 2. Upload / Recovery / DL ───> Render Free ($0) [FastAPI Docker Backend]
-                                          └── Ephemeral SQLite (/app/data/recoverix.db)
+   └── 2. Upload / Recovery / DL ───> Same-Origin /backend-api Proxy Rewrite
+                                          └── Render Free ($0) [FastAPI Docker Backend]
+                                                 └── Ephemeral SQLite (/app/data/recoverix.db)
 ```
 
 - **Frontend**: **Vercel Hobby Plan** ($0/month)
