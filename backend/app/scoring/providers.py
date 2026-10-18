@@ -1,8 +1,8 @@
 """
-providers.py — Interpretation Providers for Grounded Forensic Evidence Analysis.
+providers.py — Interpretation Providers for Grounded Evidence Analysis.
 
-Milestone 3.5.1: Implements InterpretationProvider protocol, DeterministicRuleProvider,
-and GeminiInterpretationProvider with strict fact-ownership separation and safe fallbacks.
+Implements InterpretationProvider protocol and DeterministicRuleProvider with
+strict fact-ownership separation, offline execution, and zero AI dependencies.
 """
 
 from __future__ import annotations
@@ -97,10 +97,10 @@ class DeterministicRuleProvider:
             )
             structural_context = (
                 f"The artifact adheres completely to the {fmt.upper()} specification with authoritative validation. "
-                "Evidence integrity is verified for judicial chain of custody."
+                "Evidence integrity is mathematically verified against the format specification."
             )
             limitations = (
-                "Exact deterministic recovery. Zero heuristic AI predictions or synthetic filler bytes were used."
+                "Exact deterministic recovery. Zero heuristic predictions or synthetic filler bytes were used."
             )
             recommended_next_steps = (
                 "Export the recovered file and log the deterministic validation digest into the investigation case file."
@@ -196,7 +196,7 @@ class DeterministicRuleProvider:
                 f"{r_bytes} reconstructed bytes, {m_bytes} missing bytes."
             )
             structural_context = f"Deterministic forensic evaluation score: {score}/100."
-            limitations = "Zero heuristic AI predictions were used to generate evidence."
+            limitations = "Zero heuristic predictions or synthetic filler bytes were used to generate evidence."
             recommended_next_steps = "Perform manual forensic hex inspection on isolated anomaly regions."
 
         return ProviderInterpretationOutput(
@@ -439,7 +439,7 @@ class DeterministicRuleProvider:
             )
 
         recommended_next_steps = (
-            "Prioritize examination of CRITICAL and HIGH priority clusters, review coextensive and overlapping boundary conflicts, and export mathematically verified evidence digests for judicial reporting."
+            "Prioritize examination of CRITICAL and HIGH priority clusters, review coextensive and overlapping boundary conflicts, and export mathematically verified evidence digests for investigation reporting."
         )
 
         return ProviderInterpretationOutput(
@@ -449,176 +449,4 @@ class DeterministicRuleProvider:
             limitations=limitations,
             recommended_next_steps=recommended_next_steps,
             details=details,
-        )
-
-
-class GeminiInterpretationProvider:
-    """Optional external Gemini interpretation provider.
-
-    Executes strictly when RECOVERIX_OFFLINE != 1 and a valid Gemini API key is configured.
-    Enforces hard timeout, strict output JSON schema, and absolute exclusion of raw evidence bytes.
-    """
-
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-
-    def _call_gemini(
-        self, prompt: str, default_summary: str
-    ) -> ProviderInterpretationOutput:
-        # Precedence: OFFLINE MODE > API KEY
-        if os.getenv("RECOVERIX_OFFLINE", "0").lower() in ("1", "true", "yes"):
-            raise RuntimeError("Offline mode enabled (RECOVERIX_OFFLINE=1): external AI provider is blocked")
-
-        if not self.api_key:
-            raise RuntimeError("Gemini API key is not configured")
-
-        import httpx
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"response_mime_type": "application/json"},
-        }
-
-        with httpx.Client(timeout=3.5) as client:
-            resp = client.post(url, json=payload)
-            if resp.status_code != 200:
-                raise RuntimeError(f"Gemini API returned HTTP status {resp.status_code}: {resp.text}")
-
-            data = resp.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                raise ValueError("Gemini response contained no candidates")
-
-            text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            if not text:
-                raise ValueError("Gemini response candidate contained no text content")
-
-            parsed = json.loads(text)
-
-            summary = parsed.get("summary") or default_summary
-            assessment = parsed.get("assessment", "")
-            structural_context = parsed.get("structural_context") or parsed.get("why_it_matters", "")
-            limitations = parsed.get("limitations") or parsed.get("recovery_limitation", "")
-            recommended_next_steps = parsed.get("recommended_next_steps") or parsed.get("recommended_next_step", "")
-            details = parsed.get("details", [])
-            if not isinstance(details, list):
-                details = [str(details)]
-
-            if not assessment or not structural_context or not limitations or not recommended_next_steps:
-                raise ValueError(f"Gemini response missing required interpretive fields: {parsed.keys()}")
-
-            return ProviderInterpretationOutput(
-                summary=summary,
-                assessment=assessment,
-                structural_context=structural_context,
-                limitations=limitations,
-                recommended_next_steps=recommended_next_steps,
-                details=details,
-            )
-
-    def interpret_artifact(
-        self, context: ArtifactInterpretationContext
-    ) -> ProviderInterpretationOutput:
-        facts_dict = {
-            "artifact_id": context.facts.artifact_id,
-            "filename": context.facts.filename,
-            "format": context.facts.format,
-            "status": context.facts.status,
-            "category": context.facts.category,
-            "priority": context.facts.priority,
-            "confidence_score": context.facts.confidence_score,
-            "verified_bytes": context.facts.verified_bytes,
-            "reconstructed_bytes": context.facts.reconstructed_bytes,
-            "missing_bytes": context.facts.missing_bytes,
-            "reconstruction_method": context.facts.reconstruction_method,
-            "validation_status": context.facts.validation_status,
-            "damage_region_count": context.facts.damage_region_count,
-            "is_ambiguous": context.facts.is_ambiguous,
-            "content_preview": context.content_preview or "",
-        }
-
-        prompt = (
-            "You are the Recoverix AI Evidence Analyst, a digital forensics investigator assistant.\n"
-            "Interpret ONLY the following deterministic recovery facts established by the reconstruction engine.\n"
-            "CRITICAL FORENSIC RULES:\n"
-            "1. You MUST NOT invent bytes, modify bytes, or override V/R/M.\n"
-            "2. You MUST NOT alter or contradict status, confidence_score, or priority.\n"
-            "3. You MUST NOT make legal conclusions, determine criminal intent, or identify suspects.\n"
-            "4. You MUST acknowledge all corrupted, missing, or reconstructed regions explicitly.\n\n"
-            f"DETERMINISTIC FACTS:\n{json.dumps(facts_dict, indent=2)}\n\n"
-            "Return a JSON object with EXACTLY these string keys:\n"
-            '- "summary": Concise executive overview.\n'
-            '- "assessment": Factual summary of verified vs reconstructed vs missing bytes.\n'
-            '- "structural_context": Forensic importance of the surviving structural evidence and format markers.\n'
-            '- "limitations": Explicit explanation that Recoverix did not fabricate missing bytes.\n'
-            '- "recommended_next_steps": Concrete recommended next investigative step for examiners.\n'
-            '- "details": List of 3 to 5 concise analytical bullet statements.\n'
-        )
-
-        return self._call_gemini(
-            prompt,
-            default_summary=f"Grounded explanation for {context.facts.category} artifact.",
-        )
-
-    def interpret_cluster(
-        self, context: ClusterInterpretationContext
-    ) -> ProviderInterpretationOutput:
-        facts = context.facts
-        facts_dict = facts.model_dump()
-        u_bytes_str = f"{facts.unique_physical_bytes} bytes" if facts.unique_physical_bytes is not None else "unbounded"
-
-        prompt = (
-            "You are the Recoverix AI Evidence Analyst, a digital forensics investigator assistant.\n"
-            "Interpret ONLY the following deterministic spatial cluster facts established by the reconstruction and graph engines.\n"
-            "CRITICAL FORENSIC RULES:\n"
-            "1. You MUST NOT invent bytes, modify bytes, or override V/R/M.\n"
-            "2. You MUST NOT refer to candidate aggregate verified bytes as 'total bytes recovered' or 'physical disk recovery'.\n"
-            f"   The physical evidence footprint is {u_bytes_str}, whereas candidate evaluations total {facts.candidate_aggregate_verified_bytes} verified bytes across competing or nested format hypotheses.\n"
-            "3. In COEXTENSIVE clusters, you MUST NOT declare a single winning format or claim an alternative hypothesis is false. Compare competing format evidence neutrally.\n"
-            "4. You MUST NOT make legal conclusions, determine criminal intent, or identify suspects.\n"
-            "5. You MUST acknowledge all corrupted, missing, or reconstructed regions explicitly.\n\n"
-            f"DETERMINISTIC CLUSTER FACTS:\n{json.dumps(facts_dict, indent=2)}\n\n"
-            "Return a JSON object with EXACTLY these string keys:\n"
-            '- "summary": Concise executive overview.\n'
-            '- "assessment": Factual forensic analysis of surviving evidence vs conflicting hypotheses.\n'
-            '- "structural_context": Spatial relationships, format markers, container hierarchy, or boundary conflicts.\n'
-            '- "limitations": Explicit declaration of physical footprint vs candidate aggregate volumes and refusal to declare speculative winners.\n'
-            '- "recommended_next_steps": Concrete recommended next investigative step for examiners.\n'
-            '- "details": List of 3 to 5 concise analytical bullet statements.\n'
-        )
-
-        return self._call_gemini(
-            prompt,
-            default_summary=f"Grounded cluster synthesis for {facts.relationship_classification} component.",
-        )
-
-    def interpret_case(
-        self, context: CaseInterpretationContext
-    ) -> ProviderInterpretationOutput:
-        facts = context.facts
-        facts_dict = facts.model_dump()
-        cov_str = f"{facts.case_physical_coverage_bytes} bytes" if facts.case_physical_coverage_bytes is not None else "partial/unbounded"
-
-        prompt = (
-            "You are the Recoverix AI Evidence Analyst, a digital forensics investigator assistant.\n"
-            "Interpret ONLY the following deterministic case facts and provide an executive forensic briefing.\n"
-            "CRITICAL FORENSIC RULES:\n"
-            "1. You MUST NOT invent bytes, modify bytes, or override V/R/M.\n"
-            "2. You MUST NOT call candidate aggregate volume 'total recovered bytes'. Physical evidence coverage across scoped buffers is {cov_str}.\n"
-            "3. If candidate_cap_enforced is True, you MUST explicitly disclose that candidates were omitted due to budget limits.\n"
-            "4. You MUST NOT make legal conclusions, determine criminal intent, or identify suspects.\n\n"
-            f"DETERMINISTIC CASE FACTS:\n{json.dumps(facts_dict, indent=2)}\n\n"
-            "Return a JSON object with EXACTLY these string keys:\n"
-            '- "summary": Concise executive overview of the case recovery findings.\n'
-            '- "assessment": Holistic assessment of overall recovery health and evidence integrity.\n'
-            '- "structural_context": Graph topology, cluster distributions, and evidence buffer breakdown.\n'
-            '- "limitations": Explicit distinction between physical coverage and candidate volumes, including cap disclosures.\n'
-            '- "recommended_next_steps": Strategic next investigative steps for forensic examiners.\n'
-            '- "details": List of 3 to 5 concise analytical bullet statements.\n'
-        )
-
-        return self._call_gemini(
-            prompt,
-            default_summary=f"Executive forensic briefing for Case '{facts.case_id}'.",
         )

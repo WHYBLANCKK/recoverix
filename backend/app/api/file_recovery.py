@@ -285,7 +285,7 @@ def download_recovered_file(file_id: str) -> Response:
 @router.post("/recover-file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK, operation_id="explain_recovered_file")
 @router.post("/recover/file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK, operation_id="explain_recovered_file_alias")
 def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
-    """Generate or retrieve a cached grounded AI explanation for a single recovered file."""
+    """Generate or retrieve a cached grounded evidence interpretation for a single recovered file."""
     meta = store.get_recovered_file_metadata(file_id)
     if meta is not None:
         return explain_artifact(file_id, meta)

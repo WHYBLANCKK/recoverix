@@ -5,7 +5,7 @@ Covers:
 A. Status preservation (FULLY_RECOVERED, PARTIALLY_RECOVERED, CORRUPTED, UNRECOVERABLE)
 B. DeterministicRuleProvider logic across all recovery statuses
 C. Fact binding and immutability (V/R/M, status, confidence, priority preserved; provider overrides discarded)
-D. GeminiInterpretationProvider (mocked success, malformed JSON, timeout, HTTP error, offline precedence)
+D. Deterministic rules isolation & zero AI network invocation (offline enforcement, API key ignored)
 E. Privacy & preview boundaries (raw bytes excluded, preview bounded to 200 chars, control chars stripped)
 F. Persistence (stored in SQLite ai_summary, reloads, force_refresh, malformed cache resilience, zero DDL changes)
 G. Canonical pipeline (legacy explainer delegation, single interpretation pipeline)
@@ -32,7 +32,6 @@ from backend.app.models.interpretation import (
 )
 from backend.app.scoring.providers import (
     DeterministicRuleProvider,
-    GeminiInterpretationProvider,
 )
 from backend.app.scoring.interpretation_service import (
     InterpretationService,
@@ -454,7 +453,7 @@ def test_18_gemini_mocked_successful_response():
 
     with patch.dict(os.environ, {"GEMINI_API_KEY": "fake_key", "RECOVERIX_OFFLINE": "0"}), \
          patch("httpx.Client", return_value=mock_client):
-        provider = GeminiInterpretationProvider(api_key="fake_key")
+        service = InterpretationService()
         facts = DeterministicArtifactFacts(
             artifact_id="art_gem",
             filename="data.json",
@@ -469,104 +468,79 @@ def test_18_gemini_mocked_successful_response():
             validation_status="VALID",
         )
         context = ArtifactInterpretationContext(facts=facts)
-        out = provider.interpret_artifact(context)
-        assert out.summary == "Gemini forensic summary."
-        assert "Verified 500 bytes" in out.assessment
-
-
-def test_19_gemini_malformed_response_fallback():
-    """Verify fallback to DeterministicRuleProvider when Gemini returns malformed JSON."""
-    mock_resp_payload = {
-        "candidates": [
-            {
-                "content": {
-                    "parts": [
-                        {"text": "NOT_JSON_AT_ALL"}
-                    ]
-                }
-            }
-        ]
-    }
-
-    mock_client = MagicMock()
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = mock_resp_payload
-    mock_client.__enter__.return_value.post.return_value = mock_resp
-
-    with patch.dict(os.environ, {"GEMINI_API_KEY": "fake_key", "RECOVERIX_OFFLINE": "0"}), \
-         patch("httpx.Client", return_value=mock_client):
-        gemini = GeminiInterpretationProvider(api_key="fake_key")
-        service = InterpretationService(primary_provider=gemini)
-
-        raw = {
-            "artifact_id": "art_malformed",
-            "format": "json",
-            "status": "FULLY_RECOVERED",
-            "verified_bytes": 450,
-            "reconstructed_bytes": 0,
-            "missing_bytes": 0,
-            "confidence_score": 90.0,
-        }
-        interpretation = service.interpret_artifact("art_malformed", raw)
+        interpretation = service.interpret_artifact("art_gem", facts)
         assert interpretation.source == "DETERMINISTIC_RULES"
         assert "fully recovered" in interpretation.interpretation.assessment.lower()
+        mock_client.assert_not_called()
 
 
-def test_20_gemini_timeout_fallback():
-    """Verify fallback to DeterministicRuleProvider when Gemini times out (> 3.5s)."""
-    mock_client = MagicMock()
-    mock_client.__enter__.return_value.post.side_effect = TimeoutError("HTTP request timed out")
+def test_19_deterministic_rules_with_custom_provider_protocol():
+    """Verify InterpretationService accepts any conforming deterministic provider."""
+    mock_output = ProviderInterpretationOutput(
+        summary="Deterministic custom summary.",
+        assessment="Custom assessment without remote AI.",
+        structural_context="Local rule context.",
+        limitations="None.",
+        recommended_next_steps="Review.",
+        details=["Point 1"],
+    )
+    mock_provider = MagicMock()
+    mock_provider.interpret_artifact.return_value = mock_output
+    service = InterpretationService(provider=mock_provider)
 
-    with patch.dict(os.environ, {"GEMINI_API_KEY": "fake_key", "RECOVERIX_OFFLINE": "0"}), \
-         patch("httpx.Client", return_value=mock_client):
-        gemini = GeminiInterpretationProvider(api_key="fake_key")
-        service = InterpretationService(primary_provider=gemini)
-
-        raw = {
-            "artifact_id": "art_timeout",
-            "format": "xml",
-            "status": "PARTIALLY_RECOVERED",
-            "verified_bytes": 200,
-            "reconstructed_bytes": 10,
-            "missing_bytes": 0,
-            "confidence_score": 80.0,
-        }
-        interpretation = service.interpret_artifact("art_timeout", raw)
-        assert interpretation.source == "DETERMINISTIC_RULES"
-
-
-def test_21_gemini_http_error_fallback():
-    """Verify fallback to DeterministicRuleProvider on HTTP 500 error from Gemini API."""
-    mock_client = MagicMock()
-    mock_resp = MagicMock()
-    mock_resp.status_code = 500
-    mock_resp.text = "Internal Server Error"
-    mock_client.__enter__.return_value.post.return_value = mock_resp
-
-    with patch.dict(os.environ, {"GEMINI_API_KEY": "fake_key", "RECOVERIX_OFFLINE": "0"}), \
-         patch("httpx.Client", return_value=mock_client):
-        gemini = GeminiInterpretationProvider(api_key="fake_key")
-        service = InterpretationService(primary_provider=gemini)
-
-        raw = {
-            "artifact_id": "art_500",
-            "format": "txt",
-            "status": "CORRUPTED",
-            "verified_bytes": 150,
-            "reconstructed_bytes": 0,
-            "missing_bytes": 50,
-            "confidence_score": 35.0,
-        }
-        interpretation = service.interpret_artifact("art_500", raw)
-        assert interpretation.source == "DETERMINISTIC_RULES"
-        assert "data corruption is present" in interpretation.interpretation.assessment.lower()
+    raw = {
+        "artifact_id": "art_custom",
+        "format": "json",
+        "status": "FULLY_RECOVERED",
+        "verified_bytes": 450,
+        "reconstructed_bytes": 0,
+        "missing_bytes": 0,
+        "confidence_score": 90.0,
+    }
+    interpretation = service.interpret_artifact("art_custom", raw)
+    assert interpretation.source == "DETERMINISTIC_RULES"
+    assert interpretation.interpretation.summary == "Deterministic custom summary."
+    mock_provider.interpret_artifact.assert_called_once()
 
 
-def test_22_offline_mode_blocks_gemini():
-    """Verify RECOVERIX_OFFLINE=1 prevents any Gemini instantiation or execution."""
+def test_20_deterministic_recovery_has_no_network_timeout():
+    """Verify recovery interpretation operates in-memory with zero network timeout dependencies."""
+    service = InterpretationService()
+    raw = {
+        "artifact_id": "art_timeout",
+        "format": "xml",
+        "status": "PARTIALLY_RECOVERED",
+        "verified_bytes": 200,
+        "reconstructed_bytes": 10,
+        "missing_bytes": 0,
+        "confidence_score": 80.0,
+    }
+    interpretation = service.interpret_artifact("art_timeout", raw)
+    assert interpretation.source == "DETERMINISTIC_RULES"
+    assert "closing xml delimiters" in interpretation.interpretation.assessment.lower()
+
+
+def test_21_corrupted_artifacts_evaluated_deterministically_offline():
+    """Verify corrupted artifacts evaluate deterministically without external providers."""
+    service = InterpretationService()
+    raw = {
+        "artifact_id": "art_500",
+        "format": "txt",
+        "status": "CORRUPTED",
+        "verified_bytes": 150,
+        "reconstructed_bytes": 0,
+        "missing_bytes": 50,
+        "confidence_score": 35.0,
+    }
+    interpretation = service.interpret_artifact("art_500", raw)
+    assert interpretation.source == "DETERMINISTIC_RULES"
+    assert "data corruption is present" in interpretation.interpretation.assessment.lower()
+
+
+def test_22_offline_mode_always_deterministic():
+    """Verify RECOVERIX_OFFLINE=1 executes deterministic rules with zero remote dependencies."""
     with patch.dict(os.environ, {"RECOVERIX_OFFLINE": "1", "GEMINI_API_KEY": "some_key"}):
-        provider = GeminiInterpretationProvider(api_key="some_key")
+        service = InterpretationService()
         facts = DeterministicArtifactFacts(
             artifact_id="art_off",
             filename="data.txt",
@@ -580,13 +554,13 @@ def test_22_offline_mode_blocks_gemini():
             reconstruction_method="NONE",
             validation_status="VALID",
         )
-        context = ArtifactInterpretationContext(facts=facts)
-        with pytest.raises(RuntimeError, match="Offline mode enabled"):
-            provider.interpret_artifact(context)
+        interpretation = service.interpret_artifact("art_off", facts)
+        assert interpretation.source == "DETERMINISTIC_RULES"
+        assert "fully recovered" in interpretation.interpretation.assessment.lower()
 
 
 def test_23_offline_mode_wins_over_api_key():
-    """Verify precedence: OFFLINE MODE > API KEY in InterpretationService."""
+    """Verify that GEMINI_API_KEY is ignored and never causes external calls."""
     mock_client = MagicMock()
     with patch.dict(os.environ, {"RECOVERIX_OFFLINE": "1", "GEMINI_API_KEY": "valid_key"}), \
          patch("httpx.Client", return_value=mock_client):
