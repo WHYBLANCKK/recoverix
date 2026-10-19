@@ -8,7 +8,7 @@ or direct XML syntax, UTF-8 encoding, and ElementTree parsing rules.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from typing import Union, Any
+from typing import Union, Any, Optional
 
 from backend.app.models.validation import ValidationResult
 from backend.app.recovery.carver import RecoveredArtifact
@@ -16,6 +16,25 @@ from backend.app.recovery.signatures import (
     SYNTHETIC_START_MARKER,
     SYNTHETIC_END_MARKER,
 )
+
+
+def check_xml_security(data: bytes) -> Optional[str]:
+    """Check for unsafe XML constructs (XXE, Billion Laughs entity bombs).
+
+    Returns an error description if unsafe, or None if safe.
+    """
+    lower = data.lower()
+    if b"<!doctype" in lower and (b"system" in lower or b"public" in lower):
+        return "XML contains external entity reference (XXE vulnerability protection)"
+    if b"<!entity" in lower:
+        # Check for external entities (SYSTEM, PUBLIC)
+        if b"system" in lower or b"public" in lower:
+            return "XML contains external entity reference (XXE vulnerability protection)"
+        # Check for recursive entity expansion (Billion Laughs)
+        entity_count = lower.count(b"<!entity")
+        if entity_count > 3:
+            return "XML contains excessive entity declarations (Entity expansion protection)"
+    return None
 
 
 def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
@@ -26,10 +45,11 @@ def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
     Checks performed:
       1. input_type: input is bytes or RecoveredArtifact yielding bytes
       2. non_empty: input is non-empty
-      3. synthetic markers check (if present: start_marker_exists, end_marker_exists, marker_ordering)
-      4. utf8_decoding: payload can be safely decoded as UTF-8
-      5. xml_parsing: text parses successfully with ElementTree.fromstring
-      6. root_structure: checks root element tag, attribute count, and child count
+      3. security_audit: checks for XXE and recursive entity expansion
+      4. synthetic markers check (if present: start_marker_exists, end_marker_exists, marker_ordering)
+      5. utf8_decoding: payload can be safely decoded as UTF-8
+      6. xml_parsing: text parses successfully with ElementTree.fromstring
+      7. root_structure: checks root element tag, attribute count, and child count
 
     Args:
         data: Raw evidence bytes or RecoveredArtifact.
@@ -40,10 +60,12 @@ def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
     checks: list[str] = [
         "input_type",
         "non_empty",
+        "security_audit",
         "utf8_decoding",
         "xml_parsing",
         "root_structure",
     ]
+
     errors: list[str] = []
     warnings: list[str] = []
     details: dict[str, Any] = {}
@@ -121,7 +143,20 @@ def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
             details=details,
         )
 
-    # 5. XML parsing check
+    # 5. Security audit check
+    sec_err = check_xml_security(body_bytes)
+    if sec_err:
+        errors.append(f"Security: {sec_err}")
+        return ValidationResult(
+            valid=False,
+            format=fmt,
+            checks_performed=checks,
+            errors=errors,
+            warnings=warnings,
+            details=details,
+        )
+
+    # 6. XML parsing check
     try:
         root = ET.fromstring(stripped_text)
         details["root_tag"] = root.tag

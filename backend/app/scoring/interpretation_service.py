@@ -40,7 +40,6 @@ from backend.app.models.evidence_graph import (
 from backend.app.scoring.providers import (
     InterpretationProvider,
     DeterministicRuleProvider,
-    GeminiInterpretationProvider,
 )
 from backend.app.scoring.priority import determine_priority
 from backend.app.scoring.classifier import classify_artifact
@@ -192,12 +191,15 @@ class InterpretationService:
 
     def __init__(
         self,
-        primary_provider: Optional[InterpretationProvider] = None,
+        provider: Optional[InterpretationProvider] = None,
         fallback_provider: Optional[InterpretationProvider] = None,
         store: Any = None,
+        *,
+        primary_provider: Optional[InterpretationProvider] = None,
     ):
-        self._fallback_provider = fallback_provider or DeterministicRuleProvider()
-        self._primary_provider = primary_provider or self._resolve_default_primary()
+        self._provider = provider or primary_provider or fallback_provider or DeterministicRuleProvider()
+        self._fallback_provider = self._provider
+        self._primary_provider = self._provider
         self._store = store
         self._cluster_cache: OrderedDict[Tuple[str, str, str], GroundedClusterInterpretation] = OrderedDict()
         self._case_cache: OrderedDict[Tuple[str, str], GroundedCaseInterpretation] = OrderedDict()
@@ -219,15 +221,6 @@ class InterpretationService:
         self._case_cache.move_to_end(key)
         if len(self._case_cache) > self._max_case_cache_size:
             self._case_cache.popitem(last=False)
-
-    def _resolve_default_primary(self) -> InterpretationProvider:
-        """Resolve default primary provider based on offline mode and API key."""
-        # Precedence: OFFLINE MODE > API KEY
-        offline = os.getenv("RECOVERIX_OFFLINE", "0").lower() in ("1", "true", "yes")
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not offline and api_key:
-            return GeminiInterpretationProvider(api_key=api_key)
-        return self._fallback_provider
 
     @staticmethod
     def sanitize_preview(raw_preview: Optional[str]) -> Optional[str]:
@@ -475,20 +468,8 @@ class InterpretationService:
     def _invoke_with_fallback(
         self, context: ArtifactInterpretationContext
     ) -> Tuple[ProviderInterpretationOutput, str]:
-        """Invoke primary provider with silent deterministic fallback on failure."""
-        offline = os.getenv("RECOVERIX_OFFLINE", "0").lower() in ("1", "true", "yes")
-
-        if not offline and self._primary_provider is not self._fallback_provider:
-            try:
-                output = self._primary_provider.interpret_artifact(context)
-                return output, "GEMINI_1_5_FLASH"
-            except Exception as e:
-                logger.warning(
-                    f"Primary external AI provider call failed or timed out: {e}. "
-                    "Falling back seamlessly to DeterministicRuleProvider."
-                )
-
-        output = self._fallback_provider.interpret_artifact(context)
+        """Invoke deterministic provider."""
+        output = self._provider.interpret_artifact(context)
         return output, "DETERMINISTIC_RULES"
 
     def interpret_artifact(
@@ -778,39 +759,15 @@ class InterpretationService:
     def _invoke_cluster_with_fallback(
         self, context: ClusterInterpretationContext
     ) -> Tuple[ProviderInterpretationOutput, str]:
-        """Invoke primary provider for cluster with silent deterministic fallback on failure."""
-        offline = os.getenv("RECOVERIX_OFFLINE", "0").lower() in ("1", "true", "yes")
-
-        if not offline and self._primary_provider is not self._fallback_provider:
-            try:
-                output = self._primary_provider.interpret_cluster(context)
-                return output, "GEMINI_1_5_FLASH"
-            except Exception as e:
-                logger.warning(
-                    f"Primary external AI provider call for cluster failed or timed out: {e}. "
-                    "Falling back seamlessly to DeterministicRuleProvider."
-                )
-
-        output = self._fallback_provider.interpret_cluster(context)
+        """Invoke deterministic provider for cluster."""
+        output = self._provider.interpret_cluster(context)
         return output, "DETERMINISTIC_RULES"
 
     def _invoke_case_with_fallback(
         self, context: CaseInterpretationContext
     ) -> Tuple[ProviderInterpretationOutput, str]:
-        """Invoke primary provider for case with silent deterministic fallback on failure."""
-        offline = os.getenv("RECOVERIX_OFFLINE", "0").lower() in ("1", "true", "yes")
-
-        if not offline and self._primary_provider is not self._fallback_provider:
-            try:
-                output = self._primary_provider.interpret_case(context)
-                return output, "GEMINI_1_5_FLASH"
-            except Exception as e:
-                logger.warning(
-                    f"Primary external AI provider call for case failed or timed out: {e}. "
-                    "Falling back seamlessly to DeterministicRuleProvider."
-                )
-
-        output = self._fallback_provider.interpret_case(context)
+        """Invoke deterministic provider for case."""
+        output = self._provider.interpret_case(context)
         return output, "DETERMINISTIC_RULES"
 
     def interpret_cluster(

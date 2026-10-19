@@ -30,6 +30,8 @@ from backend.app.recovery.signatures import (
     PDF_HEADER_SIGNATURE,
     PDF_TRAILER_SIGNATURE,
     XML_HEADER_SIGNATURE,
+    ZIP_LOCAL_HEADER,
+    ZIP_EOCD_SIGNATURE,
 )
 
 
@@ -98,6 +100,8 @@ def assess_artifact_completeness(
             )
         if clean_fmt == "xml":
             return XML_HEADER_SIGNATURE in content or (content.strip().startswith(b"<") and content.strip().endswith(b">"))
+        if clean_fmt == "zip":
+            return content.startswith(ZIP_LOCAL_HEADER) and ZIP_EOCD_SIGNATURE in content
 
         return False
 
@@ -174,5 +178,8 @@ def assess_artifact_completeness(
     if clean_fmt == "xml":
         stripped = content.strip()
         return stripped.startswith(b"<") and stripped.endswith(b">")
+
+    if clean_fmt == "zip":
+        return content.startswith(ZIP_LOCAL_HEADER) and ZIP_EOCD_SIGNATURE in content
 
     return False

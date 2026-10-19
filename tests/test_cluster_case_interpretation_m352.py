@@ -45,8 +45,8 @@ from backend.app.scoring.interpretation_service import (
     compute_case_graph_fingerprint,
 )
 from backend.app.scoring.providers import (
+    InterpretationProvider,
     DeterministicRuleProvider,
-    GeminiInterpretationProvider,
 )
 
 
@@ -542,66 +542,59 @@ class TestCaseAccountingAndCaps:
 # ==============================================================================
 
 class TestOfflineModeAndFallback:
-    def test_offline_mode_blocks_gemini_call(self, monkeypatch):
+    def test_deterministic_cluster_interpretation_ignores_api_key(self, monkeypatch):
         monkeypatch.setenv("RECOVERIX_OFFLINE", "1")
         monkeypatch.setenv("GEMINI_API_KEY", "dummy_key")
 
-        provider = GeminiInterpretationProvider(api_key="dummy_key")
+        provider = DeterministicRuleProvider()
         run = make_run("run_off", evidence_start=0, evidence_end=100)
         graph = build_evidence_graph_from_runs([run], case_id="c_off")
         cluster = graph.clusters[0]
 
         facts = InterpretationService.extract_cluster_facts(cluster, graph, "c_off")
         ctx = ClusterInterpretationContext(facts=facts)
+        out = provider.interpret_cluster(ctx)
+        assert "Grounded cluster synthesis" in out.summary
 
-        with pytest.raises(RuntimeError, match="Offline mode enabled"):
-            provider.interpret_cluster(ctx)
-
-    def test_gemini_timeout_falls_back_to_deterministic_rules(self, monkeypatch):
-        monkeypatch.setenv("RECOVERIX_OFFLINE", "0")
+    def test_interpretation_service_deterministic_cluster_and_case(self, monkeypatch):
+        monkeypatch.setenv("RECOVERIX_OFFLINE", "1")
         monkeypatch.setenv("GEMINI_API_KEY", "dummy_key")
 
-        mock_gemini = MagicMock(spec=GeminiInterpretationProvider)
-        mock_gemini.interpret_cluster.side_effect = TimeoutError("Gemini timed out after 3.5s")
-        mock_gemini.interpret_case.side_effect = TimeoutError("Gemini timed out after 3.5s")
-
-        service = InterpretationService(primary_provider=mock_gemini, fallback_provider=DeterministicRuleProvider())
-
+        service = InterpretationService()
         run = make_run("run_fb", evidence_start=0, evidence_end=100)
         graph = build_evidence_graph_from_runs([run], case_id="c_fb")
         cluster = graph.clusters[0]
 
-        # Must fall back cleanly without raising exception
         cluster_interp = service.interpret_cluster("c_fb", cluster.cluster_id, graph=graph)
         assert cluster_interp.source == "DETERMINISTIC_RULES"
 
         case_interp = service.interpret_case("c_fb", graph=graph)
         assert case_interp.source == "DETERMINISTIC_RULES"
 
-    def test_gemini_success_mock(self, monkeypatch):
+    def test_custom_provider_protocol_mock(self, monkeypatch):
         monkeypatch.setenv("RECOVERIX_OFFLINE", "0")
         monkeypatch.setenv("GEMINI_API_KEY", "dummy_key")
 
-        mock_gemini = MagicMock(spec=GeminiInterpretationProvider)
+        mock_provider = MagicMock(spec=InterpretationProvider)
         mock_output = ProviderInterpretationOutput(
-            summary="Gemini synthesized cluster.",
+            summary="Custom synthesized cluster.",
             assessment="No corrupted regions found.",
             structural_context="Valid JSON container.",
             limitations="No speculative data.",
             recommended_next_steps="Export artifact.",
             details=["Point 1", "Point 2"],
         )
-        mock_gemini.interpret_cluster.return_value = mock_output
+        mock_provider.interpret_cluster.return_value = mock_output
 
-        service = InterpretationService(primary_provider=mock_gemini, fallback_provider=DeterministicRuleProvider())
+        service = InterpretationService(provider=mock_provider)
 
         run = make_run("run_gem", evidence_start=0, evidence_end=100)
         graph = build_evidence_graph_from_runs([run], case_id="c_gem")
         cluster = graph.clusters[0]
 
         cluster_interp = service.interpret_cluster("c_gem", cluster.cluster_id, graph=graph)
-        assert cluster_interp.source == "GEMINI_1_5_FLASH"
-        assert cluster_interp.interpretation.summary == "Gemini synthesized cluster."
+        assert cluster_interp.source == "DETERMINISTIC_RULES"
+        assert cluster_interp.interpretation.summary == "Custom synthesized cluster."
 
 
 # ==============================================================================
@@ -643,138 +636,50 @@ class TestModelImmutability:
 # 8. Additional Robustness & Edge Cases
 # ==============================================================================
 
-class TestGeminiProviderAndRobustness:
-    def test_gemini_cluster_prompt_negative_constraints_and_parsing(self, monkeypatch):
-        monkeypatch.setenv("RECOVERIX_OFFLINE", "0")
-        provider = GeminiInterpretationProvider(api_key="test_key_123")
+class TestDeterministicProviderAndRobustness:
+    def test_deterministic_cluster_synthesis_constraints(self, monkeypatch):
+        monkeypatch.setenv("RECOVERIX_OFFLINE", "1")
+        provider = DeterministicRuleProvider()
 
         run = make_run("run_1", evidence_start=1000, evidence_end=5000, verified_bytes=4000)
-        graph = build_evidence_graph_from_runs([run], case_id="c_gemini_prompt")
+        graph = build_evidence_graph_from_runs([run], case_id="c_cluster_facts")
         cluster = graph.clusters[0]
 
-        facts = InterpretationService.extract_cluster_facts(cluster, graph, "c_gemini_prompt")
+        facts = InterpretationService.extract_cluster_facts(cluster, graph, "c_cluster_facts")
         ctx = ClusterInterpretationContext(facts=facts)
+        out = provider.interpret_cluster(ctx)
 
-        captured_prompt: List[str] = []
+        assert "Grounded cluster synthesis" in out.summary
+        assert "Zero heuristic spatial assumptions" in out.limitations
 
-        class MockResp:
-            status_code = 200
-            def json(self):
-                return {
-                    "candidates": [{
-                        "content": {
-                            "parts": [{
-                                "text": '{"summary": "Cluster parsed.", "assessment": "No gaps.", "structural_context": "JSON valid.", "limitations": "None.", "recommended_next_steps": "Export.", "details": ["Point 1"]}'
-                            }]
-                        }
-                    }]
-                }
-
-        class MockClient:
-            def __init__(self, *args, **kwargs):
-                pass
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                pass
-            def post(self, url, json=None):
-                if json and "contents" in json:
-                    captured_prompt.append(json["contents"][0]["parts"][0]["text"])
-                return MockResp()
-
-        with patch("httpx.Client", MockClient):
-            out = provider.interpret_cluster(ctx)
-
-        assert out.summary == "Cluster parsed."
-        assert len(captured_prompt) == 1
-        prompt_text = captured_prompt[0]
-        # Assert negative constraints in prompt
-        assert "You MUST NOT invent bytes" in prompt_text
-        assert "You MUST NOT refer to candidate aggregate verified bytes as 'total bytes recovered'" in prompt_text
-        assert "In COEXTENSIVE clusters, you MUST NOT declare a single winning format" in prompt_text
-        assert "You MUST NOT make legal conclusions" in prompt_text
-
-    def test_gemini_case_prompt_negative_constraints_and_parsing(self, monkeypatch):
-        monkeypatch.setenv("RECOVERIX_OFFLINE", "0")
-        provider = GeminiInterpretationProvider(api_key="test_key_123")
+    def test_deterministic_case_synthesis_constraints(self, monkeypatch):
+        monkeypatch.setenv("RECOVERIX_OFFLINE", "1")
+        provider = DeterministicRuleProvider()
 
         run = make_run("run_1", evidence_start=0, evidence_end=1000, verified_bytes=1000)
-        graph = build_evidence_graph_from_runs([run], case_id="c_case_prompt")
+        graph = build_evidence_graph_from_runs([run], case_id="c_case_facts")
 
-        facts = InterpretationService.extract_case_facts(graph, "c_case_prompt")
+        facts = InterpretationService.extract_case_facts(graph, "c_case_facts")
         ctx = CaseInterpretationContext(facts=facts)
+        out = provider.interpret_case(ctx)
 
-        captured_prompt: List[str] = []
+        assert "Executive forensic briefing" in out.summary
+        assert "investigation reporting" in out.recommended_next_steps
 
-        class MockResp:
-            status_code = 200
-            def json(self):
-                return {
-                    "candidates": [{
-                        "content": {
-                            "parts": [{
-                                "text": '{"summary": "Case briefing.", "assessment": "Good health.", "structural_context": "1 buffer.", "limitations": "Physical coverage separate.", "recommended_next_steps": "Review.", "details": ["Briefing point 1"]}'
-                            }]
-                        }
-                    }]
-                }
-
-        class MockClient:
-            def __init__(self, *args, **kwargs):
-                pass
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                pass
-            def post(self, url, json=None):
-                if json and "contents" in json:
-                    captured_prompt.append(json["contents"][0]["parts"][0]["text"])
-                return MockResp()
-
-        with patch("httpx.Client", MockClient):
-            out = provider.interpret_case(ctx)
-
-        assert out.summary == "Case briefing."
-        assert len(captured_prompt) == 1
-        prompt_text = captured_prompt[0]
-        assert "You MUST NOT call candidate aggregate volume 'total recovered bytes'" in prompt_text
-        assert "You MUST NOT make legal conclusions" in prompt_text
-
-    def test_gemini_invalid_json_fallback_in_service(self, monkeypatch):
+    def test_deterministic_service_ignores_external_ai_env(self, monkeypatch):
         monkeypatch.setenv("RECOVERIX_OFFLINE", "0")
         monkeypatch.setenv("GEMINI_API_KEY", "test_key")
 
-        class BadJsonResp:
-            status_code = 200
-            def json(self):
-                return {
-                    "candidates": [{
-                        "content": {
-                            "parts": [{"text": "THIS IS NOT VALID JSON {{"}]
-                        }
-                    }]
-                }
+        mock_client = MagicMock()
+        with patch("httpx.Client", return_value=mock_client):
+            service = InterpretationService()
+            run = make_run("run_bad", evidence_start=0, evidence_end=100)
+            graph = build_evidence_graph_from_runs([run], case_id="c_bad_json")
+            cluster = graph.clusters[0]
 
-        class MockClient:
-            def __init__(self, *args, **kwargs):
-                pass
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                pass
-            def post(self, url, json=None):
-                return BadJsonResp()
-
-        run = make_run("run_bad", evidence_start=0, evidence_end=100)
-        graph = build_evidence_graph_from_runs([run], case_id="c_bad_json")
-        cluster = graph.clusters[0]
-
-        service = InterpretationService(fallback_provider=DeterministicRuleProvider())
-
-        with patch("httpx.Client", MockClient):
             interp = service.interpret_cluster("c_bad_json", cluster.cluster_id, graph=graph)
-
-        assert interp.source == "DETERMINISTIC_RULES"
+            assert interp.source == "DETERMINISTIC_RULES"
+            mock_client.assert_not_called()
 
     def test_empty_case_synthesis(self, monkeypatch):
         monkeypatch.setenv("RECOVERIX_OFFLINE", "1")

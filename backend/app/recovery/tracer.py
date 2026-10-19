@@ -426,9 +426,23 @@ def _recover_contiguous_candidate(
 
     carved_bytes: bytes = b""
     try:
-        carved: RecoveredArtifact = carve_candidate(content, cand)
-        carved_bytes = carved.recovered_bytes
-        if fmt in ("txt", "csv", "json"):
+        if cand.estimated_end_offset is not None:
+            carved: RecoveredArtifact = carve_candidate(content, cand)
+            carved_bytes = carved.recovered_bytes
+        else:
+            search_end = span.search_limit
+            carved_bytes = content[span.evidence_start:search_end]
+            carved = RecoveredArtifact(
+                candidate_id=cand.candidate_id,
+                format=cand.format,
+                mime_type=cand.mime_type,
+                category=cand.category,
+                source_offset=span.evidence_start,
+                recovered_bytes=carved_bytes,
+                recovered_byte_count=len(carved_bytes),
+                carving_method="SEARCH_WINDOW",
+            )
+        if fmt in ("txt", "csv", "json", "xml", "png", "jpeg", "jpg", "zip"):
             emit_event("RECONSTRUCTION_STARTED", f"Attempting deterministic {fmt.upper()} format reconstruction")
             recon_res = reconstruct_artifact(fmt, carved, detection_mode=detection_mode)
             emit_event(
@@ -1148,11 +1162,11 @@ def _recover_standalone_candidate(
         relevant_fragment_ids=["frag-0"],
     )
 
-    if fmt in ("txt", "json"):
+    if fmt in ("txt", "csv", "json", "xml", "png", "jpeg", "jpg", "zip"):
         reconstruction_attempted = True
         raw_bytes = content[cand.offset:search_end]
         emit_event("RECONSTRUCTION_STARTED", f"Attempting deterministic {fmt.upper()} format reconstruction")
-        recon_res = reconstruct_artifact(fmt, raw_bytes)
+        recon_res = reconstruct_artifact(fmt, raw_bytes, detection_mode=detection_mode)
         emit_event(
             "RECONSTRUCTION_COMPLETED",
             f"{fmt.upper()} reconstruction completed with status '{recon_res.status}'",
@@ -1161,7 +1175,7 @@ def _recover_standalone_candidate(
         ver_bytes = span.bound_verified_bytes(recon_res.verified_bytes)
         rec_byte_cnt = recon_res.reconstructed_bytes
         miss_bytes = recon_res.missing_bytes
-        val_res = recon_res.validation_result or validator(raw_bytes)
+        val_res = recon_res.validation_result or validator(recon_res.recovered_bytes)
         val_status_str = "PASSED" if val_res.valid else "FAILED"
         val_details_dict = asdict(val_res)
         output_dict = {"recovered_bytes": recon_res.recovered_bytes.hex()}
@@ -1178,6 +1192,17 @@ def _recover_standalone_candidate(
         prov_dict["evidence_size"] = len(content)
         if "reconstruction_method" in (recon_res.details or {}):
             prov_dict["reconstruction_method"] = recon_res.details["reconstruction_method"]
+
+        is_complete = assess_artifact_completeness(
+            fmt=fmt,
+            content=recon_res.recovered_bytes,
+            detection_mode=detection_mode,
+            validation_result=val_res,
+            missing_bytes=miss_bytes,
+            reconstructed_bytes=rec_byte_cnt,
+        )
+        if (not is_complete or miss_bytes > 0 or rec_byte_cnt > 0) and status_val == "FULLY_RECOVERED":
+            status_val = "PARTIALLY_RECOVERED"
 
         for idx_m, m in enumerate(recon_res.reconstruction_methods):
             step = ReconstructionStep(
@@ -2160,6 +2185,166 @@ def _recover_direct_fallback(
                         affected_fragment_ids=["frag-0"],
                     )
                 )
+        elif target_fmt == "xml" or ext == "xml":
+            emit_event(
+                "RECONSTRUCTION_STARTED",
+                "Attempting deterministic XML structural reconstruction",
+            )
+            recon_res = reconstruct_artifact("xml", content, detection_mode=detection_mode)
+            emit_event(
+                "RECONSTRUCTION_COMPLETED",
+                f"XML reconstruction completed with status '{recon_res.status}'",
+            )
+            ver_bytes = recon_res.verified_bytes
+            rec_byte_cnt = recon_res.reconstructed_bytes
+            miss_bytes = recon_res.missing_bytes
+            total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+            out_bytes = recon_res.recovered_bytes
+            val_res = recon_res.validation_result or validate_artifact("xml", out_bytes)
+            val_status_str = "PASSED" if val_res.valid else "FAILED"
+            val_details_dict = asdict(val_res)
+            output_dict = {"recovered_bytes": out_bytes.hex()}
+
+            eval_res = evaluate_artifact_confidence(
+                validation_result=val_res,
+                artifact=out_bytes,
+                actual_verified_bytes=ver_bytes,
+                actual_reconstructed_bytes=rec_byte_cnt,
+                actual_missing_bytes=miss_bytes,
+            )
+            score_breakdown_dict = asdict(eval_res.score_breakdown)
+            prov_dict = asdict(eval_res.provenance)
+            prov_dict["evidence_size"] = len(content)
+            prov_dict["reconstruction_method"] = recon_res.details.get(
+                "reconstruction_method", "XML_STRUCTURAL_RECONSTRUCTION"
+            )
+            status_val = recon_res.status
+            fmt = "xml"
+
+            fragments.append(
+                Fragment(
+                    fragment_id="frag-0",
+                    offset=0,
+                    length=len(content),
+                    end_offset=len(content),
+                    status="VERIFIED" if status_val == "FULLY_RECOVERED" else ("PARTIAL" if recon_res.success else "UNRECOVERABLE"),
+                    source="direct_reconstruction",
+                    format=fmt,
+                    verified_bytes=ver_bytes,
+                    reconstructed_bytes=rec_byte_cnt,
+                    missing_bytes=miss_bytes,
+                    validation_status=val_status_str,
+                )
+            )
+            for idx_m, m in enumerate(recon_res.reconstruction_methods):
+                reconstruction_steps.append(
+                    ReconstructionStep(
+                        step_id=f"step-{idx_m}",
+                        method=m,
+                        input_fragment_ids=["frag-0"],
+                        gap_start=None,
+                        gap_end=None,
+                        gap_size=None,
+                        result="SUCCESS" if recon_res.success else "FAILED",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                        confidence=float(score_breakdown_dict.get("total", 0.0)),
+                    )
+                )
+            for idx_d, dmg in enumerate(recon_res.damage_regions):
+                damage_regions.append(
+                    DamageRegion(
+                        region_id=f"damage-{idx_d}",
+                        start_offset=dmg.get("offset", 0),
+                        end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
+                        length=dmg.get("length", 0),
+                        type=dmg.get("type", "CORRUPTED"),
+                        status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
+                        affected_fragment_ids=["frag-0"],
+                    )
+                )
+        elif target_fmt == "png" or ext == "png":
+            emit_event(
+                "RECONSTRUCTION_STARTED",
+                "Attempting deterministic PNG structural reconstruction",
+            )
+            recon_res = reconstruct_artifact("png", content, detection_mode=detection_mode)
+            emit_event(
+                "RECONSTRUCTION_COMPLETED",
+                f"PNG reconstruction completed with status '{recon_res.status}'",
+            )
+            ver_bytes = recon_res.verified_bytes
+            rec_byte_cnt = recon_res.reconstructed_bytes
+            miss_bytes = recon_res.missing_bytes
+            total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+            out_bytes = recon_res.recovered_bytes
+            val_res = recon_res.validation_result or validate_artifact("png", out_bytes)
+            val_status_str = "PASSED" if val_res.valid else "FAILED"
+            val_details_dict = asdict(val_res)
+            output_dict = {"recovered_bytes": out_bytes.hex()}
+
+            eval_res = evaluate_artifact_confidence(
+                validation_result=val_res,
+                artifact=out_bytes,
+                actual_verified_bytes=ver_bytes,
+                actual_reconstructed_bytes=rec_byte_cnt,
+                actual_missing_bytes=miss_bytes,
+            )
+            score_breakdown_dict = asdict(eval_res.score_breakdown)
+            prov_dict = asdict(eval_res.provenance)
+            prov_dict["evidence_size"] = len(content)
+            prov_dict["reconstruction_method"] = recon_res.details.get(
+                "reconstruction_method", "PNG_STRUCTURAL_RECONSTRUCTION"
+            )
+            status_val = recon_res.status
+            fmt = "png"
+
+            fragments.append(
+                Fragment(
+                    fragment_id="frag-0",
+                    offset=0,
+                    length=len(content),
+                    end_offset=len(content),
+                    status="VERIFIED" if status_val == "FULLY_RECOVERED" else ("PARTIAL" if recon_res.success else "UNRECOVERABLE"),
+                    source="direct_reconstruction",
+                    format=fmt,
+                    verified_bytes=ver_bytes,
+                    reconstructed_bytes=rec_byte_cnt,
+                    missing_bytes=miss_bytes,
+                    validation_status=val_status_str,
+                )
+            )
+            for idx_m, m in enumerate(recon_res.reconstruction_methods):
+                reconstruction_steps.append(
+                    ReconstructionStep(
+                        step_id=f"step-{idx_m}",
+                        method=m,
+                        input_fragment_ids=["frag-0"],
+                        gap_start=None,
+                        gap_end=None,
+                        gap_size=None,
+                        result="SUCCESS" if recon_res.success else "FAILED",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                        confidence=float(score_breakdown_dict.get("total", 0.0)),
+                    )
+                )
+            for idx_d, dmg in enumerate(recon_res.damage_regions):
+                damage_regions.append(
+                    DamageRegion(
+                        region_id=f"damage-{idx_d}",
+                        start_offset=dmg.get("offset", 0),
+                        end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
+                        length=dmg.get("length", 0),
+                        type=dmg.get("type", "CORRUPTED"),
+                        status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
+                        affected_fragment_ids=["frag-0"],
+                    )
+                )
         elif target_fmt == "pdf" or ext == "pdf":
             emit_event(
                 "RECONSTRUCTION_STARTED",
@@ -2420,7 +2605,7 @@ def execute_traced_recoveries(
             detection_mode = "synthetic_harness"
         else:
             ext_check = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            if ext_check in ("txt", "csv", "json", "xml", "png", "jpg", "jpeg", "pdf") and not any(
+            if ext_check in ("txt", "csv", "json", "xml", "png", "jpg", "jpeg", "pdf", "zip") and not any(
                 filename.lower().startswith(prefix) for prefix in ("carved_", "blind_", "dump", "unallocated", "raw_")
             ):
                 detection_mode = "known_file"
@@ -2438,6 +2623,7 @@ def execute_traced_recoveries(
         "jpg": "jpeg",
         "jpeg": "jpeg",
         "pdf": "pdf",
+        "zip": "zip",
     }
     ext_fmt = ext_fmt_map.get(ext)
 
@@ -2472,6 +2658,10 @@ def execute_traced_recoveries(
                 png_cands = [c for c in candidates_to_process if c.format == "png"]
                 if png_cands:
                     candidates_to_process = png_cands
+            elif ext_fmt == "zip":
+                zip_cands = [c for c in candidates_to_process if c.format == "zip"]
+                if zip_cands:
+                    candidates_to_process = zip_cands
             elif ext_fmt in ("txt", "csv", "json") and not any(c.detection_method == "synthetic_boundary" for c in candidates_to_process):
                 matching_cands = [c for c in candidates_to_process if c.format == ext_fmt]
                 if matching_cands:
@@ -2480,7 +2670,7 @@ def execute_traced_recoveries(
                     candidates_to_process = []
 
             if not any(c.detection_method == "synthetic_boundary" for c in candidates_to_process):
-                if not (b"%PDF-" in content or PNG_SIGNATURE in content or content.startswith(b"\xff\xd8") or content.startswith(b"<?xml")):
+                if not (b"%PDF-" in content or PNG_SIGNATURE in content or content.startswith(b"\xff\xd8") or content.startswith(b"<?xml") or content.startswith(b"PK\x03\x04")):
                     probe_csv = detect_text_fragments(content, "csv")
                     probe_txt = detect_text_fragments(content, "txt")
                     if len(probe_csv) >= 2 and (ext_fmt == "csv" or not ext_fmt):
@@ -2668,6 +2858,7 @@ def execute_traced_recovery(
                 "jpg": "jpeg",
                 "jpeg": "jpeg",
                 "pdf": "pdf",
+                "zip": "zip",
             }
             ext_fmt = ext_fmt_map.get(ext)
 

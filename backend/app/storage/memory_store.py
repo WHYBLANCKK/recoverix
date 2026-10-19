@@ -7,6 +7,7 @@ and orchestrates BlobStore instances for evidence and recovered bytes.
 
 from __future__ import annotations
 
+import time
 import uuid
 import threading
 from datetime import datetime, timezone
@@ -40,10 +41,12 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         self._case_artifacts: Dict[str, List[str]] = {}
         self._recovery_runs: Dict[str, RecoveryRun] = {}
         self._artifact_runs: Dict[str, str] = {}
+        self._artifact_timestamps: Dict[str, float] = {}
 
         # Dedicated blob stores for binary data
         self._evidence_blobs = InMemoryBlobStore()
         self._artifact_blobs = InMemoryBlobStore()
+
 
     # ── Subsystem Accessors ──────────────────────────────────────────────
 
@@ -83,6 +86,7 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             self._case_artifacts.clear()
             self._recovery_runs.clear()
             self._artifact_runs.clear()
+            self._artifact_timestamps.clear()
             self._evidence_blobs.clear()
             self._artifact_blobs.clear()
 
@@ -209,6 +213,8 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         """Directly store an internal ArtifactRecord (Pipeline B or internal ingestion)."""
         with self._lock:
             self._artifacts[record.artifact_id] = record
+            if record.artifact_id not in self._artifact_timestamps:
+                self._artifact_timestamps[record.artifact_id] = time.time()
             if record.case_id and record.case_id in self._cases:
                 if record.artifact_id not in self._case_artifacts[record.case_id]:
                     self._case_artifacts[record.case_id].append(record.artifact_id)
@@ -274,6 +280,7 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 if rec.case_id in self._cases:
                     self._cases[rec.case_id]["artifact_count"] = len(self._case_artifacts[rec.case_id])
             self._artifact_runs.pop(artifact_id, None)
+            self._artifact_timestamps.pop(artifact_id, None)
             self._artifact_blobs.delete(artifact_id)
             return True
 
@@ -284,6 +291,8 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         record = ArtifactRecord.from_file_recovery_dict(metadata)
         self.save_artifact_record(record)
         self.store_artifact_bytes(file_id, content)
+        with self._lock:
+            self._artifact_timestamps[file_id] = time.time()
         if record.run_id:
             self.link_artifact_to_run(file_id, record.run_id)
         return metadata
@@ -299,6 +308,24 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
     def get_recovered_file_bytes(self, file_id: str) -> Optional[bytes]:
         """Get raw bytes of a single recovered file from artifact BlobStore."""
         return self.get_artifact_bytes(file_id)
+
+    def purge_expired_recovered_files(self, ttl_hours: int = 24) -> int:
+        """Purge standalone recovered files older than ttl_hours in memory."""
+        cutoff = time.time() - (ttl_hours * 3600)
+        purged = 0
+        with self._lock:
+            expired_ids = []
+            for art_id, rec in list(self._artifacts.items()):
+                if rec.case_id is None:
+                    ts = self._artifact_timestamps.get(art_id)
+                    if ts is not None and ts < cutoff:
+                        expired_ids.append(art_id)
+
+            for art_id in expired_ids:
+                if self.delete_artifact(art_id):
+                    purged += 1
+
+        return purged
 
     # ── RecoveryRunRepository Implementation ─────────────────────────────
 

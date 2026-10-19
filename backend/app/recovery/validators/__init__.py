@@ -16,6 +16,7 @@ from backend.app.recovery.validators.xml import validate_xml
 from backend.app.recovery.validators.png import validate_png
 from backend.app.recovery.validators.jpeg import validate_jpeg
 from backend.app.recovery.validators.pdf import validate_pdf
+from backend.app.recovery.validators.zip import validate_zip
 
 VALIDATORS: dict[str, Callable[[bytes | RecoveredArtifact], ValidationResult]] = {
     "txt": validate_txt,
@@ -26,6 +27,7 @@ VALIDATORS: dict[str, Callable[[bytes | RecoveredArtifact], ValidationResult]] =
     "jpeg": validate_jpeg,
     "jpg": validate_jpeg,
     "pdf": validate_pdf,
+    "zip": validate_zip,
 }
 
 
@@ -33,7 +35,7 @@ def validate_artifact(fmt: str, data: bytes | RecoveredArtifact) -> ValidationRe
     """Route validation to the appropriate format validator.
 
     Args:
-        fmt: Short format identifier ('txt', 'csv', 'json', 'xml', 'png', 'jpeg', 'pdf').
+        fmt: Short format identifier ('txt', 'csv', 'json', 'xml', 'png', 'jpeg', 'pdf', 'zip').
         data: Raw evidence bytes or RecoveredArtifact.
 
     Returns:
@@ -60,6 +62,7 @@ __all__ = [
     "validate_png",
     "validate_jpeg",
     "validate_pdf",
+    "validate_zip",
     "validate_artifact",
     "VALIDATORS",
 ]

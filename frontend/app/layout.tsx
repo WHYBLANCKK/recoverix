@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Recoverix | Forensic Evidence Recovery Workspace",
-  description: "Deterministic digital evidence recovery and grounded AI interpretation",
+  description: "Deterministic digital evidence recovery and grounded forensic interpretation",
 };
 
 export default function RootLayout({

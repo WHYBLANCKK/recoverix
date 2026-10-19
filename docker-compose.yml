@@ -8,8 +8,7 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       - RECOVERIX_DB_PATH=/app/data/recoverix.db
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - RECOVERIX_OFFLINE=${RECOVERIX_OFFLINE:-0}
+      - RECOVERIX_OFFLINE=${RECOVERIX_OFFLINE:-1}
       - RECOVERIX_CORS_ORIGINS=${RECOVERIX_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     volumes:
       - recoverix_data:/app/data

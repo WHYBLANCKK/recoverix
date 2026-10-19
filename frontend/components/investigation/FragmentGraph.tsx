@@ -162,7 +162,7 @@ export function FragmentGraph({
         status: `${dmg.status || "MISSING"} (PRESERVED)`,
         source: "Evidence Discontinuity",
         description:
-          "Missing byte span between verified fragments. Recoverix strictly preserves this gap as unobserved evidence to maintain chain of custody.",
+          "Missing byte span between verified fragments. Recoverix strictly preserves this gap as unobserved evidence to maintain byte-accurate auditability.",
       };
     }
 
@@ -378,7 +378,7 @@ export function FragmentGraph({
                   <span>CONTIGUOUS EVIDENCE (0 → {totalBytes} B)</span>
                 </div>
                 <div className="text-[11px] text-slate-600">
-                  Status: VERIFIED INTACT · 0 Missing Gaps · 100% Admissible
+                  Status: VERIFIED INTACT · 0 Missing Gaps · 100% Verified
                 </div>
                 <div className="text-[10px] text-emerald-700 font-semibold mt-1">
                   1:1 Byte Mapping to Source
@@ -636,7 +636,7 @@ export function FragmentGraph({
                     status: "PARTIALLY RECOVERED",
                     source: reconstructionMethod || "BIFRAGMENT_GAP",
                     description:
-                      "Deterministic alignment of verified fragments with unobserved gap preserved. Chain-of-custody guaranteed with zero hallucination.",
+                      "Deterministic alignment of verified fragments with unobserved gap preserved. Audit trail preserved with zero byte hallucination.",
                   })
                 }
                 className={`cursor-pointer max-w-md w-full p-3.5 rounded-xl border text-center transition-all ${

@@ -93,7 +93,7 @@ export default function CasesPage() {
               </span>
             </h1>
             <p className="text-xs text-slate-600 font-sans max-w-2xl">
-              Deterministic audit ledger of all analyzed evidence artifacts. Every recovery run preserves exact byte accounting and event timelines for judicial verification.
+              Deterministic audit ledger of all analyzed evidence artifacts. Every recovery run preserves exact byte accounting and event timelines for transparent verification.
             </p>
           </div>
 

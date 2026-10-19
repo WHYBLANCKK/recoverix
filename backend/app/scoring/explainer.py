@@ -43,7 +43,7 @@ def _extract_facts(artifact: Any) -> Dict[str, Any]:
 
 
 def explain_artifact(artifact_id: str, artifact: Any, force_refresh: bool = False) -> Dict[str, Any]:
-    """Generate grounded AI evidence explanation strictly from deterministic artifact facts.
+    """Generate grounded evidence interpretation strictly from deterministic artifact facts.
 
     Delegates directly to the canonical InterpretationService.
     """

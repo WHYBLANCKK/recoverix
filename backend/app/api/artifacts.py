@@ -75,7 +75,7 @@ def get_artifact_detail(artifact_id: str) -> ArtifactResponse:
 
 @router.post("/artifacts/{artifact_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
 def explain_artifact_route(artifact_id: str, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
-    """Generate or retrieve a cached AI explanation for an artifact."""
+    """Generate or retrieve a cached evidence interpretation for an artifact."""
     artifact = store.get_artifact(artifact_id)
     if artifact is not None:
         explanation = explain_artifact(artifact_id, artifact)

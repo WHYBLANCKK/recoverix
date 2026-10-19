@@ -73,6 +73,10 @@ def _is_predominantly_binary_garbage(data: bytes, threshold: float = 0.60) -> bo
 
 from backend.app.recovery.reconstructors.txt import reconstruct_txt
 from backend.app.recovery.reconstructors.json import reconstruct_json
+from backend.app.recovery.reconstructors.xml import reconstruct_xml
+from backend.app.recovery.reconstructors.png import reconstruct_png
+from backend.app.recovery.reconstructors.jpeg import reconstruct_jpeg
+from backend.app.recovery.reconstructors.zip import reconstruct_zip
 
 
 def _try_stitch_fragmented_txt(
@@ -835,9 +839,33 @@ def reconstruct_artifact(
         return reconstruct_csv(data, original_data=original_data, detection_mode=detection_mode)
     elif clean_fmt == "json":
         return reconstruct_json(data, original_data=original_data)
+    elif clean_fmt == "xml":
+        return reconstruct_xml(data, original_data=original_data, detection_mode=detection_mode)
+    elif clean_fmt == "png":
+        return reconstruct_png(data, original_data=original_data, detection_mode=detection_mode)
+    elif clean_fmt in ("jpeg", "jpg"):
+        return reconstruct_jpeg(data, original_data=original_data, detection_mode=detection_mode)
+    elif clean_fmt == "zip":
+        return reconstruct_zip(data, original_data=original_data, detection_mode=detection_mode)
     elif clean_fmt == "pdf":
         raw_pdf = data.recovered_bytes if isinstance(data, RecoveredArtifact) else data
         from backend.app.recovery.validators.pdf import reconstruct_pdf_xref, validate_pdf
+        val_res_initial = validate_pdf(raw_pdf)
+        if val_res_initial.valid:
+            pdf_len = len(raw_pdf)
+            return ReconstructionResult(
+                format="pdf",
+                status="FULLY_RECOVERED",
+                success=True,
+                recovered_bytes=raw_pdf,
+                verified_bytes=pdf_len,
+                reconstructed_bytes=0,
+                missing_bytes=0,
+                damage_regions=[],
+                reconstruction_methods=[],
+                validation_result=val_res_initial,
+                details={"status": "Intact PDF with valid structural catalog and xref"},
+            )
         rebuilt_res = reconstruct_pdf_xref(raw_pdf)
         rebuilt_bytes, xref_ok = rebuilt_res
         if xref_ok:

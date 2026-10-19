@@ -22,3 +22,7 @@ data/*.db-shm
 .env
 .env.local
 .env.*.local
+
+# Tooling and dependencies
+node_modules/
+.vercel/
