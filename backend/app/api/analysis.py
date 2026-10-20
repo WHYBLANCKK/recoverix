@@ -148,12 +148,13 @@ def analyze_case(case_id: str) -> AnalysisSummaryResponse:
             art_resp.metadata["candidate_id"] = run.candidate_id
             art_resp.metadata["run_index"] = idx
 
-            store.add_artifact(art_resp)
-            store.link_artifact_to_run(artifact_id, run.run_id)
-            run.artifact_id = artifact_id
-            store.add_recovery_run(run)
             payload = extract_recovered_bytes(run)
-            store.store_artifact_bytes(artifact_id, payload)
+            payload_sha = hashlib.sha256(payload).hexdigest() if payload else None
+            if payload_sha:
+                art_resp.sha256 = payload_sha
+                art_resp.metadata["sha256"] = payload_sha
+
+            store.store_case_artifact(artifact=art_resp, content=payload, run=run)
             recovered_artifacts.append(art_resp)
 
         # 5. Clean up stale artifacts belonging specifically to THIS evidence file

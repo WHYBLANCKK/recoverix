@@ -31,7 +31,7 @@ from backend.app.recovery.signatures import (
     ZIP_CENTRAL_HEADER,
     ZIP_EOCD_SIGNATURE,
 )
-from backend.app.recovery.validators.zip import validate_zip
+from backend.app.recovery.validators.zip import validate_zip, check_zip_path_security
 
 
 def reconstruct_zip(
@@ -104,6 +104,29 @@ def reconstruct_zip(
 
     # 2. Check if already valid ZIP archive
     val_initial = validate_zip(raw_bytes)
+    if any(e.startswith("Security:") for e in val_initial.errors):
+        return ReconstructionResult(
+            format="zip",
+            status="UNRECOVERABLE",
+            success=False,
+            recovered_bytes=b"",
+            verified_bytes=0,
+            reconstructed_bytes=0,
+            missing_bytes=total_input_bytes,
+            damage_regions=[
+                {
+                    "offset": 0,
+                    "length": total_input_bytes,
+                    "type": "SECURITY_VIOLATION",
+                    "description": "; ".join(e for e in val_initial.errors if e.startswith("Security:")),
+                }
+            ],
+            reconstruction_methods=[],
+            validation_result=val_initial,
+            is_exact_match=False,
+            details=val_initial.details,
+        )
+
     if val_initial.valid:
         end_offset = val_initial.details.get("end_offset", total_input_bytes)
         if end_offset < total_input_bytes:
@@ -207,12 +230,13 @@ def reconstruct_zip(
             filename = raw_filename.decode("latin-1", errors="replace")
 
         # Security: Skip entries with zip-slip path traversal
-        if filename.startswith("/") or filename.startswith("\\") or ".." in filename.split("/") or ".." in filename.split("\\"):
+        path_err = check_zip_path_security(filename)
+        if path_err:
             damage_regions.append({
                 "offset": offset,
                 "length": header_len,
                 "type": "SECURITY_ZIP_SLIP_DROPPED",
-                "description": f"Dropped unsafe member with path traversal: '{filename}'",
+                "description": f"Dropped unsafe member with path traversal: {path_err}",
             })
             break
 
@@ -250,8 +274,11 @@ def reconstruct_zip(
                     uncomp_size = len(file_payload)
         elif comp_method == 8:  # Deflated
             try:
-                decomp = zlib.decompress(file_payload, -zlib.MAX_WBITS)
-                if crc != 0 and zlib.crc32(decomp) != crc:
+                dco = zlib.decompressobj(-zlib.MAX_WBITS)
+                decomp = dco.decompress(file_payload, MAX_UNCOMPRESSED_MEMBER_SIZE + 1)
+                if dco.unconsumed_tail or len(decomp) > MAX_UNCOMPRESSED_MEMBER_SIZE:
+                    payload_valid = False
+                elif crc != 0 and zlib.crc32(decomp) != crc:
                     payload_valid = False
                 else:
                     payload_valid = True
@@ -310,6 +337,30 @@ def reconstruct_zip(
             validation_result=val_fail,
             is_exact_match=False,
             details={"error": "Zero recoverable member files"},
+        )
+
+    if detection_mode == "blind":
+        val_fail = validate_zip(raw_bytes)
+        return ReconstructionResult(
+            format="zip",
+            status="UNRECOVERABLE",
+            success=False,
+            recovered_bytes=b"",
+            verified_bytes=0,
+            reconstructed_bytes=0,
+            missing_bytes=total_input_bytes,
+            damage_regions=[
+                {
+                    "offset": 0,
+                    "length": total_input_bytes,
+                    "type": "TRUNCATED_ARCHIVE_IN_BLIND_CARVE",
+                    "description": "Missing central directory cannot be synthesized in blind carving mode",
+                }
+            ],
+            reconstruction_methods=[],
+            validation_result=val_fail,
+            is_exact_match=False,
+            details={"error": "Truncated archive in blind carving mode"},
         )
 
     # 5. Synthesize missing Central Directory and EOCD

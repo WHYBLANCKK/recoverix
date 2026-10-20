@@ -341,7 +341,8 @@ def test_n_fragmented_text_preserves_partial_status():
         detection_mode="known_file",
     )
     assert run.status == "PARTIALLY_RECOVERED"
-    assert run.total_input_bytes == run.total_verified_bytes + run.total_reconstructed_bytes + run.total_missing_bytes
+    assert run.total_input_bytes == run.total_verified_bytes + run.total_missing_bytes
+    assert run.total_verified_bytes + run.total_reconstructed_bytes == len(bytes.fromhex(run.output["recovered_bytes"]))
     assert run.total_reconstructed_bytes > 0
 
 

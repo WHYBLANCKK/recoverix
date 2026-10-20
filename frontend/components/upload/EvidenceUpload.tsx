@@ -606,7 +606,9 @@ export default function EvidenceUpload() {
                 </a>
               ) : (
                 <div className="w-full sm:flex-1 bg-slate-900 border border-slate-800 text-slate-500 font-mono text-xs py-3 px-4 rounded-xl text-center">
-                  EVIDENCE UNRECOVERABLE — DOWNLOAD DISABLED
+                  {singleResult.status === "UNRECOVERABLE"
+                    ? "EVIDENCE UNRECOVERABLE — DOWNLOAD DISABLED"
+                    : "VALIDATION FAILED — DOWNLOAD DISABLED"}
                 </div>
               )}
 

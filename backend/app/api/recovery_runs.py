@@ -26,7 +26,7 @@ def list_recovery_runs() -> List[RecoveryRun]:
 @router.get("/recovery/runs/{run_id}", response_model=RecoveryRun, status_code=status.HTTP_200_OK, operation_id="get_recovery_run_alias")
 def get_recovery_run(run_id: str) -> RecoveryRun:
     """Retrieve a specific forensic recovery run trace by run_id."""
-    run = store.get_recovery_run(run_id)
+    run = store.get_recovery_run(run_id) or store.get_recovery_run_by_artifact(run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

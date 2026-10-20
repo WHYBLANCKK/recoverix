@@ -26,6 +26,7 @@ FORENSIC INTEGRITY PRINCIPLES:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, Optional
 
 from backend.app.models.artifact import (
@@ -182,6 +183,7 @@ def recovery_run_to_artifact_response(
     # Accounting totals (V, R, M) are preserved in provenance, never fabricated into size_bytes.
     rec_bytes = extract_recovered_bytes(run)
     size_bytes = len(rec_bytes) if rec_bytes else 0
+    rec_sha256 = hashlib.sha256(rec_bytes).hexdigest() if rec_bytes else None
 
     # 2. Content preview (safe decode from recovered payload bytes only)
     content_preview: Optional[str] = None
@@ -228,6 +230,8 @@ def recovery_run_to_artifact_response(
         "reconstruction_step_count": len(run.reconstruction_steps),
         "total_input_bytes": run.total_input_bytes,
     }
+    if rec_sha256:
+        metadata["sha256"] = rec_sha256
     if run.provenance:
         for k, v in run.provenance.items():
             if k not in metadata and not isinstance(v, (bytes, bytearray)):
@@ -246,5 +250,6 @@ def recovery_run_to_artifact_response(
         priority=None,
         ai_summary=None,
         content_preview=content_preview,
+        sha256=rec_sha256,
         metadata=metadata,
     )

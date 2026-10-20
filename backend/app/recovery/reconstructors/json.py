@@ -194,12 +194,21 @@ def _classify_prefix(text: str) -> Tuple[str, List[str], str]:
                 # A further value could still appear, so it is unknown.
                 return _INCOMPLETE, stack, "a JSON value was expected but the evidence ends"
             c = text[i]
+            if c == "]" and stack and stack[-1] == "[":
+                stack.pop()
+                i += 1
+                state = "sep" if stack else "done"
+                continue
             if c == "{":
+                if len(stack) >= 500:
+                    return _INVALID, stack, "JSON nesting depth exceeds safety limit (500)"
                 stack.append("{")
                 i += 1
                 state = "key"
                 continue
             if c == "[":
+                if len(stack) >= 500:
+                    return _INVALID, stack, "JSON nesting depth exceeds safety limit (500)"
                 stack.append("[")
                 i += 1
                 state = "value"
@@ -757,11 +766,15 @@ def _verified_prefix_length(text: str) -> int:
                 return best
             c = stripped[i]
             if c == "{":
+                if len(stack) >= 500:
+                    return best
                 stack.append("{")
                 i += 1
                 state = "key"
                 continue
             if c == "[":
+                if len(stack) >= 500:
+                    return best
                 stack.append("[")
                 i += 1
                 state = "value"

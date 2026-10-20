@@ -145,6 +145,14 @@ def validate_png(data: bytes | RecoveredArtifact) -> ValidationResult:
                     details["height"] = height
                     details["bit_depth"] = bit_depth
                     details["color_type"] = color_type
+                    if width == 0 or height == 0:
+                        errors.append(
+                            f"Invalid IHDR dimensions: width={width}, height={height} (dimensions must be positive non-zero)"
+                        )
+                    elif width > 65535 or height > 65535:
+                        errors.append(
+                            f"PNG dimension exceeds maximum safe dimension limit (65535): width={width}, height={height}"
+                        )
                 else:
                     errors.append(f"Invalid IHDR chunk length: expected 13, got {length}")
 

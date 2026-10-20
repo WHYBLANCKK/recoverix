@@ -286,7 +286,9 @@ def test_pdf_accounting_identity_holds_after_rebuild():
 
     run = _run_pdf_recovery(truncated)
 
-    assert run.total_verified_bytes + run.total_reconstructed_bytes + run.total_missing_bytes == run.total_input_bytes
+    assert run.total_verified_bytes + run.total_missing_bytes == run.total_input_bytes
+    assert run.total_input_bytes == len(truncated)
+    assert run.total_verified_bytes + run.total_reconstructed_bytes == len(bytes.fromhex(run.output["recovered_bytes"]))
     # The uploaded evidence size is retained so the loss is never hidden.
     assert run.provenance["evidence_size"] == len(truncated)
 
@@ -840,3 +842,69 @@ def test_pdf_object_tree_stream_payloads_do_not_cause_false_reference_rejection(
     val = validate_pdf(pdf_with_stream)
     assert val.valid is True
     assert len(val.errors) == 0
+
+
+# ── PDF Compressed Object Streams (/Type /ObjStm) Limitation Boundary Tests ──
+
+
+def test_pdf_compressed_object_stream_detection_and_limitation():
+    """Verify that PDFs containing /Type /ObjStm are detected, warned, and
+    conservatively rejected when required objects are inaccessible inside streams.
+    """
+    # PDF 1.5+ with /Type /ObjStm and /Root pointing to object 2 which is packed in object 4 (/ObjStm)
+    pdf_objstm = (
+        b"%PDF-1.5\n"
+        b"1 0 obj\n"
+        b"<< /Type /ObjStm /N 2 /First 10 /Length 50 >>\n"
+        b"stream\n"
+        b"2 0 3 25 (dummy object stream payload)\n"
+        b"endstream\n"
+        b"endobj\n"
+        b"trailer\n"
+        b"<< /Size 4 /Root 2 0 R >>\n"
+        b"startxref\n"
+        b"120\n"
+        b"%%EOF\n"
+    )
+    val = validate_pdf(pdf_objstm)
+    assert val.details["has_compressed_object_streams"] is True
+    assert any("compressed object streams" in w.lower() for w in val.warnings)
+    # Object 2 is not a top-level obj, so validation fails safely rather than falsely passing
+    assert val.valid is False
+    assert any("ObjStm" in err for err in val.errors)
+
+
+def test_pdf_compressed_object_stream_xref_reconstruction_fails_conservatively():
+    """Verify that reconstruct_pdf_xref fails conservatively on damaged /ObjStm PDFs
+    where catalog is packed in an object stream, rather than inventing objects.
+    """
+    damaged_objstm = (
+        b"%PDF-1.5\n"
+        b"1 0 obj\n"
+        b"<< /Type /ObjStm /N 2 /First 10 /Length 50 >>\n"
+        b"stream\n"
+        b"2 0 3 25 (dummy object stream payload)\n"
+        b"endstream\n"
+        b"endobj\n"
+        # Trailing xref and trailer destroyed
+    )
+    rebuilt, ok = reconstruct_pdf_xref(damaged_objstm)
+    assert ok is False
+    # Original bytes are preserved untouched
+    assert rebuilt == damaged_objstm
+
+
+def test_pdf_classic_standard_pdf_has_no_objstm_warning():
+    """Verify baseline PDF 1.4 documents do not trigger /ObjStm warnings."""
+    pdf_classic = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n"
+        b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000108 00000 n \n"
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n160\n%%EOF\n"
+    )
+    val = validate_pdf(pdf_classic)
+    assert val.valid is True
+    assert val.details["has_compressed_object_streams"] is False
+    assert not any("compressed object streams" in w.lower() for w in val.warnings)

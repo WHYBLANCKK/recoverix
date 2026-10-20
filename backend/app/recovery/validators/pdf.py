@@ -203,13 +203,21 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
 
         has_xref_table = b"xref" in raw_bytes
         has_xref_stream = b"/Type /XRef" in raw_bytes or b"/Type/XRef" in raw_bytes
+        has_compressed_object_streams = b"/Type /ObjStm" in raw_bytes or b"/Type/ObjStm" in raw_bytes
         has_trailer = b"trailer" in raw_bytes
         has_startxref = b"startxref" in raw_bytes
 
         details["has_xref_table"] = has_xref_table
         details["has_xref_stream"] = has_xref_stream
+        details["has_compressed_object_streams"] = has_compressed_object_streams
         details["has_trailer"] = has_trailer
         details["has_startxref"] = has_startxref
+
+        if has_compressed_object_streams:
+            warnings.append(
+                "PDF uses compressed object streams (/Type /ObjStm). "
+                "Objects packed inside compressed streams are not indexed at top level."
+            )
 
         if not (has_xref_table or has_xref_stream):
             errors.append("Missing cross-reference table (xref) or XRef stream")
@@ -321,7 +329,8 @@ def validate_pdf(data: bytes | RecoveredArtifact) -> ValidationResult:
                             )
 
         if missing_refs:
-            errors.append(f"Damaged PDF object tree: {'; '.join(missing_refs)}")
+            notice = " (Note: PDF uses /Type /ObjStm compressed object streams which are unsupported for top-level object tree recovery)" if has_compressed_object_streams else ""
+            errors.append(f"Damaged PDF object tree: {'; '.join(missing_refs)}{notice}")
 
     valid = len(errors) == 0
     return ValidationResult(

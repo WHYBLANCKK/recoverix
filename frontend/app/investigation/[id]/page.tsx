@@ -13,15 +13,25 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  AlertCircle,
   FileCode,
   ExternalLink,
 } from "lucide-react";
-import { API_BASE, fetchRecoveredFile, fetchRecoveryRun } from "@/lib/api";
+import {
+  API_BASE,
+  fetchRecoveredFile,
+  fetchRecoveryRun,
+  fetchArtifactById,
+  adaptRecoveryRunToInvestigationResult,
+  adaptArtifactToInvestigationResult,
+  sanitizeDownloadUrl,
+} from "@/lib/api";
 import { SingleFileRecoveryResult, InvestigationContext } from "@/lib/types";
 import { FragmentGraph } from "@/components/investigation/FragmentGraph";
 import { ByteEvidenceMap } from "@/components/investigation/ByteEvidenceMap";
 import { ForensicAnalystCard } from "@/components/investigation/ForensicAnalystCard";
 import { ClusterInterpretationCard } from "@/components/investigation/ClusterInterpretationCard";
+import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
 
 export default function InvestigationPage({
   params,
@@ -34,6 +44,8 @@ export default function InvestigationPage({
   const [result, setResult] = useState<SingleFileRecoveryResult | null>(null);
   const [context, setContext] = useState<InvestigationContext | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isExpired, setIsExpired] = useState(false);
+  const [errorType, setErrorType] = useState<"NOT_FOUND" | "NETWORK_ERROR" | null>(null);
   const [copiedPreview, setCopiedPreview] = useState(false);
   const [showRubricDetails, setShowRubricDetails] = useState(false);
   const [activeSection, setActiveSection] = useState<
@@ -85,66 +97,89 @@ export default function InvestigationPage({
         }
       }
 
-      // 2. Query real live backend
+      // 2. Query real live backend across supported lookup paths
       try {
-        let liveResult = await fetchRecoveredFile(fileId);
+        let liveResult: SingleFileRecoveryResult | null = null;
+
+        // Path 1: Standalone single-file recovery store
+        liveResult = await fetchRecoveredFile(fileId);
+
+        // Path 2: Recovery run trace store (lookup by run_id or artifact_id)
         if (!liveResult) {
-          // If fileId was a run_id or not found in file-store, try recovery-runs store
           const run = await fetchRecoveryRun(fileId);
           if (run) {
-            let preview = null;
-            if (run.output?.recovered_bytes) {
-              try {
-                const hex = run.output.recovered_bytes;
-                const bytes = new Uint8Array(hex.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []);
-                preview = new TextDecoder().decode(bytes).slice(0, 300);
-              } catch {
-                preview = run.output.recovered_bytes.slice(0, 300);
-              }
-            }
-
-            liveResult = {
-              file_id: run.artifact_id || run.run_id,
-              run_id: run.run_id,
-              original_filename: run.filename,
-              recovered_filename: `recovered_${run.filename}`,
-              format: run.format,
-              status: run.status,
-              confidence_score: run.confidence?.total ?? 0,
-              verified_bytes: run.total_verified_bytes ?? 0,
-              reconstructed_bytes: run.total_reconstructed_bytes ?? 0,
-              missing_bytes: run.total_missing_bytes ?? 0,
-              reconstruction_method: run.reconstruction_steps?.[0]?.method ?? "NONE",
-              validation_status: run.validation?.valid ? "PASSED" : "FAILED",
-              is_downloadable: Boolean(run.output?.recovered_bytes),
-              download_url: `${API_BASE}/api/recover-file/${run.artifact_id || run.run_id}/download`,
-              content_preview: preview,
-              score_breakdown: run.confidence ?? {},
-              validation_details: run.validation ?? {},
-              fragments: run.fragments,
-              damage_regions: run.damage_regions,
-              reconstruction_steps: run.reconstruction_steps,
-              total_input_bytes: run.total_input_bytes,
-            };
+            liveResult = adaptRecoveryRunToInvestigationResult(run);
           }
-        } else if ((!liveResult.fragments || liveResult.fragments.length === 0) && liveResult.run_id) {
+        }
+
+        // Path 3: Case artifact store (lookup by artifact_id)
+        if (!liveResult) {
+          try {
+            const artifact = await fetchArtifactById(fileId);
+            if (artifact) {
+              liveResult = adaptArtifactToInvestigationResult(artifact);
+            }
+          } catch {
+            // Identifier not in artifact store
+          }
+        }
+
+        // Path 4: Enrichment from run_id if fragments or damage regions are unpopulated
+        if (liveResult && (!liveResult.fragments || liveResult.fragments.length === 0) && liveResult.run_id) {
           const run = await fetchRecoveryRun(liveResult.run_id);
           if (run) {
             liveResult.fragments = run.fragments;
             liveResult.damage_regions = run.damage_regions;
             liveResult.reconstruction_steps = run.reconstruction_steps;
-            liveResult.total_input_bytes = run.total_input_bytes;
+            if (!liveResult.total_input_bytes && run.total_input_bytes) {
+              liveResult.total_input_bytes = run.total_input_bytes;
+            }
           }
         }
 
         if (liveResult) {
+          // Enforce strict download safety invariants
+          liveResult.download_url = sanitizeDownloadUrl(liveResult.download_url, liveResult.file_id);
+          const isPermitted = liveResult.status === "FULLY_RECOVERED" || liveResult.status === "PARTIALLY_RECOVERED";
+          liveResult.is_downloadable = Boolean(
+            liveResult.is_downloadable === true &&
+            isPermitted &&
+            liveResult.validation_status === "PASSED" &&
+            liveResult.download_url
+          );
+
           setResult(liveResult);
+          setIsExpired(false);
+          setErrorType(null);
           if (typeof window !== "undefined") {
             localStorage.setItem(`recoverix_result_${fileId}`, JSON.stringify(liveResult));
+          }
+        } else {
+          // No live record found on backend
+          if (cachedResult) {
+            // Artifact purged from backend memory (24h retention) but available in local session
+            setIsExpired(true);
+            setResult({
+              ...cachedResult,
+              is_downloadable: false, // Expired server files cannot be downloaded
+            });
+          } else {
+            setResult(null);
+            setErrorType("NOT_FOUND");
           }
         }
       } catch (err) {
         console.error("Failed to query live backend:", err);
+        if (cachedResult) {
+          setIsExpired(true);
+          setResult({
+            ...cachedResult,
+            is_downloadable: false,
+          });
+        } else {
+          setResult(null);
+          setErrorType("NETWORK_ERROR");
+        }
       } finally {
         setLoading(false);
       }
@@ -171,29 +206,78 @@ export default function InvestigationPage({
   }
 
   if (!result) {
+    if (errorType === "NETWORK_ERROR") {
+      return (
+        <main className="min-h-screen bg-[#F8FAFC] text-slate-800 py-16 px-6 font-mono text-center space-y-4">
+          <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-2" />
+          <h2 className="text-xl font-bold text-slate-900 uppercase tracking-wider">RECOVERY ENGINE UNREACHABLE</h2>
+          <p className="text-xs text-slate-600 max-w-md mx-auto font-sans leading-relaxed">
+            Could not connect to the Recoverix backend engine to load investigation <code className="text-slate-800 font-bold">{fileId}</code>. Please verify your connection or backend service status.
+          </p>
+          <div className="pt-4 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-lg text-xs transition-colors shadow-xs"
+            >
+              Retry Connection
+            </button>
+            <Link
+              href="/"
+              className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold px-5 py-2.5 rounded-lg text-xs transition-colors shadow-2xs"
+            >
+              Return Home
+            </Link>
+          </div>
+        </main>
+      );
+    }
+
     return (
       <main className="min-h-screen bg-[#F8FAFC] text-slate-800 py-16 px-6 font-mono text-center space-y-4">
-        <h2 className="text-xl font-bold text-slate-900 uppercase tracking-wider">INVESTIGATION NOT FOUND</h2>
-        <p className="text-xs text-slate-600 max-w-md mx-auto font-sans">
-          No recovery run records match file identifier <code className="text-emerald-700 font-bold">{fileId}</code>.
+        <h2 className="text-xl font-bold text-slate-900 uppercase tracking-wider">INVESTIGATION NOT FOUND OR EXPIRED</h2>
+        <p className="text-xs text-slate-600 max-w-md mx-auto font-sans leading-relaxed">
+          No active recovery run or artifact records match identifier <code className="text-emerald-700 font-bold">{fileId}</code>. Standalone recovery sessions are automatically purged after 24 hours.
         </p>
-        <div className="pt-4">
+        <div className="pt-4 flex items-center justify-center gap-3">
           <Link
-            href="/setup"
+            href="/"
             className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-2.5 rounded-lg text-xs inline-block transition-colors shadow-xs"
           >
-            Start New Investigation
+            Upload Evidence (Home)
+          </Link>
+          <Link
+            href="/setup"
+            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold px-5 py-2.5 rounded-lg text-xs inline-block transition-colors shadow-2xs"
+          >
+            Detailed Intake
           </Link>
         </div>
       </main>
     );
   }
 
-  const caseName = context?.case_name || "Incident Response — Server Logs";
-  const investigatorName = context?.investigator || "Forensic Analyst #402";
-  const fileHash = (context as any)?.sha256 || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  const caseName = context?.case_name || result.case_name || "Direct File Intake";
+  const investigatorName = context?.investigator || result.investigator || "Unassigned Investigator";
+  const fileHash = context?.sha256 || null;
 
-  const totalBytes = result.total_input_bytes || (result.verified_bytes + result.reconstructed_bytes + result.missing_bytes);
+  const totalInput = result.total_input_bytes && result.total_input_bytes > 0
+    ? result.total_input_bytes
+    : (result.verified_bytes + result.missing_bytes);
+  const totalOutput = result.verified_bytes + result.reconstructed_bytes;
+  const verifiedPct = totalInput > 0 ? Math.round((result.verified_bytes / totalInput) * 100) : 0;
+  const missingPct = totalInput > 0 ? Math.max(0, 100 - verifiedPct) : 0;
+  const reconPct = totalOutput > 0 ? Math.round((result.reconstructed_bytes / totalOutput) * 100) : 0;
+
+  const isPermittedStatus = result.status === "FULLY_RECOVERED" || result.status === "PARTIALLY_RECOVERED";
+  const isDownloadable = Boolean(
+    result.is_downloadable === true &&
+    isPermittedStatus &&
+    result.validation_status === "PASSED" &&
+    result.download_url &&
+    !isExpired
+  );
+
   const fragments = result.fragments || [];
   const damageRegions = result.damage_regions || [];
   const reconstructionSteps = result.reconstruction_steps || [];
@@ -201,6 +285,21 @@ export default function InvestigationPage({
   return (
     <main className="min-h-screen bg-[#F8FAFC] text-slate-900 py-8 px-4 sm:px-6 font-mono selection:bg-emerald-500/20 selection:text-emerald-950">
       <div className="max-w-7xl mx-auto space-y-8">
+        {/* Expired Session Notice */}
+        {isExpired && (
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-mono flex items-start gap-3 shadow-2xs">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="font-bold text-amber-800 uppercase tracking-wide">
+                Server Session Expired (24h Retention Limit)
+              </div>
+              <p className="text-[11px] text-amber-800 font-sans leading-relaxed">
+                This recovered artifact has been purged from backend memory under the 24-hour retention policy. Evidence metrics below are preserved from your local session audit, but downloads are unavailable. To re-download, please upload your file again.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ========================================================================= */}
         {/* WORKSPACE HEADER BAR */}
         {/* ========================================================================= */}
@@ -209,10 +308,19 @@ export default function InvestigationPage({
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <Link
-                  href="/setup"
+                  href="/"
+                  className="hover:text-slate-900 transition-colors flex items-center gap-1.5 text-[11px]"
+                  aria-label="Recoverix Home"
+                >
+                  <RecoverixLogo size={14} showText={false} markOnly />
+                  <span className="font-bold">RECOVERIX</span>
+                </Link>
+                <span>/</span>
+                <Link
+                  href="/"
                   className="hover:text-slate-900 transition-colors flex items-center gap-1 text-[11px]"
                 >
-                  <ArrowLeft className="w-3 h-3" /> New Recovery
+                  <ArrowLeft className="w-3 h-3" /> Home
                 </Link>
                 <span>/</span>
                 <span className="text-emerald-700 font-bold uppercase">{caseName}</span>
@@ -230,7 +338,7 @@ export default function InvestigationPage({
 
             {/* Quick Actions & Download Header Button */}
             <div className="flex flex-wrap items-center gap-3 self-start lg:self-auto">
-              {result.is_downloadable && (
+              {isDownloadable ? (
                 <a
                   href={result.download_url}
                   download={result.recovered_filename}
@@ -239,6 +347,22 @@ export default function InvestigationPage({
                   <Download className="w-4 h-4" />
                   <span>DOWNLOAD ARTIFACT</span>
                 </a>
+              ) : (
+                <div
+                  className="bg-slate-100 text-slate-400 border border-slate-200 font-mono text-xs px-3 py-2 rounded-xl flex items-center gap-2 cursor-not-allowed"
+                  title={
+                    isExpired
+                      ? "Artifact expired from server memory"
+                      : result.status === "UNRECOVERABLE"
+                      ? "Artifact is unrecoverable"
+                      : "Structural validation failed"
+                  }
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-400" />
+                  <span>
+                    DOWNLOAD UNAVAILABLE ({isExpired ? "EXPIRED" : result.status === "UNRECOVERABLE" ? "UNRECOVERABLE" : "VALIDATION FAILED"})
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -259,13 +383,25 @@ export default function InvestigationPage({
             </div>
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
               <span className="text-[10px] text-slate-500 uppercase font-semibold block">RECOVERY RUN ID</span>
-              <span className="text-slate-700 font-bold truncate block">{result.run_id || "run_verified"}</span>
+              <span className="text-slate-700 font-bold truncate block">{result.run_id || result.file_id}</span>
             </div>
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
               <span className="text-[10px] text-slate-500 uppercase font-semibold block">TOTAL INPUT BYTES</span>
-              <span className="text-slate-900 font-bold block">{totalBytes.toLocaleString()} B</span>
+              <span className="text-slate-900 font-bold block">{totalInput.toLocaleString()} B</span>
             </div>
           </div>
+
+          {/* Investigation Notes if present */}
+          {(result.notes || context?.notes) && (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono">
+              <span className="text-[10px] uppercase font-bold text-slate-500 block mb-0.5">
+                Investigation Notes
+              </span>
+              <p className="text-slate-700 font-sans text-xs">
+                {result.notes || context?.notes}
+              </p>
+            </div>
+          )}
 
           {/* Investigation Navigation Tabs */}
           <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 text-xs font-mono">
@@ -325,6 +461,15 @@ export default function InvestigationPage({
                   <span className="text-xs bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-xl font-mono font-semibold">
                     METHOD: {result.reconstruction_method}
                   </span>
+                  <span
+                    className={`text-xs px-3 py-1.5 rounded-xl font-mono font-semibold border ${
+                      result.validation_status === "PASSED"
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                        : "bg-rose-50 text-rose-800 border-rose-300"
+                    }`}
+                  >
+                    VALIDATION: {result.validation_status}
+                  </span>
                 </div>
               </div>
 
@@ -344,17 +489,22 @@ export default function InvestigationPage({
             </div>
 
             {/* Three Highly Visible Core Metrics (V/R/M) */}
-            <div className="space-y-2">
-              <div className="text-xs text-slate-600 uppercase tracking-wider font-semibold">
-                Deterministic Byte Accounting (V/R/M)
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-600 uppercase tracking-wider font-semibold">
+                  Deterministic Byte Accounting (V/R/M Standard)
+                </span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Evidence Size: {totalInput.toLocaleString()} bytes
+                </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* VERIFIED BYTES */}
                 <div className="bg-white border border-emerald-300 p-5 rounded-xl relative overflow-hidden shadow-2xs">
                   <div className="text-[11px] uppercase font-bold text-emerald-700 flex items-center justify-between mb-2">
-                    <span>[VERIFIED]</span>
+                    <span>[VERIFIED (V)]</span>
                     <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded text-[10px]">
-                      {totalBytes > 0 ? Math.round((result.verified_bytes / totalBytes) * 100) : 0}%
+                      {verifiedPct}%
                     </span>
                   </div>
                   <div className="text-3xl font-bold text-emerald-600 font-mono">
@@ -369,9 +519,9 @@ export default function InvestigationPage({
                 {/* RECONSTRUCTED BYTES */}
                 <div className="bg-white border border-sky-300 p-5 rounded-xl relative overflow-hidden shadow-2xs">
                   <div className="text-[11px] uppercase font-bold text-sky-700 flex items-center justify-between mb-2">
-                    <span>[RECONSTRUCTED]</span>
+                    <span>[RECONSTRUCTED (R)]</span>
                     <span className="bg-sky-50 text-sky-800 border border-sky-200 px-2 py-0.5 rounded text-[10px]">
-                      {totalBytes > 0 ? Math.round((result.reconstructed_bytes / totalBytes) * 100) : 0}%
+                      {reconPct}%
                     </span>
                   </div>
                   <div className="text-3xl font-bold text-sky-600 font-mono">
@@ -384,22 +534,26 @@ export default function InvestigationPage({
                 </div>
 
                 {/* MISSING BYTES */}
-                <div className="bg-white border border-amber-300 p-5 rounded-xl relative overflow-hidden shadow-2xs">
-                  <div className="text-[11px] uppercase font-bold text-amber-700 flex items-center justify-between mb-2">
-                    <span>[MISSING]</span>
-                    <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded text-[10px]">
-                      {totalBytes > 0 ? Math.round((result.missing_bytes / totalBytes) * 100) : 0}%
+                <div className="bg-white border border-rose-300 p-5 rounded-xl relative overflow-hidden shadow-2xs">
+                  <div className="text-[11px] uppercase font-bold text-rose-700 flex items-center justify-between mb-2">
+                    <span>[MISSING (M)]</span>
+                    <span className="bg-rose-50 text-rose-800 border border-rose-200 px-2 py-0.5 rounded text-[10px]">
+                      {missingPct}%
                     </span>
                   </div>
-                  <div className="text-3xl font-bold text-amber-600 font-mono">
+                  <div className="text-3xl font-bold text-rose-600 font-mono">
                     {result.missing_bytes.toLocaleString()}
-                    <span className="text-sm font-normal text-amber-700 ml-1">B</span>
+                    <span className="text-sm font-normal text-rose-700 ml-1">B</span>
                   </div>
                   <p className="text-xs text-slate-600 font-sans mt-1">
                     Unobserved evidence gaps preserved without synthetic fabrication.
                   </p>
                 </div>
               </div>
+
+              <p className="text-[11px] text-slate-400 font-mono text-center pt-1">
+                Mathematical Proof: V + R = {totalOutput.toLocaleString()} bytes recovered · V + M = {totalInput.toLocaleString()} bytes evidence input
+              </p>
             </div>
           </div>
         </section>
@@ -410,7 +564,7 @@ export default function InvestigationPage({
         <section id="fragments" className="space-y-4">
           <FragmentGraph
             filename={result.original_filename}
-            totalBytes={totalBytes}
+            totalBytes={totalInput}
             verifiedBytes={result.verified_bytes}
             reconstructedBytes={result.reconstructed_bytes}
             missingBytes={result.missing_bytes}
@@ -440,7 +594,7 @@ export default function InvestigationPage({
         {/* ========================================================================= */}
         <section id="map" className="space-y-4">
           <ByteEvidenceMap
-            totalBytes={totalBytes}
+            totalBytes={totalInput}
             verifiedBytes={result.verified_bytes}
             reconstructedBytes={result.reconstructed_bytes}
             missingBytes={result.missing_bytes}
@@ -528,14 +682,18 @@ export default function InvestigationPage({
                   <div className="text-xs text-slate-600 font-sans">
                     {result.recovered_filename} · {(result.verified_bytes + result.reconstructed_bytes).toLocaleString()} Bytes
                   </div>
-                  <div className="text-[11px] text-emerald-700 font-mono font-semibold">
-                    ✓ Valid PDF Structure · Cross-Reference (xref) Verified
+                  <div className={`text-[11px] font-mono font-semibold ${
+                    result.validation_status === "PASSED" ? "text-emerald-700" : "text-rose-700"
+                  }`}>
+                    {result.validation_status === "PASSED"
+                      ? "✓ Valid PDF Structure · Cross-Reference (xref) Verified"
+                      : "✗ Structural Validation Failed · PDF Format Incomplete"}
                   </div>
                 </div>
-                {result.is_downloadable && (
+                {result.is_downloadable && !isExpired && (
                   <div className="pt-2">
                     <a
-                      href={result.download_url}
+                      href={sanitizeDownloadUrl(result.download_url, fileId)}
                       target="_blank"
                       rel="noopener noreferrer"
                       download={result.recovered_filename}
@@ -557,14 +715,18 @@ export default function InvestigationPage({
                   <div className="text-xs text-slate-600 font-sans">
                     {result.recovered_filename} · {(result.verified_bytes + result.reconstructed_bytes).toLocaleString()} Bytes
                   </div>
-                  <div className="text-[11px] text-emerald-700 font-mono font-semibold">
-                    ✓ Authoritative Signature & Chunks Validated
+                  <div className={`text-[11px] font-mono font-semibold ${
+                    result.validation_status === "PASSED" ? "text-emerald-700" : "text-rose-700"
+                  }`}>
+                    {result.validation_status === "PASSED"
+                      ? "✓ Authoritative Signature & Chunks Validated"
+                      : "✗ Structural Validation Failed · Image Corrupted or Incomplete"}
                   </div>
                 </div>
-                {result.is_downloadable && (
+                {isDownloadable && (
                   <div className="pt-2">
                     <a
-                      href={result.download_url}
+                      href={sanitizeDownloadUrl(result.download_url, fileId)}
                       download={result.recovered_filename}
                       className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-2.5 rounded-xl text-xs transition-all shadow-xs"
                     >
@@ -597,9 +759,9 @@ export default function InvestigationPage({
                 <span>Output File: <strong className="text-slate-900">{result.recovered_filename}</strong></span>
               </div>
 
-              {result.is_downloadable ? (
+              {isDownloadable ? (
                 <a
-                  href={result.download_url}
+                  href={sanitizeDownloadUrl(result.download_url, fileId)}
                   download={result.recovered_filename}
                   className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 px-6 rounded-xl transition-all flex items-center justify-center gap-2 shadow-xs"
                 >
@@ -607,7 +769,22 @@ export default function InvestigationPage({
                   <span>DOWNLOAD RECOVERED ARTIFACT</span>
                 </a>
               ) : (
-                <span className="text-xs text-slate-500">DOWNLOAD UNAVAILABLE</span>
+                <div className="w-full sm:w-auto bg-slate-100 text-slate-500 font-bold text-xs py-2.5 px-6 rounded-xl flex items-center justify-center gap-2 border border-slate-200 cursor-not-allowed">
+                  <AlertCircle className="w-3.5 h-3.5 text-slate-400" />
+                  <span>
+                    DOWNLOAD UNAVAILABLE ({
+                      isExpired
+                        ? "SESSION EXPIRED"
+                        : result.status === "UNRECOVERABLE"
+                        ? "EVIDENCE UNRECOVERABLE"
+                        : result.status === "CORRUPTED"
+                        ? "INTEGRITY CORRUPTED"
+                        : result.validation_status !== "PASSED"
+                        ? "VALIDATION FAILED"
+                        : "NOT GENERATED"
+                    })
+                  </span>
+                </div>
               )}
             </div>
           </section>
@@ -643,7 +820,7 @@ export default function InvestigationPage({
               </div>
               <div className="flex justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                 <span className="text-slate-500 uppercase font-semibold">Validation Status:</span>
-                <span className="text-emerald-700 font-bold">{result.validation_status}</span>
+                <span className={`font-bold ${result.validation_status === "PASSED" ? "text-emerald-700" : "text-rose-700"}`}>{result.validation_status}</span>
               </div>
               <div className="flex justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                 <span className="text-slate-500 uppercase font-semibold">Format Spec:</span>
@@ -652,7 +829,7 @@ export default function InvestigationPage({
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
                 <span className="text-slate-500 uppercase text-[10px] font-semibold block">Evidence SHA-256:</span>
                 <span className="text-slate-700 font-mono text-[10px] break-all select-all block">
-                  {fileHash}
+                  {fileHash || "[Not recorded during intake]"}
                 </span>
               </div>
             </div>
@@ -679,7 +856,7 @@ export default function InvestigationPage({
                 <span>[DETERMINISTIC STRUCTURAL FINDINGS]</span>
               </div>
               <p className="text-slate-700 font-sans">
-                Evidence file <strong className="text-slate-900 font-mono">{result.original_filename}</strong> was evaluated across format-specific structural parsers. Header signature validated. Structural validation executed via <code className="text-sky-700 font-mono font-semibold">{result.reconstruction_method}</code> returning <span className="text-emerald-700 font-bold">{result.validation_status}</span>.
+                Evidence file <strong className="text-slate-900 font-mono">{result.original_filename}</strong> was evaluated across format-specific structural parsers. Header signature validated. Structural validation executed via <code className="text-sky-700 font-mono font-semibold">{result.reconstruction_method}</code> returning <span className={`font-bold ${result.validation_status === "PASSED" ? "text-emerald-700" : "text-rose-700"}`}>{result.validation_status}</span>.
               </p>
               <div className="text-[11px] text-slate-500 pt-1">
                 Zero synthetic predictions were used to generate or alter raw evidence byte offsets.
@@ -745,10 +922,10 @@ export default function InvestigationPage({
         {/* Bottom Investigation Footer */}
         <div className="text-center pt-4 pb-12">
           <Link
-            href="/setup"
+            href="/"
             className="text-xs text-slate-500 hover:text-slate-800 transition-colors inline-flex items-center gap-1.5 font-medium"
           >
-            ← Close Investigation & Return to Intake
+            ← Close Investigation & Return Home
           </Link>
         </div>
       </div>

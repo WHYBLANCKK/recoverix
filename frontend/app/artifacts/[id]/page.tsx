@@ -3,13 +3,14 @@
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import { fetchArtifactById, fetchArtifacts, getArtifactDownloadUrl } from "@/lib/api";
-import { ArrowLeft, FileText, File, Loader2, Download } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, File, Loader2, Download } from "lucide-react";
 import { PriorityBadge, StatusBadge } from "@/components/dashboard/PriorityBadge";
 import { ConfidenceBreakdown } from "@/components/artifact/ConfidenceBreakdown";
 import { ProvenanceBar } from "@/components/artifact/ProvenanceBar";
 import { ValidationResults } from "@/components/artifact/ValidationResults";
 import { ForensicEvidenceBrief } from "@/components/artifact/ForensicEvidenceBrief";
 import { Artifact } from "@/lib/types";
+import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
 
 export default function ArtifactPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -62,9 +63,16 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
         
         {/* Top Navigation & Header */}
         <div>
-          <Link href="/dashboard" className="inline-flex items-center text-xs text-slate-600 hover:text-slate-900 mb-6 transition-colors font-medium">
-            <ArrowLeft className="w-4 h-4 mr-2" /> Back to Dashboard
-          </Link>
+          <div className="flex items-center gap-3 mb-6 text-xs text-slate-500 font-mono">
+            <Link href="/" className="hover:text-slate-900 transition-colors flex items-center gap-1.5" aria-label="Recoverix Home">
+              <RecoverixLogo size={14} showText={false} markOnly />
+              <span className="font-bold">RECOVERIX</span>
+            </Link>
+            <span>/</span>
+            <Link href="/dashboard" className="inline-flex items-center text-slate-600 hover:text-slate-900 transition-colors font-medium">
+              <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Back to Dashboard
+            </Link>
+          </div>
 
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
@@ -86,13 +94,44 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
               </div>
             </div>
 
-            <a
-              href={getArtifactDownloadUrl(artifact.id)}
-              download
-              className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-xs transition-all inline-flex items-center gap-2 self-start md:self-auto"
-            >
-              <Download className="w-4 h-4" /> DOWNLOAD RECOVERED FILE
-            </a>
+            <div className="flex flex-wrap items-center gap-3 self-start md:self-auto">
+              <Link
+                href={`/investigation/${artifact.id}`}
+                className="bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs px-4 py-2.5 rounded-xl border border-slate-300 shadow-2xs transition-all inline-flex items-center gap-2"
+              >
+                <span>Full Investigation Trace</span>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+              </Link>
+              {(() => {
+                const isPermittedStatus = artifact.status === 'FULLY_RECOVERED' || artifact.status === 'PARTIALLY_RECOVERED';
+                const isValidationPassed = artifact.validation_status === 'PASSED' || artifact.validation?.valid === true;
+                const isDownloadable = isPermittedStatus && isValidationPassed && artifact.is_downloadable === true;
+
+                if (isDownloadable) {
+                  return (
+                    <a
+                      href={getArtifactDownloadUrl(artifact.id)}
+                      download
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-xs transition-all inline-flex items-center gap-2"
+                    >
+                      <Download className="w-4 h-4" /> DOWNLOAD RECOVERED FILE
+                    </a>
+                  );
+                }
+
+                const unavailableReason = !isPermittedStatus
+                  ? (artifact.status || 'UNRECOVERABLE')
+                  : !isValidationPassed
+                  ? 'VALIDATION FAILED'
+                  : 'DOWNLOAD RESTRICTED';
+
+                return (
+                  <div className="bg-slate-200 text-slate-400 font-bold text-xs px-5 py-2.5 rounded-xl cursor-not-allowed inline-flex items-center gap-2">
+                    <Download className="w-4 h-4" /> DOWNLOAD UNAVAILABLE ({unavailableReason})
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </div>
 

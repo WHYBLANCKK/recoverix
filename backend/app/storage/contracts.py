@@ -111,6 +111,15 @@ class ArtifactRepository(Protocol):
         """Retrieve raw recovered bytes for an artifact."""
         ...
 
+    def store_case_artifact(
+        self,
+        artifact: ArtifactResponse,
+        content: bytes,
+        run: Optional[RecoveryRun] = None,
+    ) -> ArtifactResponse:
+        """Atomically persist a case-associated recovered artifact, its raw bytes, and optional recovery run."""
+        ...
+
     def delete_artifact(self, artifact_id: str) -> bool:
         """Delete an artifact by artifact_id. Returns True if deleted, False if not found."""
         ...

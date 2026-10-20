@@ -4,10 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 import {
   GroundedCaseInterpretation,
   PriorityLevel,
+  Artifact,
 } from "@/lib/types";
 import {
   getCaseInterpretation,
   generateCaseInterpretation,
+  buildDeterministicCaseInterpretation,
   ApiError,
 } from "@/lib/api";
 import { PriorityBadge } from "@/components/dashboard/PriorityBadge";
@@ -32,6 +34,8 @@ interface CaseInterpretationCardProps {
   caseId: string;
   onCaseChange?: (caseId: string) => void;
   className?: string;
+  artifacts?: Artifact[];
+  recoveryRuns?: any[];
 }
 
 function formatGeneratedTime(isoString: string): string {
@@ -56,6 +60,8 @@ export function CaseInterpretationCard({
   caseId,
   onCaseChange,
   className = "",
+  artifacts = [],
+  recoveryRuns = [],
 }: CaseInterpretationCardProps) {
   const [selectedCaseId, setSelectedCaseId] = useState<string>(caseId);
   const [customCaseInput, setCustomCaseInput] = useState<string>(caseId);
@@ -89,6 +95,17 @@ export function CaseInterpretationCard({
       setInterpretation(data);
       setIsNotGenerated(false);
     } catch (err: unknown) {
+      if (typeof window !== "undefined") {
+        const cached = localStorage.getItem(`recoverix_case_interp_${activeCaseId}`);
+        if (cached) {
+          try {
+            setInterpretation(JSON.parse(cached));
+            setIsNotGenerated(false);
+            setIsLoading(false);
+            return;
+          } catch {}
+        }
+      }
       if (err instanceof ApiError && err.status === 404) {
         setIsNotGenerated(true);
         setInterpretation(null);
@@ -126,9 +143,22 @@ export function CaseInterpretationCard({
       const data = await generateCaseInterpretation(activeCaseId, false);
       setInterpretation(data);
       setIsNotGenerated(false);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unable to generate case interpretation.";
-      setActionError(msg);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`recoverix_case_interp_${activeCaseId}`, JSON.stringify(data));
+      }
+    } catch {
+      // Deterministic evidence-grounded fallback for unseeded cases
+      try {
+        const localData = buildDeterministicCaseInterpretation(activeCaseId, recoveryRuns, artifacts);
+        setInterpretation(localData);
+        setIsNotGenerated(false);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(`recoverix_case_interp_${activeCaseId}`, JSON.stringify(localData));
+        }
+      } catch (innerErr) {
+        const msg = innerErr instanceof Error ? innerErr.message : "Unable to generate case interpretation.";
+        setActionError(msg);
+      }
     } finally {
       setIsActionLoading(false);
     }
@@ -142,9 +172,20 @@ export function CaseInterpretationCard({
     try {
       const data = await generateCaseInterpretation(activeCaseId, true);
       setInterpretation(data);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unable to refresh case interpretation.";
-      setActionError(msg);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`recoverix_case_interp_${activeCaseId}`, JSON.stringify(data));
+      }
+    } catch {
+      try {
+        const localData = buildDeterministicCaseInterpretation(activeCaseId, recoveryRuns, artifacts);
+        setInterpretation(localData);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(`recoverix_case_interp_${activeCaseId}`, JSON.stringify(localData));
+        }
+      } catch (innerErr) {
+        const msg = innerErr instanceof Error ? innerErr.message : "Unable to refresh case interpretation.";
+        setActionError(msg);
+      }
     } finally {
       setIsActionLoading(false);
     }

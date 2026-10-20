@@ -122,3 +122,12 @@ class RecoveryRun(BaseModel):
     output: Optional[Dict[str, Any]] = None
     detection_mode: Optional[str] = "known_file"
     corrupted_fields: Optional[List[str]] = None
+    case_name: Optional[str] = None
+    investigator: Optional[str] = None
+    notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def verify_recovery_run_invariants(self) -> "RecoveryRun":
+        if self.status == "FULLY_RECOVERED" and (self.total_reconstructed_bytes > 0 or self.total_missing_bytes > 0):
+            self.status = "PARTIALLY_RECOVERED"
+        return self

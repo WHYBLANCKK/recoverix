@@ -15,6 +15,16 @@ import {
   Database,
 } from "lucide-react";
 import { recoverSingleFile } from "@/lib/api";
+import { computeFileSha256 } from "@/lib/crypto";
+import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
+import {
+  FIXTURE_INCIDENT_JSON,
+  FIXTURE_INCIDENT_TXT,
+  FIXTURE_CLEAN_TXT,
+  FIXTURE_STAFF_CSV,
+  FIXTURE_SHUFFLED_PDF_B64,
+  FIXTURE_PHOTO_JPEG_B64,
+} from "@/lib/fixtures/benchmarkEvidence";
 
 const ANALYSIS_STAGES = [
   "INGESTING EVIDENCE",
@@ -24,34 +34,6 @@ const ANALYSIS_STAGES = [
   "VALIDATING STRUCTURE",
   "BUILDING PROVENANCE",
 ];
-
-// Benchmark fixtures from the Recoverix test suite
-const FIXTURE_INCIDENT_JSON =
-  '{"case":"IR-99","status":"active","tags":["malware","network"';
-
-const FIXTURE_INCIDENT_TXT =
-  "Subject: Incident Escalation\nTo: Security Operations Center\n\n" +
-  "\x00".repeat(48) +
-  "Action Taken: Contained infected workstation and quarantined IP.\n";
-
-const FIXTURE_CLEAN_TXT =
-  "Line 1: System initialization sequence completed.\n" +
-  "Line 2: User admin authentication validated from 192.168.1.10.\n" +
-  "Line 3: Routine audit log integrity verified across all nodes.\n";
-
-const FIXTURE_STAFF_CSV =
-  "id,name,role,department\n" +
-  "101,Alice Vance,Chief Investigator,Forensics\n" +
-  "102,Bob Miller,Security Analyst,SOC\n" +
-  "103,Charlie Chen,Malware Engineer,Reverse Eng\n";
-
-// Real 315-byte shuffled PDF binary (two real PDF fragments in reverse order)
-const FIXTURE_SHUFFLED_PDF_B64 =
-  "ZG9iagozIDAgb2JqCjw8IC9UeXBlIC9QYWdlIC9QYXJlbnQgMiAwIFIgPj4KZW5kb2JqCnhyZWYKMCA0CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDUyIDAwMDAwIG4gCjAwMDAwMDAxMTggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA0IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgoxNzIKJSVFT0YKJVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaW5kcyBbXSAvQ291bnQgMSAvS2lkcyBbMyAwIFJdID4+CmVu";
-
-// Real 39-byte valid JPEG binary (SOI/SOF0/SOS/EOI marker sequence)
-const FIXTURE_PHOTO_JPEG_B64 =
-  "/9j/wAARCAAQABADAREAAhEBAxEB/9oADAMBAAIRAxEAPwAAf//Z";
 
 export default function SetupPage() {
   const router = useRouter();
@@ -76,16 +58,8 @@ export default function SetupPage() {
 
   // Compute real SHA-256 via browser WebCrypto
   const computeHash = async (evidenceFile: File) => {
-    try {
-      const buffer = await evidenceFile.arrayBuffer();
-      const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-      setFileSha256(hashHex);
-    } catch (err) {
-      console.error("SHA-256 computation failed:", err);
-      setFileSha256(null);
-    }
+    const hash = await computeFileSha256(evidenceFile);
+    setFileSha256(hash);
   };
 
   const handleSelectFile = (selectedFile: File) => {
@@ -169,7 +143,11 @@ export default function SetupPage() {
     }, 450);
 
     try {
-      const result = await recoverSingleFile(file);
+      const result = await recoverSingleFile(file, {
+        caseName: caseName || "Unnamed Case",
+        investigator: investigator || "Analyst",
+        notes: notes || "",
+      });
       clearInterval(stageInterval);
       setCurrentStageIdx(ANALYSIS_STAGES.length - 1);
 
@@ -221,9 +199,11 @@ export default function SetupPage() {
 
           <Link
             href="/"
-            className="text-xs font-mono text-slate-600 hover:text-slate-900 transition-colors self-start sm:self-auto"
+            className="text-xs font-mono text-slate-600 hover:text-slate-900 transition-colors self-start sm:self-auto flex items-center gap-1.5"
+            aria-label="Recoverix Home"
           >
-            ← Return to Home
+            <RecoverixLogo size={16} showText={false} markOnly />
+            <span>← Return to Home</span>
           </Link>
         </div>
 

@@ -14,8 +14,31 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://recoverix-staging.vercel.app"),
   title: "Recoverix | Forensic Evidence Recovery Workspace",
   description: "Deterministic digital evidence recovery and grounded forensic interpretation",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32" },
+      { url: "/icon.png", type: "image/png", sizes: "680x680" },
+    ],
+    apple: [
+      { url: "/apple-icon.png", type: "image/png", sizes: "680x680" },
+    ],
+  },
+  openGraph: {
+    title: "Recoverix | Forensic Evidence Recovery Workspace",
+    description: "Deterministic digital evidence recovery and grounded forensic interpretation",
+    siteName: "Recoverix",
+    images: [
+      {
+        url: "/brand/recoverix-logo.png",
+        width: 656,
+        height: 565,
+        alt: "Recoverix Brand Mark",
+      },
+    ],
+  },
 };
 
 export default function RootLayout({

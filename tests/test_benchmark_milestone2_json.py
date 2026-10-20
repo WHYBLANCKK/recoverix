@@ -421,7 +421,9 @@ def test_15_pure_structural_closer_repair_exact_accounting():
     assert rec.total_verified_bytes == 89
     assert rec.total_reconstructed_bytes == 2
     assert rec.total_missing_bytes == 0
-    assert rec.total_input_bytes == 91
+    assert rec.total_input_bytes == 89
+    assert rec.total_verified_bytes + rec.total_missing_bytes == rec.total_input_bytes
+    assert rec.total_verified_bytes + rec.total_reconstructed_bytes == len(rec.recovered_payload_bytes)
     assert rec.recovered_payload_bytes == art.original_bytes
 
     report = evaluate_scenario(gt_manifest, obs_manifest)
@@ -697,7 +699,9 @@ def test_22_cross_domain_coordinate_conservation_invariants():
     assert rec_pure.total_verified_bytes != 87, "Discrepancy: V must be 89, not 87!"
     assert rec_pure.total_reconstructed_bytes == 2
     assert rec_pure.total_missing_bytes == 0
-    assert rec_pure.total_input_bytes == 91
+    assert rec_pure.total_input_bytes == 89
+    assert rec_pure.total_verified_bytes + rec_pure.total_missing_bytes == rec_pure.total_input_bytes
+    assert rec_pure.total_verified_bytes + rec_pure.total_reconstructed_bytes == len(rec_pure.recovered_payload_bytes)
     assert art_pure.original_size_bytes == 91
     assert len(ev_pure) == 89
     assert len(rec_pure.recovered_payload_bytes) == 91

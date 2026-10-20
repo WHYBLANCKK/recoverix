@@ -7,14 +7,19 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import os
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import RequestValidationError
+
+logger = logging.getLogger("recoverix.api")
 
 from backend.app.api.cases import router as cases_router
 from backend.app.api.analysis import router as analysis_router
@@ -302,6 +307,16 @@ async def enforce_upload_size_limit(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Attach standard defense-in-depth HTTP security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
 # Configure CORS middleware outermost so preflight requests and error responses
 # (e.g. 413 rejections) include appropriate CORS headers for allowed origins.
 app.add_middleware(
@@ -326,5 +341,37 @@ app.include_router(interpretation_router, prefix="/api")
 def health_check():
     """Health check endpoint."""
     return {"status": "ok", "service": "recoverix-api"}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors()},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(
+        "Unhandled exception processing %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An unexpected error occurred while processing the request."},
+    )
 
 # startup event removed

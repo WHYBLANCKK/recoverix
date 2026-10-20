@@ -123,6 +123,18 @@ def validate_csv(data: bytes | RecoveredArtifact) -> ValidationResult:
             details=details,
         )
 
+    # Quote balance check: odd number of double-quotes indicates an unclosed quote
+    if body_text.count('"') % 2 != 0:
+        errors.append("Unclosed double-quote in CSV content: total quote count is odd")
+        return ValidationResult(
+            valid=False,
+            format=fmt,
+            checks_performed=checks,
+            errors=errors,
+            warnings=warnings,
+            details=details,
+        )
+
     # CSV parsing check with delimiter detection fallback
     try:
         f = io.StringIO(body_text)

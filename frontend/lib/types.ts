@@ -68,6 +68,9 @@ export interface Artifact {
   missing_bytes: number;
   reconstruction_method: ReconstructionMethod;
   validation: ValidationResult;
+  validation_status?: string;
+  is_downloadable?: boolean;
+  sha256?: string | null;
   fragments: Fragment[];
   preview_text: string;
   ai_summary: AIExplanation | null;
@@ -141,6 +144,7 @@ export interface InvestigationContext {
   investigator: string;
   evidence_description: string;
   notes: string;
+  sha256?: string;
   created_at: string;
 }
 
@@ -168,6 +172,9 @@ export interface SingleFileRecoveryResult {
   total_input_bytes?: number;
   provenance?: Record<string, any>;
   context?: InvestigationContext;
+  case_name?: string | null;
+  investigator?: string | null;
+  notes?: string | null;
 }
 
 /**

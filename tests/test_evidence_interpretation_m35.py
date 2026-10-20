@@ -843,3 +843,65 @@ def test_34_no_duplicate_gemini_template_pipeline():
     raw = {"artifact_id": "art_canon", "status": "CORRUPTED", "confidence_score": 40.0}
     facts = service.extract_artifact_facts(raw)
     assert facts.status == "CORRUPTED"
+
+
+def test_35_extract_artifact_facts_fallback_total_input_bytes_invariant():
+    """Verify fallback total_input_bytes equals verified_bytes + missing_bytes, NOT inflated with reconstructed_bytes.
+
+    Forensic invariant:
+    total_input_bytes represents the source evidence input chunk.
+    verified_bytes represents surviving original bytes.
+    missing_bytes represents lost/unobserved input bytes.
+    reconstructed_bytes represents synthetic syntax fillers/delimiters generated on recovery (output domain).
+    Therefore:
+    - When total_input_bytes is missing from source artifact, fallback must be (v_bytes + m_bytes).
+    - Reconstructed bytes must NEVER inflate total_input_bytes.
+    - Explicit total_input_bytes=0 must be preserved and not overridden by truthy/falsy fallback.
+    """
+    service = InterpretationService(fallback_provider=DeterministicRuleProvider())
+
+    # Case 1: missing total_input_bytes with verified, reconstructed, and missing bytes
+    raw_missing = {
+        "artifact_id": "art_inv_1",
+        "format": "json",
+        "status": "PARTIALLY_RECOVERED",
+        "verified_bytes": 800,
+        "reconstructed_bytes": 50,
+        "missing_bytes": 100,
+        "confidence_score": 75.0,
+    }
+    facts_1 = service.extract_artifact_facts(raw_missing)
+    # Under old buggy formula: 800 + 50 + 100 = 950
+    # Under correct invariant: 800 + 100 = 900
+    assert facts_1.total_input_bytes == 900
+    assert facts_1.total_input_bytes != 950
+    assert facts_1.total_input_bytes == facts_1.verified_bytes + facts_1.missing_bytes
+
+    # Case 2: explicitly 0 total_input_bytes must be preserved, not overwritten by fallback
+    raw_zero = {
+        "artifact_id": "art_inv_2",
+        "format": "bin",
+        "status": "UNRECOVERABLE",
+        "verified_bytes": 10,
+        "reconstructed_bytes": 5,
+        "missing_bytes": 20,
+        "confidence_score": 10.0,
+        "total_input_bytes": 0,
+    }
+    facts_2 = service.extract_artifact_facts(raw_zero)
+    assert facts_2.total_input_bytes == 0
+
+    # Case 3: ArtifactRecord object with total_input_bytes None falls back to v + m
+    record = ArtifactRecord(
+        artifact_id="art_inv_3",
+        format="csv",
+        status="PARTIALLY_RECOVERED",
+        confidence_score=80.0,
+        verified_bytes=300,
+        reconstructed_bytes=40,
+        missing_bytes=70,
+        total_input_bytes=None,
+    )
+    facts_3 = service.extract_artifact_facts(record)
+    assert facts_3.total_input_bytes == 370  # 300 + 70, not 300 + 40 + 70 (410)
+    assert facts_3.total_input_bytes != 410

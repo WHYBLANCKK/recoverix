@@ -59,6 +59,7 @@ from backend.app.recovery.signatures import (
     ZIP_LOCAL_HEADER,
     ZIP_EOCD_SIGNATURE,
 )
+from backend.app.recovery.xml_security import safe_parse_xml
 
 
 @dataclass(frozen=True)
@@ -167,7 +168,7 @@ def _classify_synthetic_content(body: bytes) -> tuple[str, str, str]:
     # Check XML
     if text.startswith(("<?xml", "<")):
         try:
-            ET.fromstring(text)
+            safe_parse_xml(text)
             return ("xml", "application/xml", "structured")
         except Exception:
             if text.startswith("<?xml"):

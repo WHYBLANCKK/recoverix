@@ -229,12 +229,10 @@ def test_g_tracer_closable_json_status_and_method():
     assert run.status == "PARTIALLY_RECOVERED"
     assert run.total_reconstructed_bytes == 2
     assert run.total_missing_bytes == 0
-    # The artifact budget identity holds at the run level.
-    assert run.total_input_bytes == (
-        run.total_verified_bytes
-        + run.total_reconstructed_bytes
-        + run.total_missing_bytes
-    )
+    # The artifact input conservation holds at the run level.
+    assert run.total_input_bytes == run.total_verified_bytes + run.total_missing_bytes
+    assert run.total_input_bytes == len(evidence)
+    assert run.total_verified_bytes + run.total_reconstructed_bytes == len(bytes.fromhex(run.output["recovered_bytes"]))
     # The method explicitly identifies JSON structural reconstruction.
     assert "JSON" in run.provenance["reconstruction_method"]
     # Provenance records the actual uploaded evidence size.

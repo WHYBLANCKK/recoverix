@@ -11,6 +11,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { fetchRecoveryRuns } from "@/lib/api";
+import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
 
 interface RecoveryRunItem {
   run_id: string;
@@ -82,7 +83,10 @@ export default function CasesPage() {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <Link href="/" className="hover:text-slate-900 transition-colors">RECOVERIX</Link>
+              <Link href="/" className="hover:text-slate-900 transition-colors flex items-center gap-1.5" aria-label="Recoverix Home">
+                <RecoverixLogo size={16} showText={false} markOnly />
+                <span className="font-bold">RECOVERIX</span>
+              </Link>
               <span>/</span>
               <span className="text-emerald-700 font-bold">CASES & AUDIT LOG</span>
             </div>
@@ -161,6 +165,7 @@ export default function CasesPage() {
                 <option value="png">PNG</option>
                 <option value="jpeg">JPEG</option>
                 <option value="xml">XML</option>
+                <option value="zip">ZIP</option>
               </select>
             </div>
 

@@ -305,3 +305,271 @@ def test_standalone_file_purge_24h_ttl():
     assert purged_count == 1
     assert mem_store.get_recovered_file_metadata(file_id) is None
     assert mem_store.get_recovered_file_bytes(file_id) is None
+
+
+def test_recover_single_file_metadata_persistence():
+    """Verify that case_name, investigator, and notes form fields persist in SQLite and are returned across endpoints."""
+    payload = b'{"case":"IR-500","severity":"HIGH","active":true}'
+    res = client.post(
+        "/api/recover-file",
+        files={"file": ("evidence.json", payload, "application/json")},
+        data={
+            "case_name": "Operation Blackbird",
+            "investigator": "Agent Fox",
+            "notes": "Found on seized flash drive partition.",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["case_name"] == "Operation Blackbird"
+    assert data["investigator"] == "Agent Fox"
+    assert data["notes"] == "Found on seized flash drive partition."
+    file_id = data["file_id"]
+    run_id = data["run_id"]
+
+    # Verify GET /api/recover-file/{file_id} returns the metadata
+    file_res = client.get(f"/api/recover-file/{file_id}")
+    assert file_res.status_code == 200
+    file_data = file_res.json()
+    assert file_data["case_name"] == "Operation Blackbird"
+    assert file_data["investigator"] == "Agent Fox"
+    assert file_data["notes"] == "Found on seized flash drive partition."
+
+    # Verify GET /api/recovery-runs/{run_id} returns the metadata
+    run_res = client.get(f"/api/recovery-runs/{run_id}")
+    assert run_res.status_code == 200
+    run_data = run_res.json()
+    assert run_data["case_name"] == "Operation Blackbird"
+    assert run_data["investigator"] == "Agent Fox"
+    assert run_data["notes"] == "Found on seized flash drive partition."
+
+    # Verify lookup by artifact_id (file_id) works on /api/recovery-runs/{file_id}
+    run_by_art_res = client.get(f"/api/recovery-runs/{file_id}")
+    assert run_by_art_res.status_code == 200
+    assert run_by_art_res.json()["run_id"] == run_id
+
+    # Verify GET /api/artifacts/{file_id} resolves without 404
+    art_res = client.get(f"/api/artifacts/{file_id}")
+    assert art_res.status_code == 200
+    assert art_res.json()["status"] == "FULLY_RECOVERED"
+
+
+def test_recover_single_file_omitted_and_whitespace_metadata_returns_null():
+    """Verify that omitting metadata or supplying whitespace-only fields normalizes cleanly to None."""
+    payload = b'{"case":"OMITTED_TEST","valid":true}'
+    res = client.post(
+        "/api/recover-file",
+        files={"file": ("omitted.json", payload, "application/json")},
+        data={
+            "case_name": "   ",
+            "investigator": "",
+            "notes": "  \t\n  ",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["case_name"] is None
+    assert data["investigator"] is None
+    assert data["notes"] is None
+    file_id = data["file_id"]
+    run_id = data["run_id"]
+
+    # Verify GET /api/recover-file/{file_id}
+    file_res = client.get(f"/api/recover-file/{file_id}")
+    assert file_res.status_code == 200
+    file_data = file_res.json()
+    assert file_data["case_name"] is None
+    assert file_data["investigator"] is None
+    assert file_data["notes"] is None
+
+    # Verify GET /api/recovery-runs/{run_id}
+    run_res = client.get(f"/api/recovery-runs/{run_id}")
+    assert run_res.status_code == 200
+    run_data = run_res.json()
+    assert run_data["case_name"] is None
+    assert run_data["investigator"] is None
+    assert run_data["notes"] is None
+
+
+def test_recover_single_file_metadata_sanitization_and_truncation():
+    """Verify that dangerous control characters are stripped and oversized metadata is safely bounded."""
+    oversized_case = "Case-\x00\x07\x1b" + ("A" * 200)
+    oversized_investigator = "Analyst-\x00" + ("B" * 200)
+    oversized_notes = "Notes-\x00" + ("C" * 1500)
+
+    payload = b'{"status":"sanitization_test"}'
+    res = client.post(
+        "/api/recover-file",
+        files={"file": ("sanitized.json", payload, "application/json")},
+        data={
+            "case_name": oversized_case,
+            "investigator": oversized_investigator,
+            "notes": oversized_notes,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+
+    # Bounded length checks
+    assert len(data["case_name"]) <= 128
+    assert len(data["investigator"]) <= 128
+    assert len(data["notes"]) <= 1000
+
+    # Control character elimination checks
+    assert "\x00" not in data["case_name"]
+    assert "\x07" not in data["case_name"]
+    assert "\x1b" not in data["case_name"]
+    assert "\x00" not in data["investigator"]
+    assert "\x00" not in data["notes"]
+
+    assert data["case_name"].startswith("Case-")
+    assert data["investigator"].startswith("Analyst-")
+    assert data["notes"].startswith("Notes-")
+
+
+def test_recover_single_file_metadata_with_download_safety_invariants():
+    """Verify that attaching metadata preserves download safety invariants across valid and invalid recoveries."""
+    # 1. Unrecoverable file with metadata: must NOT be downloadable
+    corrupt_bytes = b"\x00\x99\xff\xfe\xdc\xba\x88\x77"
+    res_unrec = client.post(
+        "/api/recover-file",
+        files={"file": ("corrupt.raw", corrupt_bytes, "application/octet-stream")},
+        data={
+            "case_name": "Dead Evidence Case",
+            "investigator": "Analyst Zero",
+            "notes": "Severe medium damage; salvage attempted.",
+        },
+    )
+    assert res_unrec.status_code == 200
+    data_unrec = res_unrec.json()
+    assert data_unrec["status"] == "UNRECOVERABLE"
+    assert data_unrec["is_downloadable"] is False
+    assert data_unrec["case_name"] == "Dead Evidence Case"
+
+    # Attempting to download must return 404
+    dl_unrec = client.get(data_unrec["download_url"])
+    assert dl_unrec.status_code == 404
+
+    # 2. Fully recovered file with metadata: must download exact expected bytes
+    valid_payload = SYNTHETIC_START_MARKER + b"FORMAT=txt\nHeader: MetaTest\nBody: Safe Download\n" + SYNTHETIC_END_MARKER
+    res_valid = client.post(
+        "/api/recover-file",
+        files={"file": ("safe_evidence.txt", valid_payload, "text/plain")},
+        data={
+            "case_name": "Integrity Test Case",
+            "investigator": "Lead Auditor",
+            "notes": "Verified download check.",
+        },
+    )
+    assert res_valid.status_code == 200
+    data_valid = res_valid.json()
+    assert data_valid["is_downloadable"] is True
+    assert data_valid["case_name"] == "Integrity Test Case"
+
+    dl_valid = client.get(data_valid["download_url"])
+    assert dl_valid.status_code == 200
+    assert dl_valid.content == valid_payload
+    assert "safe_evidence.txt" in dl_valid.headers.get("Content-Disposition", "")
+
+
+def test_workbench_contract_file_id_lookup():
+    """Verify Phase 2B.2 contract harmonization: both /api/recover-file and /api/artifacts resolve file_id."""
+    payload = SYNTHETIC_START_MARKER + b"FORMAT=txt\nHeader: WorkbenchTest\nBody: Investigation Trace\n" + SYNTHETIC_END_MARKER
+    post_res = client.post(
+        "/api/recover-file",
+        files={"file": ("workbench_doc.txt", payload, "text/plain")},
+        data={"case_name": "Audit Case 99", "investigator": "Forensic Lead", "notes": "Contract check"},
+    )
+    assert post_res.status_code == 200
+    file_data = post_res.json()
+    file_id = file_data["file_id"]
+    run_id = file_data["run_id"]
+
+    # 1. Fetch by file_id on /api/recover-file/{file_id}
+    res_rec = client.get(f"/api/recover-file/{file_id}")
+    assert res_rec.status_code == 200
+    rec_data = res_rec.json()
+    assert rec_data["file_id"] == file_id
+    assert rec_data["run_id"] == run_id
+    assert rec_data["status"] == "FULLY_RECOVERED"
+    assert rec_data["validation_status"] == "PASSED"
+    assert rec_data["is_downloadable"] is True
+    assert rec_data["verified_bytes"] > 0
+    assert rec_data["missing_bytes"] == 0
+    assert rec_data["case_name"] == "Audit Case 99"
+    assert rec_data["investigator"] == "Forensic Lead"
+
+    # 2. Fetch by file_id on /api/artifacts/{file_id} (Universal Artifact Resolver)
+    res_art = client.get(f"/api/artifacts/{file_id}")
+    assert res_art.status_code == 200
+    art_data = res_art.json()
+    assert art_data["artifact_id"] == file_id
+    assert art_data["status"] == "FULLY_RECOVERED"
+    assert art_data["provenance"]["validation_status"] == "PASSED"
+    assert art_data["provenance"]["verified_bytes"] == rec_data["verified_bytes"]
+
+
+def test_workbench_contract_run_id_lookup():
+    """Verify Phase 2B.2 contract harmonization: /api/recovery-runs resolves by run_id and artifact/file_id."""
+    payload = SYNTHETIC_START_MARKER + b"FORMAT=txt\nHeader: RunTrace\nBody: Trace Verification\n" + SYNTHETIC_END_MARKER
+    post_res = client.post(
+        "/api/recover-file",
+        files={"file": ("trace_doc.txt", payload, "text/plain")},
+    )
+    assert post_res.status_code == 200
+    data = post_res.json()
+    file_id = data["file_id"]
+    run_id = data["run_id"]
+
+    # Fetch by run_id
+    res_run = client.get(f"/api/recovery-runs/{run_id}")
+    assert res_run.status_code == 200
+    run_data = res_run.json()
+    assert run_data["run_id"] == run_id
+    assert run_data["status"] == "FULLY_RECOVERED"
+    assert len(run_data["fragments"]) > 0
+
+    # Fetch by file_id / artifact_id alias on /api/recovery-runs
+    res_alias = client.get(f"/api/recovery-runs/{file_id}")
+    assert res_alias.status_code == 200
+    alias_data = res_alias.json()
+    assert alias_data["run_id"] == run_id
+
+
+def test_workbench_contract_unknown_and_expired_404():
+    """Verify unknown or expired IDs return 404 without crashing or returning mock fallbacks."""
+    fake_id = "non_existent_workbench_id_9999"
+
+    # 1. /api/recover-file/{id} -> 404
+    assert client.get(f"/api/recover-file/{fake_id}").status_code == 404
+
+    # 2. /api/recover-file/{id}/download -> 404
+    assert client.get(f"/api/recover-file/{fake_id}/download").status_code == 404
+
+    # 3. /api/artifacts/{id} -> 404
+    assert client.get(f"/api/artifacts/{fake_id}").status_code == 404
+
+    # 4. /api/recovery-runs/{id} -> 404
+    assert client.get(f"/api/recovery-runs/{fake_id}").status_code == 404
+
+
+def test_workbench_contract_unrecoverable_and_failed_validation_download_block():
+    """Verify download safety: unrecoverable or validation-failed files are strictly non-downloadable."""
+    garbage = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\xaa\xbb\xcc"
+    post_res = client.post(
+        "/api/recover-file",
+        files={"file": ("dead_bytes.bin", garbage, "application/octet-stream")},
+    )
+    assert post_res.status_code == 200
+    data = post_res.json()
+    file_id = data["file_id"]
+    assert data["status"] == "UNRECOVERABLE"
+    assert data["is_downloadable"] is False
+
+    # Download endpoint must reject with 404
+    dl_res = client.get(f"/api/recover-file/{file_id}/download")
+    assert dl_res.status_code == 404
+
+    # Artifact download endpoint must also reject with 404
+    art_dl_res = client.get(f"/api/artifacts/{file_id}/download")
+    assert art_dl_res.status_code == 404
