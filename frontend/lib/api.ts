@@ -12,10 +12,6 @@ import {
   DeterministicCaseFacts,
   ProviderInterpretationOutput,
 } from './types';
-import { mockArtifacts, mockCase, mockGroundTruth } from './fixtures/mockData';
-export { mockArtifacts, mockCase, mockGroundTruth };
-
-
 export function getApiBase(): string {
   // If explicitly forced via environment variable (e.g., custom external backend override)
   if (process.env.NEXT_PUBLIC_FORCE_DIRECT_API === 'true' && process.env.NEXT_PUBLIC_API_URL) {
@@ -35,9 +31,8 @@ export function getApiBase(): string {
 }
 
 export const API_BASE = getApiBase();
-const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
-// Cache for AI Explanations to prevent redundant calls and enable instant live demos
+// Cache for Forensic Interpretations to prevent redundant calls
 const explanationCache = new Map<string, AIExplanation>();
 
 export function classifyArtifact(filename: string, mimeType: string, previewText: string): ArtifactCategory {
@@ -192,66 +187,57 @@ export function normalizeBackendArtifact(raw: any): Artifact {
 }
 
 export async function createCase(name?: string): Promise<Case> {
-  if (!USE_MOCK) {
-    const res = await fetch(`${API_BASE}/api/cases`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name || "Automated Case" }),
-      cache: 'no-store'
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to create case: ${res.status} ${res.statusText}`);
-    }
-    const raw = await res.json();
-    return {
-      id: raw.case_id || raw.id,
-      name: raw.name,
-      description: raw.description,
-      artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
-    };
+  const res = await fetch(`${API_BASE}/api/cases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name || "Automated Case" }),
+    cache: 'no-store'
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create case: ${res.status} ${res.statusText}`);
   }
-  return { ...mockCase, name: name || mockCase.name };
+  const raw = await res.json();
+  return {
+    id: raw.case_id || raw.id,
+    name: raw.name,
+    description: raw.description,
+    artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
+  };
 }
 
 export async function uploadEvidence(caseId: string, fileOrSample: File | string): Promise<{ success: boolean }> {
-  if (!USE_MOCK) {
-    const formData = new FormData();
-    if (typeof fileOrSample === 'string') {
-      formData.append('sample', fileOrSample);
-    } else {
-      formData.append('file', fileOrSample);
-    }
-    const res = await fetch(`${API_BASE}/api/cases/${caseId}/evidence`, {
-      method: 'POST',
-      body: formData,
-      cache: 'no-store'
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to upload evidence: ${res.status} ${res.statusText}`);
-    }
-    return await res.json();
+  const formData = new FormData();
+  if (typeof fileOrSample === 'string') {
+    formData.append('sample', fileOrSample);
+  } else {
+    formData.append('file', fileOrSample);
   }
-  return { success: true };
+  const res = await fetch(`${API_BASE}/api/cases/${caseId}/evidence`, {
+    method: 'POST',
+    body: formData,
+    cache: 'no-store'
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to upload evidence: ${res.status} ${res.statusText}`);
+  }
+  return await res.json();
 }
 
 export async function analyzeCase(caseId: string): Promise<Case> {
-  if (!USE_MOCK) {
-    const res = await fetch(`${API_BASE}/api/cases/${caseId}/analyze`, {
-      method: 'POST',
-      cache: 'no-store'
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to analyze case: ${res.status} ${res.statusText}`);
-    }
-    const raw = await res.json();
-    return {
-      id: raw.case_id || raw.id,
-      name: raw.name || "Analysis Result",
-      description: raw.description || "Forensic case analysis",
-      artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
-    };
+  const res = await fetch(`${API_BASE}/api/cases/${caseId}/analyze`, {
+    method: 'POST',
+    cache: 'no-store'
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to analyze case: ${res.status} ${res.statusText}`);
   }
-  return mockCase;
+  const raw = await res.json();
+  return {
+    id: raw.case_id || raw.id,
+    name: raw.name || "Analysis Result",
+    description: raw.description || "Forensic case analysis",
+    artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
+  };
 }
 
 export async function runFullIngestionAndAnalysis(fileOrSample: File | string): Promise<Case> {
@@ -261,53 +247,45 @@ export async function runFullIngestionAndAnalysis(fileOrSample: File | string): 
 }
 
 export async function fetchCase(caseId = 'case_001'): Promise<Case | null> {
-  if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/cases/${caseId}`, { cache: 'no-store' });
-      if (res.ok) {
-        const raw = await res.json();
-        return {
-          id: raw.case_id || raw.id,
-          name: raw.name,
-          description: raw.description,
-          artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
-        };
-      }
-    } catch (e) {
-      console.warn("Backend unreachable in fetchCase", e);
+  try {
+    const res = await fetch(`${API_BASE}/api/cases/${caseId}`, { cache: 'no-store' });
+    if (res.ok) {
+      const raw = await res.json();
+      return {
+        id: raw.case_id || raw.id,
+        name: raw.name,
+        description: raw.description,
+        artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
+      };
     }
-    return null;
+  } catch (e) {
+    console.warn("Backend unreachable in fetchCase", e);
   }
-  return mockCase;
+  return null;
 }
 
 export async function fetchArtifacts(caseId = 'case_001'): Promise<Artifact[]> {
-  if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/cases/${caseId}/artifacts`, { cache: 'no-store' });
-      if (res.ok) {
-        const rawArray = await res.json();
-        return rawArray.map(normalizeBackendArtifact);
-      }
-    } catch (e) {
-      console.warn("Backend unreachable in fetchArtifacts", e);
+  try {
+    const res = await fetch(`${API_BASE}/api/cases/${caseId}/artifacts`, { cache: 'no-store' });
+    if (res.ok) {
+      const rawArray = await res.json();
+      return rawArray.map(normalizeBackendArtifact);
     }
-    return [];
+  } catch (e) {
+    console.warn("Backend unreachable in fetchArtifacts", e);
   }
-  return mockArtifacts;
+  return [];
 }
 
 export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
-  if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/artifacts/${artifactId}`, { cache: 'no-store' });
-      if (res.ok) {
-        const raw = await res.json();
-        return normalizeBackendArtifact(raw);
-      }
-    } catch (e) {
-      console.warn("Backend unreachable in fetchArtifactById", e);
+  try {
+    const res = await fetch(`${API_BASE}/api/artifacts/${artifactId}`, { cache: 'no-store' });
+    if (res.ok) {
+      const raw = await res.json();
+      return normalizeBackendArtifact(raw);
     }
+  } catch (e) {
+    console.warn("Backend unreachable in fetchArtifactById", e);
   }
   
   if (typeof window !== 'undefined') {
@@ -322,10 +300,6 @@ export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
     }
   }
 
-  if (USE_MOCK) {
-    const artifact = mockArtifacts.find(a => a.id === artifactId);
-    if (artifact) return artifact;
-  }
   throw new Error("Artifact not found");
 }
 
@@ -334,51 +308,34 @@ export async function fetchArtifactExplanation(artifactId: string, forceRefresh 
     return { ...explanationCache.get(artifactId)!, cached: true };
   }
 
-  let explanation: AIExplanation | null = null;
-  if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/artifacts/${artifactId}/explain`, {
-        method: 'POST',
-        cache: 'no-store'
-      });
-      if (res.ok) {
-        const rawData = await res.json();
-        explanation = parseAiSummary(rawData);
-        if (explanation) {
-          // The backend json might contain 'cached'
-          explanation.cached = rawData.cached === true;
-        }
+  try {
+    const res = await fetch(`${API_BASE}/api/artifacts/${artifactId}/explain`, {
+      method: 'POST',
+      cache: 'no-store'
+    });
+    if (res.ok) {
+      const rawData = await res.json();
+      const explanation = parseAiSummary(rawData);
+      if (explanation) {
+        // The backend json might contain 'cached'
+        explanation.cached = rawData.cached === true;
+        explanationCache.set(artifactId, explanation);
+        return explanation;
       }
-    } catch (e) {
-      console.warn("Backend unreachable in fetchArtifactExplanation", e);
     }
-  }
-  
-  if (!explanation && USE_MOCK) {
-    const artifact = mockArtifacts.find(a => a.id === artifactId);
-    if (artifact && artifact.ai_summary) {
-      explanation = { ...artifact.ai_summary, cached: true };
-    }
+  } catch (e) {
+    console.warn("Backend unreachable in fetchArtifactExplanation", e);
   }
 
-  if (!explanation) {
-    throw new Error("Explanation not available");
-  }
-
-  explanation.cached = explanation.cached ?? false;
-  explanationCache.set(artifactId, explanation);
-  return explanation;
+  throw new Error("Explanation not available");
 }
 
 export async function fetchGroundTruth(caseId = 'case_001'): Promise<import('./types').GroundTruth> {
-  if (!USE_MOCK) {
-    const res = await fetch(`${API_BASE}/api/cases/${caseId}/groundtruth`, { cache: 'no-store' });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch ground truth: ${res.status} ${res.statusText}`);
-    }
-    return await res.json();
+  const res = await fetch(`${API_BASE}/api/cases/${caseId}/groundtruth`, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ground truth: ${res.status} ${res.statusText}`);
   }
-  return mockGroundTruth;
+  return await res.json();
 }
 
 /**
