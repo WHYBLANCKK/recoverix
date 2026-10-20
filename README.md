@@ -1,11 +1,19 @@
-# Recoverix
+<p align="center">
+  <img src="docs/assets/recoverix-banner.png" alt="Recoverix — Deterministic Digital Evidence Recovery" width="680" style="max-width: 100%; height: auto;" />
+</p>
 
-### Deterministic Digital Evidence Recovery & Structural Reconstruction Engine
+<p align="center">
+  <strong>Deterministic Digital Evidence Recovery &amp; Structural Reconstruction Engine</strong>
+  <br />
+  <em>Recoverix does not guess what was lost. It proves what can be recovered.</em>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://www.python.org/)
-[![Next.js: 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
-[![Tests: Passing](https://img.shields.io/badge/Tests-Passing-success.svg)](tests/)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10+-brightgreen.svg" alt="Python: 3.10+" /></a>
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black.svg" alt="Next.js: 16" /></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Tests-Passing-success.svg" alt="Tests: Passing" /></a>
+</p>
 
 Recoverix is an open-source digital evidence recovery and analysis engine designed to identify, validate, and reconstruct damaged, fragmented, and partially corrupted files without synthetic guessing or probabilistic hallucination.
 
@@ -18,7 +26,7 @@ The engine combines deterministic stream carving, format-specific structural rec
 
 ## Core Product Principle
 
-> **"Recoverix does not guess what was lost. It reconstructs only what the available evidence supports and makes uncertainty explicit."**
+> **"Recoverix does not guess what was lost. It proves what can be recovered."**
 
 Recoverix operates on strict deterministic principles:
 1. **No Fabricated Content**: Missing payload data is never invented, synthesized, or predicted using probabilistic heuristics or generative language models.

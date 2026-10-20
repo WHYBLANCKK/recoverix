@@ -18,8 +18,8 @@ export function TopNav() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Brand */}
         <div className="flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-2 group">
-            <RecoverixLogo size={32} variant="navy" subtitle="DIGITAL EVIDENCE RECOVERY PLATFORM" />
+          <Link href="/" className="flex items-center gap-2 group" aria-label="Recoverix Home">
+            <RecoverixLogo size={32} variant="navy" subtitle="DIGITAL EVIDENCE RECOVERY PLATFORM" priority />
           </Link>
 
           {!isLanding && (
