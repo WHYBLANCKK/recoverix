@@ -11,7 +11,7 @@ import hashlib
 import time
 import uuid
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 
 from backend.app.models.case import CaseResponse, EvidenceMetadata
@@ -93,7 +93,12 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
     # ── CaseRepository Implementation ────────────────────────────────────
 
-    def create_case(self, name: str, description: Optional[str] = None) -> CaseResponse:
+    def create_case(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> CaseResponse:
         """Create and store a new forensic case.
 
         Raises:
@@ -113,16 +118,19 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 "created_at": created_at,
                 "evidence": None,
                 "artifact_count": 0,
+                "session_id": session_id,
             }
             self._cases[case_id] = case_data
             self._case_artifacts[case_id] = []
             return CaseResponse(**case_data)
 
-    def get_case(self, case_id: str) -> Optional[CaseResponse]:
+    def get_case(self, case_id: str, session_id: Optional[str] = None) -> Optional[CaseResponse]:
         """Retrieve case response model by case_id."""
         with self._lock:
             case_data = self._cases.get(case_id)
             if case_data is None:
+                return None
+            if session_id is not None and case_data.get("session_id") is not None and case_data.get("session_id") != session_id:
                 return None
 
             # Recalculate artifact_count from registered artifacts
@@ -130,11 +138,13 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             case_copy["artifact_count"] = len(self._case_artifacts.get(case_id, []))
             return CaseResponse(**case_copy)
 
-    def list_cases(self) -> List[CaseResponse]:
-        """List all stored cases."""
+    def list_cases(self, session_id: Optional[str] = None) -> List[CaseResponse]:
+        """List stored cases."""
         with self._lock:
             res: List[CaseResponse] = []
             for cid, cdata in self._cases.items():
+                if session_id is not None and cdata.get("session_id") is not None and cdata.get("session_id") != session_id:
+                    continue
                 ccopy = dict(cdata)
                 ccopy["artifact_count"] = len(self._case_artifacts.get(cid, []))
                 res.append(CaseResponse(**ccopy))
@@ -270,23 +280,33 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
             return record
 
-    def get_artifact(self, artifact_id: str) -> Optional[ArtifactResponse]:
+    def get_artifact(self, artifact_id: str, session_id: Optional[str] = None) -> Optional[ArtifactResponse]:
         """Get an artifact as API ArtifactResponse by artifact_id."""
         with self._lock:
             record = self._artifacts.get(artifact_id)
             if record is None:
                 return None
+            if session_id is not None and record.session_id is not None and record.session_id != session_id:
+                return None
             return record.to_artifact_response()
 
-    def get_artifact_record(self, artifact_id: str) -> Optional[ArtifactRecord]:
+    def get_artifact_record(self, artifact_id: str, session_id: Optional[str] = None) -> Optional[ArtifactRecord]:
         """Get internal ArtifactRecord by artifact_id."""
         with self._lock:
-            return self._artifacts.get(artifact_id)
+            rec = self._artifacts.get(artifact_id)
+            if rec is None:
+                return None
+            if session_id is not None and rec.session_id is not None and rec.session_id != session_id:
+                return None
+            return rec
 
-    def get_case_artifacts(self, case_id: str) -> Optional[List[ArtifactResponse]]:
+    def get_case_artifacts(self, case_id: str, session_id: Optional[str] = None) -> Optional[List[ArtifactResponse]]:
         """Get all artifacts for a given case_id. Returns None if case does not exist."""
         with self._lock:
             if case_id not in self._cases:
+                return None
+            case_data = self._cases[case_id]
+            if session_id is not None and case_data.get("session_id") is not None and case_data.get("session_id") != session_id:
                 return None
             art_ids = self._case_artifacts.get(case_id, [])
             return [self._artifacts[aid].to_artifact_response() for aid in art_ids if aid in self._artifacts]
@@ -302,8 +322,12 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 if rec.metadata is not None:
                     rec.metadata["sha256"] = digest
 
-    def get_artifact_bytes(self, artifact_id: str) -> Optional[bytes]:
+    def get_artifact_bytes(self, artifact_id: str, session_id: Optional[str] = None) -> Optional[bytes]:
         """Get raw bytes of a recovered artifact by artifact_id from artifact BlobStore."""
+        if session_id is not None:
+            rec = self.get_artifact_record(artifact_id, session_id=session_id)
+            if rec is None:
+                return None
         return self._artifact_blobs.get(artifact_id)
 
     def update_artifact_ai_summary(self, artifact_id: str, ai_summary: str) -> None:
@@ -334,12 +358,22 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
     # ── Pipeline B Harmonized Methods ────────────────────────────────────
 
-    def store_recovered_file(self, file_id: str, metadata: dict, content: bytes) -> dict:
+    def store_recovered_file(
+        self,
+        file_id: str,
+        metadata: dict,
+        content: bytes,
+        session_id: Optional[str] = None,
+    ) -> dict:
         """Store single recovered file metadata and raw bytes into unified artifact storage."""
+        if session_id:
+            metadata["session_id"] = session_id
         content_sha = hashlib.sha256(content).hexdigest() if content else None
         if content_sha:
             metadata["sha256"] = content_sha
         record = ArtifactRecord.from_file_recovery_dict(metadata)
+        if session_id:
+            record.session_id = session_id
         if content_sha:
             record.sha256 = content_sha
         self.save_artifact_record(record)
@@ -350,17 +384,42 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             self.link_artifact_to_run(file_id, record.run_id)
         return metadata
 
-    def get_recovered_file_metadata(self, file_id: str) -> Optional[dict]:
+    def get_recovered_file_metadata(self, file_id: str, session_id: Optional[str] = None) -> Optional[dict]:
         """Get single recovered file metadata by file_id from unified artifact storage."""
-        with self._lock:
-            record = self._artifacts.get(file_id)
-            if record is None:
-                return None
-            return record.to_file_recovery_dict()
+        record = self.get_artifact_record(file_id, session_id=session_id)
+        if record is None:
+            return None
+        return record.to_file_recovery_dict()
 
-    def get_recovered_file_bytes(self, file_id: str) -> Optional[bytes]:
+    def get_recovered_file_bytes(self, file_id: str, session_id: Optional[str] = None) -> Optional[bytes]:
         """Get raw bytes of a single recovered file from artifact BlobStore."""
-        return self.get_artifact_bytes(file_id)
+        return self.get_artifact_bytes(file_id, session_id=session_id)
+
+    def delete_recovered_file(self, file_id: str, session_id: Optional[str] = None) -> bool:
+        """Atomically delete single recovered file, its blobs, linkages, and corresponding recovery run."""
+        with self._lock:
+            art = self._artifacts.get(file_id)
+            run = self._recovery_runs.get(file_id)
+            if art is None and run is None:
+                return False
+
+            rec_sess = (art.session_id if art else None) or (run.session_id if run else None)
+            if session_id is not None and rec_sess is not None and rec_sess != session_id:
+                return False
+
+            target_art_id = art.artifact_id if art else (run.artifact_id if run else file_id)
+            target_run_id = (art.run_id if art else None) or (run.run_id if run else None)
+
+            if target_art_id:
+                self.delete_artifact(target_art_id)
+            if target_run_id and target_run_id in self._recovery_runs:
+                self._recovery_runs.pop(target_run_id, None)
+
+            return True
+
+    def delete_recovery_run(self, run_id: str, session_id: Optional[str] = None) -> bool:
+        """Atomically delete recovery run, its linkages, and associated standalone artifact."""
+        return self.delete_recovered_file(run_id, session_id=session_id)
 
     def purge_expired_recovered_files(self, ttl_hours: int = 24) -> int:
         """Purge standalone recovered files older than ttl_hours in memory."""
@@ -377,6 +436,15 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             for art_id in expired_ids:
                 if self.delete_artifact(art_id):
                     purged += 1
+
+            # Also purge expired standalone recovery runs
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+            expired_run_ids = [
+                rid for rid, r in self._recovery_runs.items()
+                if r.case_id is None and r.started_at < cutoff_dt
+            ]
+            for rid in expired_run_ids:
+                self._recovery_runs.pop(rid, None)
 
         return purged
 
@@ -396,22 +464,41 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 self._artifact_runs[run.artifact_id] = run.run_id
             return run
 
-    def get_recovery_run(self, run_id: str) -> Optional[RecoveryRun]:
+    def set_recovery_run_session(self, run_id: str, session_id: str) -> None:
+        """Associate an existing RecoveryRun with an active session_id."""
+        with self._lock:
+            if run_id in self._recovery_runs:
+                self._recovery_runs[run_id].session_id = session_id
+
+    def get_recovery_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[RecoveryRun]:
         """Retrieve RecoveryRun by run_id."""
         with self._lock:
-            return self._recovery_runs.get(run_id)
+            run = self._recovery_runs.get(run_id)
+            if run is None:
+                return None
+            if session_id is not None and run.session_id is not None and run.session_id != session_id:
+                return None
+            return run
 
-    def list_recovery_runs(self) -> List[RecoveryRun]:
+    def list_recovery_runs(self, session_id: Optional[str] = None) -> List[RecoveryRun]:
         """List all stored RecoveryRun models."""
         with self._lock:
+            if session_id is not None:
+                return [r for r in self._recovery_runs.values() if r.session_id == session_id]
             return list(self._recovery_runs.values())
 
-    def get_case_recovery_runs(self, case_id: str) -> Optional[List[RecoveryRun]]:
+    def get_case_recovery_runs(self, case_id: str, session_id: Optional[str] = None) -> Optional[List[RecoveryRun]]:
         """Retrieve all RecoveryRun instances associated with a case_id, or None if case not found."""
         with self._lock:
             if case_id not in self._cases:
                 return None
-            return [run for run in self._recovery_runs.values() if run.case_id == case_id]
+            case_data = self._cases[case_id]
+            if session_id is not None and case_data.get("session_id") is not None and case_data.get("session_id") != session_id:
+                return None
+            runs = [run for run in self._recovery_runs.values() if run.case_id == case_id]
+            if session_id is not None:
+                runs = [r for r in runs if r.session_id is None or r.session_id == session_id]
+            return runs
 
     def link_artifact_to_run(self, artifact_id: str, run_id: str) -> None:
         """Establish relationship between an artifact and a RecoveryRun."""

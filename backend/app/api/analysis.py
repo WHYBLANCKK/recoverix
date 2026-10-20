@@ -138,6 +138,11 @@ def analyze_case(case_id: str) -> AnalysisSummaryResponse:
                 artifact_id=artifact_id,
             )
 
+            if case.session_id:
+                art_resp.session_id = case.session_id
+                run.session_id = case.session_id
+                store.set_recovery_run_session(run.run_id, case.session_id)
+
             # Preserve prior ai_summary if present
             if matched_art is not None and matched_art.ai_summary is not None and art_resp.ai_summary is None:
                 art_resp.ai_summary = matched_art.ai_summary

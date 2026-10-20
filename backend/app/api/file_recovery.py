@@ -101,21 +101,25 @@ class FileRecoveryResponse(BaseModel):
     investigator: Optional[str] = None
     notes: Optional[str] = None
     sha256: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 router = APIRouter(tags=["file_recovery"])
+from backend.app.session import get_session_id, get_or_create_session
 
 
 @router.post("/recover-file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="recover_single_file")
 @router.post("/recover/file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="recover_single_file_alias")
 async def recover_single_file(
     request: Request,
+    response: Response,
     file: UploadFile = File(...),
     case_name: Optional[str] = Form(None),
     investigator: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
 ) -> FileRecoveryResponse:
     """Upload a single evidence file for deterministic byte recovery and validation."""
+    session_id, _ = get_or_create_session(request, response)
     cl_header = request.headers.get("content-length")
     if cl_header and cl_header.strip().isdigit():
         content_len = int(cl_header.strip())
@@ -182,6 +186,9 @@ async def recover_single_file(
         investigator=clean_investigator,
         notes=clean_notes,
     )
+    recovery_run.session_id = session_id
+    if session_id:
+        store.set_recovery_run_session(recovery_run.run_id, session_id)
 
     # Re-map from recovery_run
     fmt = recovery_run.format
@@ -265,22 +272,30 @@ async def recover_single_file(
     meta_dict["case_name"] = clean_case_name
     meta_dict["investigator"] = clean_investigator
     meta_dict["notes"] = clean_notes
+    meta_dict["session_id"] = session_id
 
     content_sha = hashlib.sha256(recovered_content).hexdigest() if recovered_content else None
     if content_sha:
         meta_dict["sha256"] = content_sha
 
-    store.store_recovered_file(file_id, meta_dict, recovered_content)
+    store.store_recovered_file(file_id, meta_dict, recovered_content, session_id=session_id)
 
     return FileRecoveryResponse(**meta_dict)
 
 
 @router.get("/recover-file/{file_id}", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="get_recovered_file_metadata")
 @router.get("/recover/file/{file_id}", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="get_recovered_file_metadata_alias")
-def get_recovered_file_metadata(file_id: str) -> FileRecoveryResponse:
+def get_recovered_file_metadata(file_id: str, request: Request) -> FileRecoveryResponse:
     """Retrieve metadata and real forensic fragments of a previously recovered file."""
+    session_id = get_session_id(request)
     meta = store.get_recovered_file_metadata(file_id)
     if meta is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recovered file '{file_id}' not found",
+        )
+    meta_session = meta.get("session_id")
+    if meta_session is not None and (session_id is None or meta_session != session_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Recovered file '{file_id}' not found",
@@ -299,13 +314,20 @@ def get_recovered_file_metadata(file_id: str) -> FileRecoveryResponse:
 
 @router.get("/recover-file/{file_id}/download", status_code=status.HTTP_200_OK, operation_id="download_recovered_file")
 @router.get("/recover/file/{file_id}/download", status_code=status.HTTP_200_OK, operation_id="download_recovered_file_alias")
-def download_recovered_file(file_id: str) -> Response:
+def download_recovered_file(file_id: str, request: Request) -> Response:
     """Download raw byte buffer of a recovered single file with strict SHA-256 integrity verification."""
+    session_id = get_session_id(request)
     record = store.get_artifact_record(file_id)
     if record is None:
         run = store.get_recovery_run(file_id) or store.get_recovery_run_by_artifact(file_id)
         if run and run.artifact_id:
             record = store.get_artifact_record(run.artifact_id)
+
+    if record is not None and record.session_id is not None and (session_id is None or record.session_id != session_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recovered file '{file_id}' not found or unrecoverable",
+        )
 
     content = store.get_recovered_file_bytes(file_id)
     if content is None and record is not None:
@@ -342,10 +364,17 @@ def download_recovered_file(file_id: str) -> Response:
 
 @router.post("/recover-file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK, operation_id="explain_recovered_file")
 @router.post("/recover/file/{file_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK, operation_id="explain_recovered_file_alias")
-def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+def explain_recovered_file(file_id: str, request: Request, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
     """Generate or retrieve a cached grounded evidence interpretation for a single recovered file."""
+    session_id = get_session_id(request)
     meta = store.get_recovered_file_metadata(file_id)
     if meta is not None:
+        meta_session = meta.get("session_id")
+        if meta_session is not None and (session_id is None or meta_session != session_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Recovered file '{file_id}' not found",
+            )
         explanation = explain_artifact(file_id, meta)
         try:
             exp_str = json.dumps(explanation) if isinstance(explanation, dict) else str(explanation)
@@ -356,6 +385,11 @@ def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(N
 
     run = store.get_recovery_run(file_id) or store.get_recovery_run_by_artifact(file_id)
     if run is not None:
+        if run.session_id is not None and (session_id is None or run.session_id != session_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Recovered file '{file_id}' not found",
+            )
         explanation = explain_artifact(file_id, run)
         try:
             exp_str = json.dumps(explanation) if isinstance(explanation, dict) else str(explanation)
@@ -367,6 +401,11 @@ def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(N
 
     artifact = store.get_artifact(file_id)
     if artifact is not None:
+        if artifact.session_id is not None and (session_id is None or artifact.session_id != session_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Recovered file '{file_id}' not found",
+            )
         return explain_artifact(file_id, artifact)
 
     if body and isinstance(body, dict):
@@ -376,3 +415,22 @@ def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(N
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Recovered file '{file_id}' not found",
     )
+
+
+@router.delete("/recover-file/{file_id}", status_code=status.HTTP_200_OK, operation_id="delete_recovered_file")
+@router.delete("/recover/file/{file_id}", status_code=status.HTTP_200_OK, operation_id="delete_recovered_file_alias")
+def delete_recovered_file_route(file_id: str, request: Request) -> Dict[str, Any]:
+    """Delete a recovered single file, its blobs, and execution trace immediately."""
+    session_id = get_session_id(request)
+    if not session_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recovered file '{file_id}' not found",
+        )
+    deleted = store.delete_recovered_file(file_id, session_id=session_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recovered file '{file_id}' not found",
+        )
+    return {"status": "DELETED", "file_id": file_id}

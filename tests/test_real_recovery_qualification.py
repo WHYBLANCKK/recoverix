@@ -410,6 +410,7 @@ def test_full_lifecycle_upload_persist_restart_retrieve_and_download_gate():
 
         # 2. Simulate complete application restart by creating fresh TestClient
         restarted_client = TestClient(app, raise_server_exceptions=False)
+        restarted_client.cookies.update(client.cookies)
 
         # 3. Retrieve run from database
         resp_get = restarted_client.get(f"/api/recovery-runs/{run_id}")

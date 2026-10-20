@@ -33,3 +33,4 @@ class CaseResponse(BaseModel):
     created_at: str
     evidence: Optional[EvidenceMetadata] = None
     artifact_count: int = 0
+    session_id: Optional[str] = None

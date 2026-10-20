@@ -314,6 +314,10 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Prevent caching of sensitive forensic API responses and downloaded payloads
+    if request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-store, no-cache, private, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -322,9 +326,10 @@ async def security_headers_middleware(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "ETag", "X-Artifact-SHA256", "X-Session-Token", "Retry-After"],
 )
 
 # Include routers matching locked API contract

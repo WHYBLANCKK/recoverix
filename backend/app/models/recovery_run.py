@@ -125,6 +125,7 @@ class RecoveryRun(BaseModel):
     case_name: Optional[str] = None
     investigator: Optional[str] = None
     notes: Optional[str] = None
+    session_id: Optional[str] = None
 
     @model_validator(mode="after")
     def verify_recovery_run_invariants(self) -> "RecoveryRun":

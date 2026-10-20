@@ -45,6 +45,7 @@ class ArtifactResponse(BaseModel):
     ai_summary: Optional[str] = None
     content_preview: Optional[str] = None
     sha256: Optional[str] = None
+    session_id: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -82,6 +83,7 @@ class ArtifactRecord(BaseModel):
     priority: Optional[str] = None
     ai_summary: Optional[str] = None
     sha256: Optional[str] = None
+    session_id: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     corrupted_fields: Optional[List[str]] = None
 
@@ -154,6 +156,7 @@ class ArtifactRecord(BaseModel):
             ai_summary=self.ai_summary,
             content_preview=self.content_preview,
             sha256=self.sha256,
+            session_id=self.session_id,
             metadata=meta,
         )
 
@@ -186,6 +189,7 @@ class ArtifactRecord(BaseModel):
             "total_input_bytes": self.total_input_bytes,
             "provenance": self.provenance,
             "corrupted_fields": self.corrupted_fields,
+            "session_id": self.session_id,
         }
 
     @classmethod
@@ -250,6 +254,7 @@ class ArtifactRecord(BaseModel):
             priority=art.priority,
             ai_summary=art.ai_summary,
             sha256=art.sha256 or (art.metadata.get("sha256") if art.metadata else None),
+            session_id=art.session_id,
             metadata=dict(art.metadata),
             corrupted_fields=corrupted_fields,
         )
@@ -324,6 +329,7 @@ class ArtifactRecord(BaseModel):
             damage_regions=meta.get("damage_regions"),
             reconstruction_steps=meta.get("reconstruction_steps"),
             sha256=meta.get("sha256") or (meta.get("metadata", {}).get("sha256") if isinstance(meta.get("metadata"), dict) else None),
+            session_id=meta.get("session_id"),
             metadata=metadata_dict,
             corrupted_fields=corrupted_fields,
         )

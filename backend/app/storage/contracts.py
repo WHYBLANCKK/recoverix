@@ -133,6 +133,10 @@ class RecoveryRunRepository(Protocol):
         """Persist a canonical RecoveryRun exactly once."""
         ...
 
+    def set_recovery_run_session(self, run_id: str, session_id: str) -> None:
+        """Associate an existing RecoveryRun with an active session_id."""
+        ...
+
     def get_recovery_run(self, run_id: str) -> Optional[RecoveryRun]:
         """Retrieve RecoveryRun by run_id."""
         ...

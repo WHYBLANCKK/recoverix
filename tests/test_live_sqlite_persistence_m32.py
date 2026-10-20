@@ -382,6 +382,7 @@ def test_f_full_application_recovery_persistence(tmp_path):
     # Reopen same DB file on the application store
     app_store.store.reconfigure(db_file)
     client_reopened = TestClient(app)
+    client_reopened.cookies.update(client.cookies)
 
     # A. Verify Pipeline B recovered file survived restart
     get_file_res = client_reopened.get(f"/api/recover-file/{file_id}")

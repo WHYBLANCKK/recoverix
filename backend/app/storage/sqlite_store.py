@@ -141,6 +141,12 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
     if status_val not in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED") or val_status_row != "PASSED":
         is_dl = False
 
+    session_id_val = None
+    if "session_id" in row.keys() and row["session_id"]:
+        session_id_val = str(row["session_id"])
+    elif isinstance(metadata_dict, dict) and metadata_dict.get("session_id"):
+        session_id_val = str(metadata_dict["session_id"])
+
     return ArtifactRecord(
         artifact_id=row["artifact_id"],
         case_id=row["case_id"],
@@ -169,6 +175,7 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         priority=row["priority"],
         ai_summary=row["ai_summary"],
         sha256=sha256_val,
+        session_id=session_id_val,
         metadata=metadata_dict,
         corrupted_fields=corrupted_fields if corrupted_fields else None,
     )
@@ -261,6 +268,7 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
     case_name = row["case_name"] if ("case_name" in row.keys() and row["case_name"]) else (provenance.get("case_name") if provenance else None)
     investigator = row["investigator"] if ("investigator" in row.keys() and row["investigator"]) else (provenance.get("investigator") if provenance else None)
     notes = row["notes"] if ("notes" in row.keys() and row["notes"]) else (provenance.get("notes") if provenance else None)
+    session_id = row["session_id"] if ("session_id" in row.keys() and row["session_id"]) else None
 
     return RecoveryRun(
         run_id=row["run_id"],
@@ -274,6 +282,7 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         case_name=case_name,
         investigator=investigator,
         notes=notes,
+        session_id=session_id,
         started_at=started_at,
         completed_at=completed_at,
         total_input_bytes=int(row["total_input_bytes"]),
@@ -601,7 +610,12 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
     # ── CaseRepository Implementation ────────────────────────────────────
 
-    def create_case(self, name: str, description: Optional[str] = None) -> CaseResponse:
+    def create_case(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> CaseResponse:
         """Create and store a new forensic case.
 
         Raises:
@@ -618,10 +632,10 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         with self._engine.transaction() as cursor:
             cursor.execute(
                 """
-                INSERT INTO cases (case_id, name, description, created_at)
-                VALUES (?, ?, ?, ?);
+                INSERT INTO cases (case_id, name, description, created_at, session_id)
+                VALUES (?, ?, ?, ?, ?);
                 """,
-                (case_id, clean_name, clean_desc, created_at),
+                (case_id, clean_name, clean_desc, created_at, session_id),
             )
 
         return CaseResponse(
@@ -631,14 +645,15 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             created_at=created_at,
             evidence=None,
             artifact_count=0,
+            session_id=session_id,
         )
 
-    def get_case(self, case_id: str) -> Optional[CaseResponse]:
+    def get_case(self, case_id: str, session_id: Optional[str] = None) -> Optional[CaseResponse]:
         """Retrieve case response model by case_id with dynamic artifact count."""
         with self._engine.transaction() as cursor:
             cursor.execute(
                 """
-                SELECT case_id, name, description, created_at
+                SELECT case_id, name, description, created_at, session_id
                 FROM cases
                 WHERE case_id = ?;
                 """,
@@ -646,6 +661,10 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             )
             case_row = cursor.fetchone()
             if case_row is None:
+                return None
+
+            c_session = case_row["session_id"] if "session_id" in case_row.keys() else None
+            if session_id is not None and c_session is not None and c_session != session_id:
                 return None
 
             cursor.execute(
@@ -681,22 +700,27 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 created_at=case_row["created_at"],
                 evidence=evidence,
                 artifact_count=artifact_count,
+                session_id=c_session,
             )
 
-    def list_cases(self) -> List[CaseResponse]:
-        """List all stored cases in creation order with dynamic artifact counts."""
+    def list_cases(self, session_id: Optional[str] = None) -> List[CaseResponse]:
+        """List stored cases in creation order with dynamic artifact counts."""
         with self._engine.transaction() as cursor:
-            cursor.execute(
-                """
+            query = """
                 SELECT 
-                    c.case_id, c.name, c.description, c.created_at,
+                    c.case_id, c.name, c.description, c.created_at, c.session_id,
                     e.filename, e.file_size, e.uploaded_at, e.sha256,
                     (SELECT COUNT(*) FROM artifacts a WHERE a.case_id = c.case_id) AS artifact_count
                 FROM cases c
                 LEFT JOIN evidence_files e ON c.case_id = e.case_id
-                ORDER BY c.rowid ASC;
-                """
-            )
+            """
+            params: list[Any] = []
+            if session_id is not None:
+                query += " WHERE c.session_id = ? "
+                params.append(session_id)
+            query += " ORDER BY c.rowid ASC;"
+
+            cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
             results: List[CaseResponse] = []
             for r in rows:
@@ -716,6 +740,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                         created_at=r["created_at"],
                         evidence=ev,
                         artifact_count=r["artifact_count"],
+                        session_id=r["session_id"] if "session_id" in r.keys() else None,
                     )
                 )
             return results
@@ -887,7 +912,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 is_downloadable, download_url, content_preview, category, priority,
                 ai_summary, score_breakdown_json, provenance_json, validation_details_json,
                 metadata_json, fragments_json, damage_regions_json, reconstruction_steps_json,
-                created_at, sha256
+                created_at, sha256, session_id
             ) VALUES (
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -895,7 +920,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?
+                ?, ?, ?
             )
             ON CONFLICT(artifact_id) DO UPDATE SET
                 case_id = excluded.case_id,
@@ -924,7 +949,8 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 fragments_json = excluded.fragments_json,
                 damage_regions_json = excluded.damage_regions_json,
                 reconstruction_steps_json = excluded.reconstruction_steps_json,
-                sha256 = COALESCE(excluded.sha256, artifacts.sha256);
+                sha256 = COALESCE(excluded.sha256, artifacts.sha256),
+                session_id = COALESCE(excluded.session_id, artifacts.session_id);
             """,
             (
                 record.artifact_id,
@@ -956,6 +982,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 json.dumps(record.reconstruction_steps) if record.reconstruction_steps is not None else None,
                 created_at_val,
                 sha256_val,
+                record.session_id or (meta_dict.get("session_id") if isinstance(meta_dict, dict) else None),
             ),
         )
 
@@ -989,15 +1016,15 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         with self._engine.transaction() as cur:
             return self._save_artifact_record_on_cursor(cur, record)
 
-    def get_artifact(self, artifact_id: str) -> Optional[ArtifactResponse]:
-        """Get an artifact as API ArtifactResponse by artifact_id."""
-        record = self.get_artifact_record(artifact_id)
+    def get_artifact(self, artifact_id: str, session_id: Optional[str] = None) -> Optional[ArtifactResponse]:
+        """Get an artifact as API ArtifactResponse by artifact_id, verifying session ownership if provided."""
+        record = self.get_artifact_record(artifact_id, session_id=session_id)
         if record is None:
             return None
         return record.to_artifact_response()
 
-    def get_artifact_record(self, artifact_id: str) -> Optional[ArtifactRecord]:
-        """Get internal ArtifactRecord by artifact_id with authoritative run_id."""
+    def get_artifact_record(self, artifact_id: str, session_id: Optional[str] = None) -> Optional[ArtifactRecord]:
+        """Get internal ArtifactRecord by artifact_id with authoritative run_id and session verification."""
         with self._engine.transaction() as cursor:
             cursor.execute(
                 """
@@ -1023,13 +1050,19 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 if "run_id" not in record.metadata:
                     record.metadata["run_id"] = link_row["run_id"]
 
+            if session_id is not None and record.session_id is not None and record.session_id != session_id:
+                return None
+
             return record
 
-    def get_case_artifacts(self, case_id: str) -> Optional[List[ArtifactResponse]]:
+    def get_case_artifacts(self, case_id: str, session_id: Optional[str] = None) -> Optional[List[ArtifactResponse]]:
         """Get all artifacts for a given case_id. Returns None if case does not exist."""
         with self._engine.transaction() as cursor:
-            cursor.execute("SELECT 1 FROM cases WHERE case_id = ?;", (case_id,))
-            if cursor.fetchone() is None:
+            cursor.execute("SELECT session_id FROM cases WHERE case_id = ?;", (case_id,))
+            case_row = cursor.fetchone()
+            if case_row is None:
+                return None
+            if session_id is not None and case_row["session_id"] is not None and case_row["session_id"] != session_id:
                 return None
 
             cursor.execute(
@@ -1120,8 +1153,12 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         with self._engine.transaction() as cur:
             return self._store_case_artifact_on_cursor(cur, artifact, content, run)
 
-    def get_artifact_bytes(self, artifact_id: str) -> Optional[bytes]:
+    def get_artifact_bytes(self, artifact_id: str, session_id: Optional[str] = None) -> Optional[bytes]:
         """Get raw bytes of a recovered artifact by artifact_id from artifact BlobStore."""
+        if session_id is not None:
+            record = self.get_artifact_record(artifact_id, session_id=session_id)
+            if record is None:
+                return None
         return self._artifact_blobs.get(artifact_id)
 
     def update_artifact_ai_summary(self, artifact_id: str, ai_summary: str) -> None:
@@ -1158,12 +1195,22 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
     # ── Pipeline B Harmonized Methods ────────────────────────────────────
 
-    def store_recovered_file(self, file_id: str, metadata: dict, content: bytes) -> dict:
+    def store_recovered_file(
+        self,
+        file_id: str,
+        metadata: dict,
+        content: bytes,
+        session_id: Optional[str] = None,
+    ) -> dict:
         """Store single recovered file metadata and raw bytes into unified artifact storage."""
+        if session_id:
+            metadata["session_id"] = session_id
         content_sha = hashlib.sha256(content).hexdigest() if content else None
         if content_sha:
             metadata["sha256"] = content_sha
         record = ArtifactRecord.from_file_recovery_dict(metadata)
+        if session_id:
+            record.session_id = session_id
         if content_sha:
             record.sha256 = content_sha
         with self._engine.transaction() as cursor:
@@ -1173,16 +1220,93 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 self.link_artifact_to_run(file_id, record.run_id, cursor=cursor)
         return metadata
 
-    def get_recovered_file_metadata(self, file_id: str) -> Optional[dict]:
+    def get_recovered_file_metadata(self, file_id: str, session_id: Optional[str] = None) -> Optional[dict]:
         """Get single recovered file metadata by file_id from unified artifact storage."""
-        record = self.get_artifact_record(file_id)
+        record = self.get_artifact_record(file_id, session_id=session_id)
         if record is None:
             return None
         return record.to_file_recovery_dict()
 
-    def get_recovered_file_bytes(self, file_id: str) -> Optional[bytes]:
+    def get_recovered_file_bytes(self, file_id: str, session_id: Optional[str] = None) -> Optional[bytes]:
         """Get raw bytes of a single recovered file from artifact BlobStore."""
-        return self.get_artifact_bytes(file_id)
+        return self.get_artifact_bytes(file_id, session_id=session_id)
+
+    def delete_recovered_file(self, file_id: str, session_id: Optional[str] = None) -> bool:
+        """Atomically delete single recovered file, its blobs, linkages, and corresponding recovery run.
+
+        Enforces session ownership check if session_id is provided.
+        Returns True if deleted, False if not found or unauthorized.
+        """
+        with self._engine.transaction() as cursor:
+            # 1. Fetch artifact record to check ownership and find run_id
+            cursor.execute(
+                "SELECT artifact_id, run_id, session_id FROM artifacts WHERE artifact_id = ?;",
+                (file_id,),
+            )
+            art_row = cursor.fetchone()
+
+            # Also check if file_id is a run_id
+            cursor.execute(
+                "SELECT run_id, artifact_id, session_id FROM recovery_runs WHERE run_id = ?;",
+                (file_id,),
+            )
+            run_row = cursor.fetchone()
+
+            if art_row is None and run_row is None:
+                return False
+
+            # Check session ownership
+            rec_sess = (art_row["session_id"] if art_row and "session_id" in art_row.keys() else None) or (
+                run_row["session_id"] if run_row and "session_id" in run_row.keys() else None
+            )
+            if session_id is not None and rec_sess is not None and rec_sess != session_id:
+                return False
+
+            target_art_id = art_row["artifact_id"] if art_row else (run_row["artifact_id"] if run_row else file_id)
+            target_run_id = (art_row["run_id"] if art_row else None) or (run_row["run_id"] if run_row else None)
+
+            # Delete linkages
+            if target_art_id:
+                cursor.execute("DELETE FROM artifact_runs WHERE artifact_id = ?;", (target_art_id,))
+            if target_run_id:
+                cursor.execute("DELETE FROM artifact_runs WHERE run_id = ?;", (target_run_id,))
+
+            # Delete artifacts
+            if target_art_id:
+                cursor.execute("DELETE FROM artifacts WHERE artifact_id = ?;", (target_art_id,))
+            if target_run_id:
+                cursor.execute("DELETE FROM artifacts WHERE run_id = ?;", (target_run_id,))
+
+            # Delete recovery_runs
+            if target_run_id:
+                cursor.execute("DELETE FROM recovery_runs WHERE run_id = ?;", (target_run_id,))
+            if target_art_id:
+                cursor.execute("DELETE FROM recovery_runs WHERE artifact_id = ?;", (target_art_id,))
+
+            # Delete blobs
+            blob_keys = [
+                file_id,
+                f"artifact:{file_id}",
+                f"art_{file_id}",
+            ]
+            if target_art_id:
+                blob_keys.extend([target_art_id, f"artifact:{target_art_id}", f"art_{target_art_id}"])
+            placeholders = ",".join("?" for _ in blob_keys)
+            cursor.execute(
+                f"""
+                DELETE FROM blobs
+                WHERE blob_key IN ({placeholders})
+                  AND blob_key NOT IN (SELECT case_id FROM evidence_files)
+                  AND blob_key NOT IN (SELECT 'evidence:' || case_id FROM evidence_files);
+                """,
+                blob_keys,
+            )
+
+        return True
+
+    def delete_recovery_run(self, run_id: str, session_id: Optional[str] = None) -> bool:
+        """Atomically delete recovery run, its linkages, and associated standalone artifact."""
+        return self.delete_recovered_file(run_id, session_id=session_id)
 
     def purge_expired_recovered_files(self, ttl_hours: int = 24) -> int:
         """Purge standalone recovered files and blobs older than ttl_hours (24h TTL policy)."""
@@ -1251,6 +1375,12 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                         blob_keys,
                     )
                     purged = len(art_ids)
+
+                # 3. Purge standalone expired recovery runs older than cutoff (case_id IS NULL only)
+                cursor.execute(
+                    "DELETE FROM recovery_runs WHERE case_id IS NULL AND started_at < ?;",
+                    (cutoff,),
+                )
         except Exception as e:
             logger.error("Error purging expired recovered files: %s", e, exc_info=True)
             purged = 0
@@ -1287,13 +1417,13 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 detection_mode, case_name, investigator, notes, started_at, completed_at, total_input_bytes,
                 total_verified_bytes, total_reconstructed_bytes, total_missing_bytes,
                 validation_json, confidence_json, provenance_json, output_json,
-                fragments_json, damage_regions_json, reconstruction_steps_json, events_json
+                fragments_json, damage_regions_json, reconstruction_steps_json, events_json, session_id
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?, ?
+                ?, ?, ?, ?, ?
             )
             ON CONFLICT(run_id) DO UPDATE SET
                 case_id = COALESCE(excluded.case_id, recovery_runs.case_id),
@@ -1319,7 +1449,8 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 fragments_json = excluded.fragments_json,
                 damage_regions_json = excluded.damage_regions_json,
                 reconstruction_steps_json = excluded.reconstruction_steps_json,
-                events_json = excluded.events_json
+                events_json = excluded.events_json,
+                session_id = COALESCE(excluded.session_id, recovery_runs.session_id)
             WHERE recovery_runs.status NOT IN ('FULLY_RECOVERED', 'PARTIALLY_RECOVERED', 'UNRECOVERABLE', 'CORRUPTED')
                OR excluded.status NOT IN ('PENDING', 'RUNNING');
             """,
@@ -1349,6 +1480,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 dam_json,
                 rec_json,
                 evt_json,
+                run.session_id,
             ),
         )
 
@@ -1388,34 +1520,62 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         with self._engine.transaction() as cur:
             return self._add_recovery_run_on_cursor(cur, run)
 
-    def get_recovery_run(self, run_id: str) -> Optional[RecoveryRun]:
-        """Retrieve RecoveryRun by run_id."""
+    def set_recovery_run_session(self, run_id: str, session_id: str) -> None:
+        """Associate an existing RecoveryRun with an active session_id."""
+        with self._engine.transaction() as cursor:
+            cursor.execute(
+                "UPDATE recovery_runs SET session_id = ? WHERE run_id = ?;",
+                (session_id, run_id),
+            )
+
+    def get_recovery_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[RecoveryRun]:
+        """Retrieve RecoveryRun by run_id, checking session ownership if session_id is provided."""
         with self._engine.transaction() as cursor:
             cursor.execute("SELECT * FROM recovery_runs WHERE run_id = ?;", (run_id,))
             row = cursor.fetchone()
             if row is None:
                 return None
-            return _row_to_recovery_run(row)
+            run = _row_to_recovery_run(row)
+            if session_id is not None and run.session_id is not None and run.session_id != session_id:
+                return None
+            return run
 
-    def list_recovery_runs(self) -> List[RecoveryRun]:
-        """List all stored RecoveryRun models in insertion order."""
+    def list_recovery_runs(self, session_id: Optional[str] = None) -> List[RecoveryRun]:
+        """List stored RecoveryRun models in insertion order.
+
+        If session_id is provided, filters to runs owned by that session.
+        If session_id is None, returns all runs (internal store/test use).
+        """
         with self._engine.transaction() as cursor:
-            cursor.execute("SELECT * FROM recovery_runs ORDER BY rowid ASC;")
+            if session_id is not None:
+                cursor.execute(
+                    "SELECT * FROM recovery_runs WHERE session_id = ? ORDER BY rowid ASC;",
+                    (session_id,),
+                )
+            else:
+                cursor.execute("SELECT * FROM recovery_runs ORDER BY rowid ASC;")
             rows = cursor.fetchall()
             return [_row_to_recovery_run(r) for r in rows]
 
-    def get_case_recovery_runs(self, case_id: str) -> Optional[List[RecoveryRun]]:
+    def get_case_recovery_runs(self, case_id: str, session_id: Optional[str] = None) -> Optional[List[RecoveryRun]]:
         """Retrieve all RecoveryRun instances associated with a case_id, or None if case not found."""
         with self._engine.transaction() as cursor:
-            cursor.execute("SELECT 1 FROM cases WHERE case_id = ?;", (case_id,))
-            if cursor.fetchone() is None:
+            cursor.execute("SELECT session_id FROM cases WHERE case_id = ?;", (case_id,))
+            case_row = cursor.fetchone()
+            if case_row is None:
                 return None
+            if session_id is not None and case_row["session_id"] is not None and case_row["session_id"] != session_id:
+                return None
+
             cursor.execute(
                 "SELECT * FROM recovery_runs WHERE case_id = ? ORDER BY rowid ASC;",
                 (case_id,),
             )
             rows = cursor.fetchall()
-            return [_row_to_recovery_run(r) for r in rows]
+            runs = [_row_to_recovery_run(r) for r in rows]
+            if session_id is not None:
+                runs = [r for r in runs if r.session_id is None or r.session_id == session_id]
+            return runs
 
     def _link_artifact_to_run_on_cursor(
         self, cursor: sqlite3.Cursor, artifact_id: str, run_id: str

@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Respons
 from backend.app.models.case import CaseCreate, CaseResponse
 from backend.app.models.recovery_run import RecoveryRun
 from backend.app.store import store, MAX_EVIDENCE_SIZE
+from backend.app.session import get_session_id, get_or_create_session
+from backend.app.api.recovery_runs import sanitize_recovery_run_for_api
 from backend.app.ingestion.reader import (
     read_upload_bounded,
     read_request_stream_bounded,
@@ -20,16 +22,18 @@ router = APIRouter(prefix="/cases", tags=["cases"])
 
 
 @router.post("", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
-def create_case(payload: CaseCreate) -> CaseResponse:
-    """Create a new forensic recovery case."""
+def create_case(payload: CaseCreate, request: Request, response: Response) -> CaseResponse:
+    """Create a new forensic recovery case scoped to the caller's session."""
     if not payload.name or not payload.name.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid case name. Case name must be a non-empty string.",
         )
 
+    session_id, _ = get_or_create_session(request, response)
+
     try:
-        case_res = store.create_case(name=payload.name, description=payload.description)
+        case_res = store.create_case(name=payload.name, description=payload.description, session_id=session_id)
         return case_res
     except ValueError as err:
         raise HTTPException(
@@ -39,11 +43,10 @@ def create_case(payload: CaseCreate) -> CaseResponse:
 
 
 @router.get("/{case_id}", response_model=CaseResponse, status_code=status.HTTP_200_OK)
-def get_case(case_id: str) -> CaseResponse:
+def get_case(case_id: str, request: Request) -> CaseResponse:
     """Retrieve details for a specific forensic case."""
-    # case_001 auto-seed removed
-        
-    case_res = store.get_case(case_id)
+    session_id = get_session_id(request)
+    case_res = store.get_case(case_id, session_id=session_id)
     if case_res is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -53,15 +56,16 @@ def get_case(case_id: str) -> CaseResponse:
 
 
 @router.get("/{case_id}/runs", response_model=List[RecoveryRun], status_code=status.HTTP_200_OK)
-def get_case_runs(case_id: str) -> List[RecoveryRun]:
+def get_case_runs(case_id: str, request: Request) -> List[RecoveryRun]:
     """Retrieve all canonical recovery execution runs for a specific forensic case."""
-    runs = store.get_case_recovery_runs(case_id)
+    session_id = get_session_id(request)
+    runs = store.get_case_recovery_runs(case_id, session_id=session_id)
     if runs is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Case '{case_id}' not found",
         )
-    return runs
+    return [sanitize_recovery_run_for_api(r) for r in runs]
 
 
 @router.post("/{case_id}/evidence", response_model=CaseResponse, status_code=status.HTTP_200_OK)
@@ -71,7 +75,8 @@ async def upload_evidence(
     file: Optional[UploadFile] = File(None),
 ) -> CaseResponse:
     """Upload evidence payload for a specific forensic case."""
-    case_res = store.get_case(case_id)
+    session_id = get_session_id(request)
+    case_res = store.get_case(case_id, session_id=session_id)
     if case_res is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

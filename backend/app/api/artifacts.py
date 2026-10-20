@@ -7,10 +7,11 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 import hashlib
 import json
-from fastapi import APIRouter, HTTPException, status, Response, Body
+from fastapi import APIRouter, HTTPException, Request, status, Response, Body
 
 from backend.app.models.artifact import ArtifactResponse
 from backend.app.store import store
+from backend.app.session import get_session_id
 from backend.app.scoring.explainer import explain_artifact
 from backend.app.api.file_recovery import sanitize_filename, format_content_disposition
 from backend.app.recovery.artifact_integrity import verify_artifact_download_integrity
@@ -46,17 +47,17 @@ def _enrich_artifact(artifact: ArtifactResponse) -> ArtifactResponse:
 
 
 @router.get("/cases/{case_id}/artifacts", response_model=List[ArtifactResponse], status_code=status.HTTP_200_OK)
-def list_case_artifacts(case_id: str) -> List[ArtifactResponse]:
+def list_case_artifacts(case_id: str, request: Request) -> List[ArtifactResponse]:
     """Retrieve all recovered artifacts associated with a specific case."""
-
-    case = store.get_case(case_id)
+    session_id = get_session_id(request)
+    case = store.get_case(case_id, session_id=session_id)
     if case is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Case '{case_id}' not found",
         )
 
-    artifacts = store.get_case_artifacts(case_id)
+    artifacts = store.get_case_artifacts(case_id, session_id=session_id)
     if artifacts is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -66,20 +67,21 @@ def list_case_artifacts(case_id: str) -> List[ArtifactResponse]:
 
 
 @router.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, status_code=status.HTTP_200_OK)
-def get_artifact_detail(artifact_id: str) -> ArtifactResponse:
+def get_artifact_detail(artifact_id: str, request: Request) -> ArtifactResponse:
     """Retrieve details for a single recovered artifact by artifact_id."""
-    artifact = store.get_artifact(artifact_id)
+    session_id = get_session_id(request)
+    artifact = store.get_artifact(artifact_id, session_id=session_id)
     if artifact is not None:
         return _enrich_artifact(artifact)
 
-    meta = store.get_recovered_file_metadata(artifact_id)
+    meta = store.get_recovered_file_metadata(artifact_id, session_id=session_id)
     if meta is not None:
         from backend.app.models.artifact import ArtifactRecord
         rec = ArtifactRecord.from_file_recovery_dict(meta)
         return _enrich_artifact(rec.to_artifact_response())
 
-    run = store.get_recovery_run(artifact_id) or store.get_recovery_run_by_artifact(artifact_id)
-    if run is not None:
+    run = store.get_recovery_run(artifact_id, session_id=session_id) or store.get_recovery_run_by_artifact(artifact_id)
+    if run is not None and (run.session_id is None or run.session_id == session_id):
         from backend.app.api.analysis import recovery_run_to_artifact_response
         art_resp = recovery_run_to_artifact_response(run)
         return _enrich_artifact(art_resp)
@@ -91,9 +93,10 @@ def get_artifact_detail(artifact_id: str) -> ArtifactResponse:
 
 
 @router.post("/artifacts/{artifact_id}/explain", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
-def explain_artifact_route(artifact_id: str, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+def explain_artifact_route(artifact_id: str, request: Request, body: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
     """Generate or retrieve a cached evidence interpretation for an artifact."""
-    artifact = store.get_artifact(artifact_id)
+    session_id = get_session_id(request)
+    artifact = store.get_artifact(artifact_id, session_id=session_id)
     if artifact is not None:
         explanation = explain_artifact(artifact_id, artifact)
         # Store ai_summary onto artifact to populate next fetch
@@ -106,7 +109,7 @@ def explain_artifact_route(artifact_id: str, body: Optional[Dict[str, Any]] = Bo
         return explanation
 
     # Check recovered file metadata
-    file_meta = store.get_recovered_file_metadata(artifact_id)
+    file_meta = store.get_recovered_file_metadata(artifact_id, session_id=session_id)
     if file_meta is not None:
         explanation = explain_artifact(artifact_id, file_meta)
         try:
@@ -117,8 +120,8 @@ def explain_artifact_route(artifact_id: str, body: Optional[Dict[str, Any]] = Bo
         return explanation
 
     # Check recovery runs
-    run = store.get_recovery_run(artifact_id) or store.get_recovery_run_by_artifact(artifact_id)
-    if run is not None:
+    run = store.get_recovery_run(artifact_id, session_id=session_id) or store.get_recovery_run_by_artifact(artifact_id)
+    if run is not None and (run.session_id is None or run.session_id == session_id):
         explanation = explain_artifact(artifact_id, run)
         try:
             exp_str = json.dumps(explanation) if isinstance(explanation, dict) else str(explanation)
@@ -138,19 +141,26 @@ def explain_artifact_route(artifact_id: str, body: Optional[Dict[str, Any]] = Bo
 
 
 @router.get("/artifacts/{artifact_id}/download", status_code=status.HTTP_200_OK)
-def download_artifact(artifact_id: str) -> Response:
+def download_artifact(artifact_id: str, request: Request) -> Response:
     """Download raw byte buffer of a recovered case artifact with strict SHA-256 integrity verification."""
-    record = store.get_artifact_record(artifact_id)
+    session_id = get_session_id(request)
+    record = store.get_artifact_record(artifact_id, session_id=session_id)
     if record is None:
-        run = store.get_recovery_run(artifact_id)
+        run = store.get_recovery_run(artifact_id, session_id=session_id)
         if run and run.artifact_id:
-            record = store.get_artifact_record(run.artifact_id)
+            record = store.get_artifact_record(run.artifact_id, session_id=session_id)
+
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact '{artifact_id}' not found",
+        )
 
     content = None
     if record is not None:
-        content = store.get_artifact_bytes(record.artifact_id)
+        content = store.get_artifact_bytes(record.artifact_id, session_id=session_id)
     if content is None or len(content) == 0:
-        content = store.get_artifact_bytes(artifact_id)
+        content = store.get_artifact_bytes(artifact_id, session_id=session_id)
 
     verified_bytes = verify_artifact_download_integrity(record, content, artifact_id, context="artifact")
 

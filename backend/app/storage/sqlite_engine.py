@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS cases (
     case_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    session_id TEXT
 );
 
 -- 2. Evidence Metadata
@@ -83,7 +84,8 @@ CREATE TABLE IF NOT EXISTS recovery_runs (
     fragments_json TEXT NOT NULL DEFAULT '[]',
     damage_regions_json TEXT NOT NULL DEFAULT '[]',
     reconstruction_steps_json TEXT NOT NULL DEFAULT '[]',
-    events_json TEXT NOT NULL DEFAULT '[]'
+    events_json TEXT NOT NULL DEFAULT '[]',
+    session_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_recovery_runs_case_id ON recovery_runs(case_id);
 CREATE INDEX IF NOT EXISTS idx_recovery_runs_status ON recovery_runs(status);
@@ -118,7 +120,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     damage_regions_json TEXT,
     reconstruction_steps_json TEXT,
     created_at TEXT,
-    sha256 TEXT
+    sha256 TEXT,
+    session_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_case_id ON artifacts(case_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_run_id ON artifacts(run_id);
@@ -295,6 +298,13 @@ class SqliteEngine:
 
                 _safe_add_column(conn, "artifacts", "created_at", "TEXT")
                 _safe_add_column(conn, "artifacts", "sha256", "TEXT")
+
+                _safe_add_column(conn, "cases", "session_id", "TEXT")
+                _safe_add_column(conn, "recovery_runs", "session_id", "TEXT")
+                _safe_add_column(conn, "artifacts", "session_id", "TEXT")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_recovery_runs_session ON recovery_runs(session_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_session ON cases(session_id);")
 
                 # Safe, deterministic backfill of sha256 for legacy artifact records where sha256 is NULL.
                 # Prioritizes canonical 'artifact:{id}' key over legacy '{id}' key.
