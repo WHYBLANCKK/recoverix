@@ -18,7 +18,6 @@ import {
   ExternalLink,
 } from "lucide-react";
 import {
-  API_BASE,
   fetchRecoveredFile,
   fetchRecoveryRun,
   fetchArtifactById,
@@ -405,19 +404,21 @@ export default function InvestigationPage({
 
           {/* Investigation Navigation Tabs */}
           <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 text-xs font-mono">
-            {[
-              { id: "overview", label: "Overview" },
-              { id: "fragments", label: "Fragments" },
-              { id: "cluster", label: "Cluster Interpretation" },
-              { id: "map", label: "Evidence Map" },
-              { id: "preview", label: "Recovery" },
-              { id: "provenance", label: "Provenance" },
-              { id: "analyst", label: "Forensic Analyst" },
-            ].map((tab) => (
+            {(
+              [
+                { id: "overview", label: "Overview" },
+                { id: "fragments", label: "Fragments" },
+                { id: "cluster", label: "Cluster Interpretation" },
+                { id: "map", label: "Evidence Map" },
+                { id: "preview", label: "Recovery" },
+                { id: "provenance", label: "Provenance" },
+                { id: "analyst", label: "Forensic Analyst" },
+              ] as const
+            ).map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => {
-                  setActiveSection(tab.id as any);
+                  setActiveSection(tab.id);
                   const el = document.getElementById(tab.id);
                   if (el) {
                     el.scrollIntoView({ behavior: "smooth" });

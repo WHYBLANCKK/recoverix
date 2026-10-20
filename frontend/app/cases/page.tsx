@@ -12,6 +12,16 @@ import {
 } from "lucide-react";
 import { fetchRecoveryRuns } from "@/lib/api";
 import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
+import { ForensicFragment, DamageRegion, ReconstructionStep } from "@/lib/types";
+
+interface RecoveryRunEvent {
+  event_id: string;
+  sequence: number;
+  event_type: string;
+  timestamp: string;
+  message: string;
+  payload?: Record<string, unknown>;
+}
 
 interface RecoveryRunItem {
   run_id: string;
@@ -25,10 +35,10 @@ interface RecoveryRunItem {
   total_verified_bytes: number;
   total_reconstructed_bytes: number;
   total_missing_bytes: number;
-  fragments?: any[];
-  damage_regions?: any[];
-  reconstruction_steps?: any[];
-  events?: any[];
+  fragments?: ForensicFragment[];
+  damage_regions?: DamageRegion[];
+  reconstruction_steps?: ReconstructionStep[];
+  events?: RecoveryRunEvent[];
   confidence?: {
     total: number;
   };
@@ -48,10 +58,28 @@ export default function CasesPage() {
       try {
         const liveRuns = await fetchRecoveryRuns();
         if (liveRuns && liveRuns.length > 0) {
+          const mappedRuns: RecoveryRunItem[] = liveRuns.map((r) => ({
+            run_id: String(r.run_id || r.id || ""),
+            artifact_id: r.artifact_id,
+            filename: String(r.filename || "evidence.bin"),
+            format: String(r.format || "UNKNOWN"),
+            status: String(r.status || "UNRECOVERABLE"),
+            started_at: String(r.started_at || r.created_at || new Date().toISOString()),
+            completed_at: r.completed_at ? String(r.completed_at) : undefined,
+            total_input_bytes: Number(r.total_input_bytes ?? 0),
+            total_verified_bytes: Number(r.total_verified_bytes ?? r.verified_bytes ?? 0),
+            total_reconstructed_bytes: Number(r.total_reconstructed_bytes ?? r.reconstructed_bytes ?? 0),
+            total_missing_bytes: Number(r.total_missing_bytes ?? r.missing_bytes ?? 0),
+            fragments: r.fragments as ForensicFragment[] | undefined,
+            damage_regions: r.damage_regions,
+            reconstruction_steps: r.reconstruction_steps,
+            events: r.events as RecoveryRunEvent[] | undefined,
+            confidence: r.confidence as { total: number } | undefined,
+          }));
           // Sort most recent first
-          liveRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-          setRuns(liveRuns);
-          setSelectedRun(liveRuns[0]);
+          mappedRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+          setRuns(mappedRuns);
+          setSelectedRun(mappedRuns[0]);
         }
       } catch (e) {
         console.error("Failed to load recovery runs:", e);
@@ -344,7 +372,7 @@ export default function CasesPage() {
                   </div>
                   <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
                     {selectedRun.events && selectedRun.events.length > 0 ? (
-                      selectedRun.events.map((evt: any) => (
+                      selectedRun.events.map((evt: RecoveryRunEvent) => (
                         <div
                           key={evt.event_id}
                           className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-[11px] space-y-1"

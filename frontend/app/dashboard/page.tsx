@@ -3,10 +3,10 @@
 import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { fetchCase, fetchRecoveryRuns, normalizeBackendArtifact } from "@/lib/api";
+import { fetchCase, fetchRecoveryRuns, normalizeBackendArtifact, RawBackendArtifact } from "@/lib/api";
 import { ArtifactTable } from "@/components/dashboard/ArtifactTable";
 import { CaseInterpretationCard } from "@/components/case/CaseInterpretationCard";
-import { Loader2, UploadCloud, Download, ShieldCheck, FileText } from "lucide-react";
+import { Loader2, Download, ShieldCheck, FileText } from "lucide-react";
 import { Case, Artifact } from "@/lib/types";
 import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
 
@@ -15,7 +15,7 @@ function DashboardContent() {
   const [data, setData] = useState<{
     caseData: Case | null;
     artifacts: Artifact[];
-    rawRuns: any[];
+    rawRuns: RawBackendArtifact[];
   }>({ caseData: null, artifacts: [], rawRuns: [] });
   const [isLoading, setIsLoading] = useState(true);
 

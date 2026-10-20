@@ -1,18 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect, ChangeEvent, DragEvent } from "react";
+import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import Link from "next/link";
 import {
-  Shield,
   ArrowRight,
   FileCheck,
   Cpu,
-  Layers,
-  Search,
   CheckCircle2,
   AlertTriangle,
-  FileCode,
-  Terminal,
   Lock,
   GitBranch,
   UploadCloud,
@@ -23,8 +18,6 @@ import {
   RefreshCw,
   AlertCircle,
   FileText,
-  Archive,
-  Image as ImageIcon,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
@@ -41,19 +34,39 @@ import {
   FIXTURE_JPEG_B64,
 } from "@/lib/fixtures/benchmarkEvidence";
 
-const RECOVERY_STAGES = [
-  "Reading local byte buffer & calculating SHA-256",
-  "Transmitting evidence payload to recovery engine",
-  "Recovery engine processing & mathematical verification",
-  "Auditing verified, reconstructed & missing byte invariants",
-  "Finalizing verified recovery package",
-];
+interface RecoveryStageInfo {
+  step: number;
+  totalSteps: number;
+  title: string;
+  detail: string;
+}
+
+const STAGE_HASHING: RecoveryStageInfo = {
+  step: 1,
+  totalSteps: 3,
+  title: "Reading Local Byte Buffer & Calculating SHA-256",
+  detail: "Generating cryptographic integrity digest before transmission...",
+};
+
+const STAGE_TRANSMITTING: RecoveryStageInfo = {
+  step: 2,
+  totalSteps: 3,
+  title: "Transmitting Evidence Payload to Recovery Engine",
+  detail: "Uploading undamaged and damaged sectors over secure TLS...",
+};
+
+const STAGE_PROCESSING: RecoveryStageInfo = {
+  step: 3,
+  totalSteps: 3,
+  title: "Recovery Engine Processing & Mathematical Verification",
+  detail: "Executing deterministic carving, syntax repair, and V/R/M byte auditing...",
+};
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [currentStageIdx, setCurrentStageIdx] = useState(0);
+  const [currentStage, setCurrentStage] = useState<RecoveryStageInfo>(STAGE_HASHING);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -73,12 +86,10 @@ export default function Home() {
   const isAnalyzingRef = useRef(false);
   const isDownloadingRef = useRef(false);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const stageIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
     };
   }, []);
 
@@ -88,7 +99,7 @@ export default function Home() {
 
     setFile(evidenceFile);
     setIsAnalyzing(true);
-    setCurrentStageIdx(0);
+    setCurrentStage(STAGE_HASHING);
     setElapsedSeconds(0);
     setErrorMessage(null);
     setDownloadError(null);
@@ -99,11 +110,6 @@ export default function Home() {
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       setElapsedSeconds(elapsed);
     }, 1000);
-
-    // Realistic progression through transmission and engine verification
-    stageIntervalRef.current = setInterval(() => {
-      setCurrentStageIdx((prev) => (prev < RECOVERY_STAGES.length - 2 ? prev + 1 : prev));
-    }, 1500);
 
     try {
       let hash = fileSha256;
@@ -116,14 +122,18 @@ export default function Home() {
         }
       }
 
+      setCurrentStage(STAGE_TRANSMITTING);
+
+      // Transition to processing state as upload completes and engine analyzes
+      setCurrentStage(STAGE_PROCESSING);
+
       const res = await recoverSingleFile(evidenceFile, {
         caseName: caseName.trim() || undefined,
         investigator: investigator.trim() || undefined,
         notes: notes.trim() || undefined,
       });
-      if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
+
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      setCurrentStageIdx(RECOVERY_STAGES.length - 1);
       setResult(res);
 
       if (typeof window !== "undefined") {
@@ -138,11 +148,11 @@ export default function Home() {
         };
         localStorage.setItem(`recoverix_context_${res.file_id}`, JSON.stringify(investigationContext));
       }
-    } catch (err: any) {
-      if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
+    } catch (err: unknown) {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       console.error("Recovery error:", err);
-      setErrorMessage(err.message || "Forensic analysis failed to recover file.");
+      const msg = err instanceof Error ? err.message : "Forensic analysis failed to recover file.";
+      setErrorMessage(msg);
     } finally {
       setIsAnalyzing(false);
       isAnalyzingRef.current = false;
@@ -180,9 +190,10 @@ export default function Home() {
           tempLink.parentNode.removeChild(tempLink);
         }
       }, 1000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Download error:", err);
-      setDownloadError(err.message || "Failed to download recovered file.");
+      const msg = err instanceof Error ? err.message : "Failed to download recovered file.";
+      setDownloadError(msg);
     } finally {
       setIsDownloading(false);
       isDownloadingRef.current = false;
@@ -240,7 +251,6 @@ export default function Home() {
 
   const handleReset = () => {
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
     setFile(null);
     setResult(null);
     setErrorMessage(null);
@@ -318,23 +328,33 @@ export default function Home() {
             {!result && !isAnalyzing && (
               <>
                 <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Upload evidence file. Drag and drop file here or press Enter to browse"
+                  onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
                   onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`group relative cursor-pointer border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center transition-all bg-white shadow-md ${
-                  isDragging
-                    ? "border-emerald-500 bg-emerald-50/50 scale-[1.01]"
-                    : "border-slate-300 hover:border-emerald-500/70 hover:bg-slate-50/50"
-                }`}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  onChange={handleFileInputChange}
-                  accept=".pdf,.json,.csv,.txt,.xml,.png,.jpg,.jpeg,.zip"
-                  className="hidden"
-                />
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`group relative cursor-pointer border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center transition-all bg-white shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
+                    isDragging
+                      ? "border-emerald-500 bg-emerald-50/50 scale-[1.01]"
+                      : "border-slate-300 hover:border-emerald-500/70 hover:bg-slate-50/50"
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    aria-label="Choose corrupted file to recover"
+                    onChange={handleFileInputChange}
+                    accept=".pdf,.json,.csv,.txt,.xml,.png,.jpg,.jpeg,.zip"
+                    className="hidden"
+                  />
 
                 <div className="flex flex-col items-center justify-center space-y-4">
                   <div className="w-16 h-16 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center group-hover:scale-105 transition-transform shadow-xs">
@@ -530,19 +550,19 @@ export default function Home() {
             {/* Analyzing Progress State */}
             {isAnalyzing && (
               <div className="bg-white border border-slate-200 rounded-2xl p-8 sm:p-10 shadow-lg text-center space-y-6 font-mono">
-                <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center animate-spin">
+                <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center animate-spin motion-reduce:animate-none">
                   <Loader2 className="w-8 h-8" />
                 </div>
 
                 <div className="space-y-2">
                   <div className="text-xs uppercase font-bold tracking-wider text-emerald-700">
-                    STAGE {currentStageIdx + 1} OF {RECOVERY_STAGES.length}
+                    STAGE {currentStage.step} OF {currentStage.totalSteps}
                   </div>
                   <h3 className="text-xl font-bold text-slate-900">
-                    {RECOVERY_STAGES[currentStageIdx]}
+                    {currentStage.title}
                   </h3>
                   <p className="text-xs text-slate-500 font-sans">
-                    Analyzing byte structures without synthetic guessing...
+                    {currentStage.detail}
                   </p>
                 </div>
 
@@ -550,7 +570,7 @@ export default function Home() {
                   <div
                     className="bg-emerald-500 h-full transition-all duration-300 ease-out"
                     style={{
-                      width: `${((currentStageIdx + 1) / RECOVERY_STAGES.length) * 100}%`,
+                      width: `${(currentStage.step / currentStage.totalSteps) * 100}%`,
                     }}
                   />
                 </div>
@@ -560,6 +580,14 @@ export default function Home() {
                   <span>Elapsed: {elapsedSeconds}s</span>
                   <span>·</span>
                   <span>Timeout Guard: 75s</span>
+                  {fileSha256 && (
+                    <>
+                      <span>·</span>
+                      <span className="truncate max-w-[180px]" title={fileSha256}>
+                        SHA-256: {fileSha256.slice(0, 10)}…
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 {/* Render Cold-Start Alert when elapsed >= 6s */}
@@ -908,11 +936,12 @@ export default function Home() {
                         type="button"
                         onClick={handleDownload}
                         disabled={isDownloading}
-                        className="w-full sm:w-auto flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-bold text-sm px-6 py-4 rounded-xl shadow-md hover:shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75 disabled:cursor-wait"
+                        aria-label={`Download recovered file ${result.recovered_filename}`}
+                        className="w-full sm:w-auto flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-bold text-sm px-6 py-4 rounded-xl shadow-md hover:shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75 disabled:cursor-wait focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500"
                       >
                         {isDownloading ? (
                           <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" />
                             <span>PREPARING RECOVERED FILE...</span>
                           </>
                         ) : (
@@ -923,18 +952,26 @@ export default function Home() {
                         )}
                       </button>
                     ) : (
-                      <button
-                        disabled
-                        className="w-full sm:w-auto flex-1 bg-slate-200 text-slate-400 font-mono font-bold text-sm px-6 py-4 rounded-xl cursor-not-allowed flex items-center justify-center gap-2"
-                      >
-                        <Download className="w-4 h-4" />
-                        <span>DOWNLOAD UNAVAILABLE ({result.status === "UNRECOVERABLE" ? "UNRECOVERABLE" : "VALIDATION FAILED"})</span>
-                      </button>
+                      <div className="w-full sm:w-auto flex-1 flex flex-col gap-1">
+                        <button
+                          disabled
+                          aria-disabled="true"
+                          className="w-full bg-slate-100 border border-slate-300 text-slate-500 font-mono font-bold text-sm px-6 py-4 rounded-xl cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                          <Lock className="w-4 h-4 text-slate-400" />
+                          <span>DOWNLOAD UNAVAILABLE</span>
+                        </button>
+                        <span className="text-[11px] font-mono text-slate-500 text-center">
+                          {result.status === "UNRECOVERABLE"
+                            ? "Download blocked: Evidence buffer contains zero recoverable structure."
+                            : "Download blocked: Artifact failed post-reconstruction parser validation."}
+                        </span>
+                      </div>
                     )}
 
                     <Link
                       href={`/investigation/${result.file_id}`}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-4 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-mono font-bold text-xs transition-colors shadow-2xs text-center"
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-4 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-mono font-bold text-xs transition-colors shadow-2xs text-center focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500"
                     >
                       <span>Open Full Investigation Workbench</span>
                       <ArrowRight className="w-4 h-4 text-emerald-700" />

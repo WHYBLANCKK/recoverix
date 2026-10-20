@@ -171,10 +171,11 @@ export default function SetupPage() {
       setTimeout(() => {
         router.push(`/investigation/${result.file_id}`);
       }, 300);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Execution failed:", err);
       clearInterval(stageInterval);
-      setErrorMessage(err.message || "Failed to execute recovery on backend");
+      const msg = err instanceof Error ? err.message : "Failed to execute recovery on backend";
+      setErrorMessage(msg);
       setIsExecuting(false);
     }
   };
