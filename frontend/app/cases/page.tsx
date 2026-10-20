@@ -9,8 +9,10 @@ import {
   ChevronRight,
   Terminal,
   ExternalLink,
+  Trash2,
+  ShieldCheck,
 } from "lucide-react";
-import { fetchRecoveryRuns } from "@/lib/api";
+import { fetchRecoveryRuns, deleteRecoveryRun } from "@/lib/api";
 import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
 import { ForensicFragment, DamageRegion, ReconstructionStep } from "@/lib/types";
 
@@ -51,6 +53,26 @@ export default function CasesPage() {
   const [formatFilter, setFormatFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedRun, setSelectedRun] = useState<RecoveryRunItem | null>(null);
+  const [isDeletingRun, setIsDeletingRun] = useState(false);
+  const [showDeleteRunConfirm, setShowDeleteRunConfirm] = useState(false);
+
+  const handleDeleteRun = async (runId: string) => {
+    if (isDeletingRun) return;
+    setIsDeletingRun(true);
+    try {
+      const ok = await deleteRecoveryRun(runId);
+      if (ok) {
+        const nextRuns = runs.filter((r) => r.run_id !== runId);
+        setRuns(nextRuns);
+        setSelectedRun(nextRuns[0] || null);
+        setShowDeleteRunConfirm(false);
+      }
+    } catch (e) {
+      console.error("Failed to delete run:", e);
+    } finally {
+      setIsDeletingRun(false);
+    }
+  };
 
   useEffect(() => {
     async function loadRuns() {
@@ -116,16 +138,16 @@ export default function CasesPage() {
                 <span className="font-bold">RECOVERIX</span>
               </Link>
               <span>/</span>
-              <span className="text-emerald-700 font-bold">CASES & AUDIT LOG</span>
+              <span className="text-emerald-700 font-bold">SESSION AUDIT LOG</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-3">
-              <span>Evidence Case Repository</span>
+              <span>Evidence Case Ledger (This Session)</span>
               <span className="text-xs bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded font-semibold">
-                {runs.length} RECORDED RUNS
+                {runs.length} RUNS IN SESSION
               </span>
             </h1>
             <p className="text-xs text-slate-600 font-sans max-w-2xl">
-              Deterministic audit ledger of all analyzed evidence artifacts. Every recovery run preserves exact byte accounting and event timelines for transparent verification.
+              Private, session-isolated audit ledger of evidence files analyzed in your current browser session. Because Recoverix enforces strict per-session cryptographic isolation, runs from other users are never visible to you, and your evidence is never visible to others.
             </p>
           </div>
 
@@ -237,17 +259,45 @@ export default function CasesPage() {
 
             {loading ? (
               <div className="p-12 text-center text-slate-500 text-xs">
-                Loading case repository...
+                Loading session case repository...
+              </div>
+            ) : runs.length === 0 ? (
+              <div className="p-16 text-center space-y-4 max-w-lg mx-auto">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center mx-auto shadow-2xs">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5">
+                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                    No Recorded Cases in this Session
+                  </h3>
+                  <p className="text-xs text-slate-500 font-sans leading-relaxed">
+                    Recoverix enforces strict per-session data isolation. Your uploads are cryptographically bound to your browser session and automatically purged within 24 hours. Runs from other sessions are never accessible.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <Link
+                    href="/"
+                    className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-mono font-bold px-4 py-2.5 rounded-lg text-xs transition-all shadow-xs"
+                  >
+                    <span>Upload & Recover a File</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
               </div>
             ) : filteredRuns.length === 0 ? (
               <div className="p-12 text-center space-y-3">
                 <div className="text-slate-500 text-xs">No recorded recovery runs match current filters.</div>
-                <Link
-                  href="/setup"
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setFormatFilter("all");
+                    setStatusFilter("all");
+                  }}
                   className="inline-block bg-emerald-50 text-emerald-700 border border-emerald-300 px-4 py-2 rounded-lg text-xs hover:bg-emerald-100 font-semibold"
                 >
-                  Upload First Evidence File
-                </Link>
+                  Reset Filters
+                </button>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -363,14 +413,49 @@ export default function CasesPage() {
                       {new Date(selectedRun.started_at).toLocaleTimeString()}
                     </span>
                   </div>
-                  <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
+                  <div className="pt-2 border-t border-slate-200 flex flex-col gap-2">
                     <Link
                       href={`/investigation/${selectedRun.artifact_id || selectedRun.run_id}`}
-                      className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 rounded-lg text-center text-xs transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
+                      className="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-2 rounded-lg text-center text-xs transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
                     >
                       <span>OPEN FULL INVESTIGATION WORKSPACE</span>
                       <ExternalLink className="w-3.5 h-3.5" />
                     </Link>
+
+                    {!showDeleteRunConfirm ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteRunConfirm(true)}
+                        className="w-full border border-rose-200 text-rose-700 hover:bg-rose-50 py-1.5 rounded-lg text-center text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>DELETE THIS CASE RECORD</span>
+                      </button>
+                    ) : (
+                      <div className="bg-rose-50 border border-rose-200 p-2 rounded-lg text-center space-y-1.5">
+                        <span className="text-[11px] text-rose-900 block font-sans">
+                          Permanently delete run and blobs?
+                        </span>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRun(selectedRun.run_id)}
+                            disabled={isDeletingRun}
+                            className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1 rounded text-[10px] uppercase transition-colors disabled:opacity-50"
+                          >
+                            {isDeletingRun ? "Deleting..." : "Confirm Delete"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowDeleteRunConfirm(false)}
+                            disabled={isDeletingRun}
+                            className="text-slate-600 hover:text-slate-900 px-2 py-1 text-[10px] underline"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

@@ -103,8 +103,11 @@ export interface RawBackendArtifact {
   investigator?: string | null;
   notes?: string | null;
   output?: {
+    has_recovered_bytes?: boolean;
+    byte_count?: number;
     recovered_bytes?: string;
     recovered_filename?: string;
+    [key: string]: unknown;
   };
   fragments?: ForensicFragment[];
   damage_regions?: DamageRegion[];
@@ -246,10 +249,12 @@ export function normalizeBackendArtifact(raw: RawBackendArtifact): Artifact {
 }
 
 export async function createCase(name?: string): Promise<Case> {
-  const res = await fetch(`${API_BASE}/api/cases`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}/api/cases`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name || "Automated Case" }),
+    credentials: 'include',
     cache: 'no-store'
   });
   if (!res.ok) {
@@ -271,9 +276,11 @@ export async function uploadEvidence(caseId: string, fileOrSample: File | string
   } else {
     formData.append('file', fileOrSample);
   }
-  const res = await fetch(`${API_BASE}/api/cases/${caseId}/evidence`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}/api/cases/${caseId}/evidence`, {
     method: 'POST',
     body: formData,
+    credentials: 'include',
     cache: 'no-store'
   });
   if (!res.ok) {
@@ -283,8 +290,10 @@ export async function uploadEvidence(caseId: string, fileOrSample: File | string
 }
 
 export async function analyzeCase(caseId: string): Promise<Case> {
-  const res = await fetch(`${API_BASE}/api/cases/${caseId}/analyze`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}/api/cases/${caseId}/analyze`, {
     method: 'POST',
+    credentials: 'include',
     cache: 'no-store'
   });
   if (!res.ok) {
@@ -307,7 +316,8 @@ export async function runFullIngestionAndAnalysis(fileOrSample: File | string): 
 
 export async function fetchCase(caseId = 'case_001'): Promise<Case | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/cases/${caseId}`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/cases/${caseId}`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) {
       const raw = await res.json();
       return {
@@ -325,7 +335,8 @@ export async function fetchCase(caseId = 'case_001'): Promise<Case | null> {
 
 export async function fetchArtifacts(caseId = 'case_001'): Promise<Artifact[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/cases/${caseId}/artifacts`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/cases/${caseId}/artifacts`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) {
       const rawArray = await res.json();
       return rawArray.map(normalizeBackendArtifact);
@@ -338,7 +349,8 @@ export async function fetchArtifacts(caseId = 'case_001'): Promise<Artifact[]> {
 
 export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
   try {
-    const res = await fetch(`${API_BASE}/api/artifacts/${artifactId}`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/artifacts/${artifactId}`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) {
       const raw = await res.json();
       return normalizeBackendArtifact(raw);
@@ -368,8 +380,10 @@ export async function fetchArtifactExplanation(artifactId: string, forceRefresh 
   }
 
   try {
-    const res = await fetch(`${API_BASE}/api/artifacts/${artifactId}/explain`, {
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/artifacts/${artifactId}/explain`, {
       method: 'POST',
+      credentials: 'include',
       cache: 'no-store'
     });
     if (res.ok) {
@@ -390,7 +404,8 @@ export async function fetchArtifactExplanation(artifactId: string, forceRefresh 
 }
 
 export async function fetchGroundTruth(caseId = 'case_001'): Promise<import('./types').GroundTruth> {
-  const res = await fetch(`${API_BASE}/api/cases/${caseId}/groundtruth`, { cache: 'no-store' });
+  const base = getApiBase();
+  const res = await fetch(`${base}/api/cases/${caseId}/groundtruth`, { credentials: 'include', cache: 'no-store' });
   if (!res.ok) {
     throw new Error(`Failed to fetch ground truth: ${res.status} ${res.statusText}`);
   }
@@ -524,6 +539,7 @@ export async function recoverSingleFile(
     const res = await fetch(`${base}/api/recover-file`, {
       method: 'POST',
       body: formData,
+      credentials: 'include',
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -597,7 +613,7 @@ export function getArtifactDownloadUrl(artifactId: string): string {
 export async function fetchRecoveryRun(runId: string): Promise<RawBackendArtifact | null> {
   try {
     const base = getApiBase();
-    const res = await fetch(`${base}/api/recovery-runs/${encodeURIComponent(runId)}`, { cache: 'no-store' });
+    const res = await fetch(`${base}/api/recovery-runs/${encodeURIComponent(runId)}`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) return await res.json();
   } catch (e) {
     console.warn("Failed to fetch recovery run", e);
@@ -608,7 +624,7 @@ export async function fetchRecoveryRun(runId: string): Promise<RawBackendArtifac
 export async function fetchRecoveredFile(fileId: string): Promise<SingleFileRecoveryResult | null> {
   try {
     const base = getApiBase();
-    const res = await fetch(`${base}/api/recover-file/${encodeURIComponent(fileId)}`, { cache: 'no-store' });
+    const res = await fetch(`${base}/api/recover-file/${encodeURIComponent(fileId)}`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
       data.download_url = sanitizeDownloadUrl(data.download_url, data.file_id);
@@ -622,7 +638,8 @@ export async function fetchRecoveredFile(fileId: string): Promise<SingleFileReco
 
 export async function fetchRecoveryRuns(): Promise<RawBackendArtifact[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/recovery-runs`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recovery-runs`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) {
       return await res.json();
     }
@@ -634,7 +651,8 @@ export async function fetchRecoveryRuns(): Promise<RawBackendArtifact[]> {
 
 export async function fetchCaseRecoveryRuns(caseId: string): Promise<RawBackendArtifact[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/cases/${caseId}/runs`, { cache: 'no-store' });
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/cases/${caseId}/runs`, { credentials: 'include', cache: 'no-store' });
     if (res.ok) {
       return await res.json();
     }
@@ -644,13 +662,47 @@ export async function fetchCaseRecoveryRuns(caseId: string): Promise<RawBackendA
   return [];
 }
 
+export async function deleteRecoveredFile(fileId: string): Promise<boolean> {
+  try {
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recover-file/${encodeURIComponent(fileId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("Failed to delete recovered file", e);
+    return false;
+  }
+}
+
+export async function deleteRecoveryRun(runId: string): Promise<boolean> {
+  try {
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recovery-runs/${encodeURIComponent(runId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("Failed to delete recovery run", e);
+    return false;
+  }
+}
+
 /**
  * Explicit, typed adapter from RecoveryRun backend model to SingleFileRecoveryResult.
  * Preserves authoritative V/R/M provenance byte counts and strict validation contracts.
  */
 export function adaptRecoveryRunToInvestigationResult(run: RawBackendArtifact): SingleFileRecoveryResult {
   let preview: string | null = null;
-  if (run.output?.recovered_bytes) {
+  if (run.content_preview) {
+    preview = run.content_preview;
+  } else if (run.preview_text) {
+    preview = run.preview_text;
+  } else if (run.output?.recovered_bytes) {
     try {
       const hex = run.output.recovered_bytes;
       const bytes = new Uint8Array(hex.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []);
@@ -673,7 +725,12 @@ export function adaptRecoveryRunToInvestigationResult(run: RawBackendArtifact): 
   const valStatus = isValid ? "PASSED" : "FAILED";
 
   const isUnrecoverable = run.status === "UNRECOVERABLE" || run.status === "CORRUPTED";
-  const hasRecoveredBytes = Boolean(run.output?.recovered_bytes && run.output.recovered_bytes.length > 0);
+  const hasRecoveredBytes = Boolean(
+    run.output?.has_recovered_bytes === true ||
+    (run.output?.recovered_bytes && run.output.recovered_bytes.length > 0) ||
+    verBytes > 0 ||
+    recBytes > 0
+  );
   const isDownloadable = !isUnrecoverable && isValid && hasRecoveredBytes;
 
   const fileId = String(run.artifact_id || run.run_id || "evidence");
@@ -888,10 +945,12 @@ export async function fetchInvestigationExplanation(
 
   // 1. Try /api/recover-file/${fileId}/explain
   try {
-    const res = await fetch(`${API_BASE}/api/recover-file/${fileId}/explain`, {
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/recover-file/${fileId}/explain`, {
       method: 'POST',
       headers,
       body: payload,
+      credentials: 'include',
       cache: 'no-store'
     });
     if (res.ok) {
@@ -909,10 +968,12 @@ export async function fetchInvestigationExplanation(
 
   // 2. Try /api/artifacts/${fileId}/explain
   try {
-    const res = await fetch(`${API_BASE}/api/artifacts/${fileId}/explain`, {
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/artifacts/${fileId}/explain`, {
       method: 'POST',
       headers,
       body: payload,
+      credentials: 'include',
       cache: 'no-store'
     });
     if (res.ok) {
@@ -981,13 +1042,15 @@ async function fetchInterpretationJson<T>(
   forceRefresh?: boolean
 ): Promise<T> {
   const query = method === 'POST' && forceRefresh === true ? '?force_refresh=true' : '';
-  const url = `${API_BASE}${endpoint}${query}`;
+  const base = getApiBase();
+  const url = `${base}${endpoint}${query}`;
 
   const res = await fetch(url, {
     method,
     headers: {
       Accept: 'application/json',
     },
+    credentials: 'include',
     cache: 'no-store',
   });
 

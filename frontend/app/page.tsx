@@ -20,8 +20,9 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
+  Trash2,
 } from "lucide-react";
-import { recoverSingleFile } from "@/lib/api";
+import { recoverSingleFile, deleteRecoveredFile } from "@/lib/api";
 import { computeFileSha256 } from "@/lib/crypto";
 import { SingleFileRecoveryResult } from "@/lib/types";
 import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
@@ -74,6 +75,9 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedPreview, setCopiedPreview] = useState(false);
   const [showScoreDetails, setShowScoreDetails] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteSuccess, setDeleteSuccess] = useState(false);
 
   // Optional Investigation Context
   const [caseName, setCaseName] = useState("");
@@ -259,8 +263,33 @@ export default function Home() {
     isAnalyzingRef.current = false;
     setElapsedSeconds(0);
     setFileSha256(null);
+    setShowDeleteConfirm(false);
+    setDeleteSuccess(false);
+    setIsDeleting(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  };
+
+  const handleDeleteFile = async () => {
+    if (!result?.file_id || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      const ok = await deleteRecoveredFile(result.file_id);
+      if (ok) {
+        setDeleteSuccess(true);
+        setTimeout(() => {
+          handleReset();
+          setDeleteSuccess(false);
+          setShowDeleteConfirm(false);
+        }, 1200);
+      } else {
+        setDownloadError("File deletion failed or resource was already purged.");
+      }
+    } catch {
+      setDownloadError("An error occurred while deleting the recovered file.");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -980,10 +1009,44 @@ export default function Home() {
                     </Link>
                   </div>
 
-                  {/* Retention & Ephemeral Purge Notice */}
-                  <div className="pt-2 flex items-center justify-center gap-2 text-[11px] font-mono text-slate-400 text-center">
-                    <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>Automatic 24h Purge · Ephemeral container storage (purged on restart) · No external data sharing</span>
+                  {/* Retention & Immediate User-Initiated Deletion */}
+                  <div className="pt-3 border-t border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-mono">
+                    <div className="flex items-center gap-2 text-slate-500 text-[11px]">
+                      <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>Session-Protected · Auto-purged in 24h · Ephemeral SQLite</span>
+                    </div>
+
+                    {!showDeleteConfirm ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 text-[11px] font-semibold transition-colors"
+                        aria-label="Delete this recovered file immediately"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete File Immediately</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 p-1.5 px-2.5 rounded-lg text-rose-900 text-[11px]">
+                        <span className="font-sans">Permanently delete file & trace now?</span>
+                        <button
+                          type="button"
+                          onClick={handleDeleteFile}
+                          disabled={isDeleting}
+                          className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-2.5 py-1 rounded text-[10px] uppercase transition-colors disabled:opacity-50"
+                        >
+                          {isDeleting ? "Deleting..." : deleteSuccess ? "Purged!" : "Yes, Delete"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowDeleteConfirm(false)}
+                          disabled={isDeleting}
+                          className="text-slate-600 hover:text-slate-900 px-1 py-0.5 text-[10px] underline"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1043,6 +1106,35 @@ export default function Home() {
                 Present relationships, confidence, and forensic context. Interactive fragment relationship graphs visualize
                 observed boundaries and unobserved gaps cleanly.
               </p>
+            </div>
+          </div>
+
+          {/* Byte Conservation Law & Zero-AI Guarantee */}
+          <div className="bg-slate-900 text-slate-100 rounded-2xl p-6 sm:p-8 font-mono border border-slate-800 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <span className="text-xs uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Deterministic Law: Byte Conservation Invariants</span>
+              </span>
+              <span className="text-[10px] text-slate-400">ZERO HEURISTIC GUESSWORK · NO LLM HALLUCINATION</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+              <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
+                <div className="text-emerald-300 font-bold text-sm">
+                  Verified (V) + Missing (M) = Total Input Bytes
+                </div>
+                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                  Every byte of uploaded evidence is definitively accounted for. Either it is cryptographically verified from the physical evidence, or it is cataloged as an unobserved gap. No byte is dropped or hidden.
+                </p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
+                <div className="text-sky-300 font-bold text-sm">
+                  Verified (V) + Reconstructed (R) = Total Output Bytes
+                </div>
+                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                  The recovered downloadable artifact contains only authentic evidence bytes plus the minimum specification-compliant structural closures (such as trailer headers or container footers) needed for parser validity.
+                </p>
+              </div>
             </div>
           </div>
         </div>
