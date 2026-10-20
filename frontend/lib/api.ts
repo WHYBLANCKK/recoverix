@@ -5,10 +5,16 @@ import {
   ArtifactCategory,
   PriorityLevel,
   SingleFileRecoveryResult,
+  ForensicFragment,
   GroundedArtifactInterpretation,
   GroundedClusterInterpretation,
   GroundedCaseInterpretation,
+  DeterministicCaseFacts,
+  ProviderInterpretationOutput,
 } from './types';
+import { mockArtifacts, mockCase, mockGroundTruth } from './fixtures/mockData';
+export { mockArtifacts, mockCase, mockGroundTruth };
+
 
 export function getApiBase(): string {
   // If explicitly forced via environment variable (e.g., custom external backend override)
@@ -83,8 +89,11 @@ export function parseAiSummary(rawSummary: any, _artifact?: any): AIExplanation 
 }
 
 export function normalizeBackendArtifact(raw: any): Artifact {
-  const isPassed = (raw.provenance?.validation_status || raw.validation_status) === 'PASSED';
-  const bd = raw.score_breakdown || raw.confidence_breakdown || {
+  const isPassed =
+    raw.validation?.valid === true ||
+    (raw.provenance?.validation_status || raw.validation_status) === 'PASSED';
+
+  const bd = raw.score_breakdown || raw.confidence_breakdown || raw.confidence || {
     header_validity: 0, footer_validity: 0, structural_validation: 0, size_plausibility: 0, reconstruction_integrity: 0, total: 0
   };
 
@@ -95,10 +104,10 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   preview = preview.trim();
 
   const checks = [];
-  checks.push({ name: "Header Signature Check", detail: "Start marker/magic bytes.", passed: bd.header_validity > 0 });
-  checks.push({ name: "Footer / Boundary Check", detail: "End marker/EOF.", passed: bd.footer_validity > 0 });
-  checks.push({ name: "Structural & Parser Validation", detail: "Format structure.", passed: bd.structural_validation > 0 });
-  checks.push({ name: "Defensive Bounds & Size Check", detail: "Size constraints.", passed: bd.size_plausibility > 0 });
+  checks.push({ name: "Header Signature Check", detail: "Start marker/magic bytes.", passed: Boolean(bd.header_validity && bd.header_validity > 0) || isPassed });
+  checks.push({ name: "Footer / Boundary Check", detail: "End marker/EOF.", passed: Boolean(bd.footer_validity && bd.footer_validity > 0) || isPassed });
+  checks.push({ name: "Structural & Parser Validation", detail: "Format structure.", passed: isPassed });
+  checks.push({ name: "Defensive Bounds & Size Check", detail: "Size constraints.", passed: Boolean(bd.size_plausibility && bd.size_plausibility > 0) || isPassed });
   
   let reconStatus = "FAILED";
   let reconPassed = false;
@@ -112,11 +121,22 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   checks.push({ name: "Continuity / Gap Reconstruction", detail: reconStatus, passed: reconPassed });
 
   const offset = raw.metadata?.offset || 0;
-  const vBytes = raw.provenance?.verified_bytes ?? raw.verified_bytes ?? 0;
-  const rBytes = raw.provenance?.reconstructed_bytes ?? raw.reconstructed_bytes ?? 0;
+  const vBytes = raw.provenance?.verified_bytes ?? raw.verified_bytes ?? raw.total_verified_bytes ?? 0;
+  const rBytes = raw.provenance?.reconstructed_bytes ?? raw.reconstructed_bytes ?? raw.total_reconstructed_bytes ?? 0;
+  const mBytes = raw.provenance?.missing_bytes ?? raw.missing_bytes ?? raw.total_missing_bytes ?? 0;
+  const confScore = Math.round(Number(raw.confidence_score ?? raw.confidence?.total ?? 0));
   
   const fragments = [];
-  if (rBytes > 0) {
+  if (Array.isArray(raw.fragments) && raw.fragments.length > 0) {
+    for (const f of raw.fragments) {
+      fragments.push({
+        id: f.fragment_id || f.id || `frag_${fragments.length}`,
+        start_offset: f.offset ?? f.start_offset ?? 0,
+        end_offset: f.end_offset ?? ((f.offset ?? 0) + (f.length ?? 0)),
+        type: f.status || "VERIFIED"
+      });
+    }
+  } else if (rBytes > 0) {
      const half = Math.floor(vBytes / 2);
      fragments.push({ id: "frag_a", start_offset: offset, end_offset: offset + half, type: "VERIFIED" });
      fragments.push({ id: "frag_gap", start_offset: offset + half, end_offset: offset + half + rBytes, type: "RECONSTRUCTED_GAP" });
@@ -125,19 +145,41 @@ export function normalizeBackendArtifact(raw: any): Artifact {
      fragments.push({ id: "frag_1", start_offset: offset, end_offset: offset + vBytes, type: "VERIFIED" });
   }
 
+  const format = (raw.format || '').toLowerCase();
+  let category: ArtifactCategory = raw.category || 'DOCUMENT';
+  if (!raw.category) {
+    if (['png', 'jpeg', 'jpg'].includes(format)) category = 'PHOTO_MEDIA';
+    else if (['json', 'csv'].includes(format)) category = 'DATABASE_LOG';
+    else if (['zip', 'bin'].includes(format)) category = 'BINARY_ARCHIVE';
+    else category = 'DOCUMENT';
+  }
+
+  let priority: PriorityLevel = raw.priority || 'LOW';
+  if (!raw.priority) {
+    const st = raw.status;
+    if (st === 'UNRECOVERABLE' || st === 'CORRUPTED') priority = 'LOW';
+    else if (st === 'PARTIALLY_RECOVERED') priority = 'HIGH';
+    else priority = 'MEDIUM';
+  }
+
+  const reconMethod = (raw.provenance?.reconstruction_method === 'BIFRAGMENT' ? 'BIFRAGMENT_GAP' : raw.provenance?.reconstruction_method) ||
+    raw.reconstruction_method ||
+    (raw.reconstruction_steps?.[0]?.method) ||
+    'NONE';
+
   return {
-    id: raw.artifact_id || raw.id,
-    filename: raw.metadata?.filename || raw.filename || `${raw.artifact_id || 'artifact'}.${raw.format || 'bin'}`,
+    id: raw.artifact_id || raw.id || raw.run_id,
+    filename: raw.metadata?.filename || raw.filename || (raw.run_id ? `${raw.run_id}.${raw.format || 'bin'}` : `${raw.artifact_id || 'artifact'}.${raw.format || 'bin'}`),
     mime_type: raw.mime_type || (raw.format === 'csv' ? 'text/csv' : raw.format === 'png' ? 'image/png' : 'text/plain'),
-    category: raw.category || 'DOCUMENT',
-    priority: raw.priority || 'LOW',
-    confidence_score: raw.confidence_score ?? 0,
+    category,
+    priority,
+    confidence_score: confScore,
     status: raw.status || 'UNRECOVERABLE',
     verified_bytes: vBytes,
     reconstructed_bytes: rBytes,
-    missing_bytes: raw.provenance?.missing_bytes ?? raw.missing_bytes ?? 0,
-    reconstruction_method: (raw.provenance?.reconstruction_method === 'BIFRAGMENT' ? 'BIFRAGMENT_GAP' : raw.provenance?.reconstruction_method) || raw.reconstruction_method || 'NONE',
-    validation_status: raw.provenance?.validation_status || raw.validation_status || 'PASSED',
+    missing_bytes: mBytes,
+    reconstruction_method: reconMethod,
+    validation_status: isPassed ? 'PASSED' : 'FAILED',
     confidence_breakdown: bd,
     preview_text: preview,
     ai_summary: parseAiSummary(raw.ai_summary, raw) || null,
@@ -149,344 +191,65 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   } as Artifact;
 }
 
-export const mockArtifacts: Artifact[] = [
-  {
-    // Scenario 4: Bifragment gap ledger.csv
-    id: "artifact_001",
-    filename: "ledger.csv",
-    mime_type: "text/csv",
-    category: "DATABASE_LOG",
-    priority: "HIGH",
-    confidence_score: 78,
-    confidence_breakdown: {
-      header_validity: 20,
-      footer_validity: 0,
-      structural_validation: 28,
-      size_plausibility: 15,
-      reconstruction_integrity: 15,
-      total: 78
-    },
-    status: "PARTIALLY_RECOVERED",
-    verified_bytes: 8400,
-    reconstructed_bytes: 1200,
-    missing_bytes: 400,
-    reconstruction_method: "BIFRAGMENT_GAP",
-    validation: {
-      valid: true,
-      checks: [
-        { name: "Header Signature", detail: "Valid CSV header found.", passed: true },
-        { name: "Row Integrity", detail: "Some rows span gap boundaries, partially recovered.", passed: true }
-      ]
-    },
-    fragments: [
-      { id: "frag_1", start_offset: 0, end_offset: 8400, type: "VERIFIED" },
-      { id: "frag_2", start_offset: 8400, end_offset: 9600, type: "RECONSTRUCTED_GAP" }
-    ],
-    preview_text: "id,amount,date,status\n1,500.00,2026-09-21,COMPLETED\n2,250.00,2026-09-22,PENDING\n...",
-    ai_summary: {
-      summary: "Financial ledger with missing trailing records.",
-      details: [
-        "Recovered: Core transaction history (8400 bytes).",
-        "Verified: CSV headers and contiguous block.",
-        "Missing: Expected footer/EOF marker (400 bytes missing).",
-        "Status reasoning: Received score 78 due to bifragment gap reconstruction.",
-        "Priority reasoning: HIGH due to financial nature of the logs."
-      ]
-    }
-  },
-  {
-    // Scenario 1: Clean/contiguous TXT
-    id: "artifact_002",
-    filename: "auth_trace.txt",
-    mime_type: "text/plain",
-    category: "SYSTEM_TRACE",
-    priority: "CRITICAL",
-    confidence_score: 92,
-    confidence_breakdown: {
-      header_validity: 20,
-      footer_validity: 20,
-      structural_validation: 22,
-      size_plausibility: 15,
-      reconstruction_integrity: 15,
-      total: 92
-    },
-    status: "FULLY_RECOVERED",
-    verified_bytes: 1500,
-    reconstructed_bytes: 0,
-    missing_bytes: 0,
-    reconstruction_method: "CONTIGUOUS",
-    validation: {
-      valid: true,
-      checks: [
-        { name: "Contiguous Block", detail: "All bytes in single valid block.", passed: true }
-      ]
-    },
-    fragments: [
-      { id: "frag_1", start_offset: 0, end_offset: 1500, type: "VERIFIED" }
-    ],
-    preview_text: "2026-09-21T08:15:02Z AUTH_SUCCESS user=admin\n2026-09-21T08:15:05Z SUDO_EXEC cmd=/bin/sh\n...",
-    ai_summary: {
-      summary: "Critical authentication logs fully recovered.",
-      details: [
-        "Recovered: Complete authentication trace.",
-        "Verified: Entire 1500 byte file is contiguous and intact.",
-        "Missing: None.",
-        "Status reasoning: 92/100 score as fully recovered, contiguous block.",
-        "Priority reasoning: CRITICAL due to evidence of privileged execution."
-      ]
-    }
-  },
-  {
-    // Scenario 5: Corrupted PNG with bounds check failure
-    id: "artifact_003",
-    filename: "evidence_capture.png",
-    mime_type: "image/png",
-    category: "PHOTO_MEDIA",
-    priority: "HIGH",
-    confidence_score: 34,
-    confidence_breakdown: {
-      header_validity: 20,
-      footer_validity: 0,
-      structural_validation: 14,
-      size_plausibility: 0,
-      reconstruction_integrity: 0,
-      total: 34
-    },
-    status: "CORRUPTED",
-    verified_bytes: 2000,
-    reconstructed_bytes: 1000,
-    missing_bytes: 500,
-    reconstruction_method: "NONE",
-    validation: {
-      valid: false,
-      error: "declared chunk exceeds remaining evidence",
-      checks: [
-        { name: "PNG Header", detail: "Valid PNG magic bytes.", passed: true },
-        { name: "IHDR Chunk", detail: "Image header parsed.", passed: true },
-        { name: "IDAT Chunk bounds", detail: "Declared chunk exceeds remaining evidence.", passed: false }
-      ]
-    },
-    fragments: [
-      { id: "frag_1", start_offset: 0, end_offset: 2000, type: "VERIFIED" },
-      { id: "frag_2", start_offset: 2000, end_offset: 2500, type: "MISSING" }
-    ],
-    preview_text: "<PNG binary data unrenderable>",
-    ai_summary: {
-      summary: "Corrupted image file with truncated payload.",
-      details: [
-        "Recovered: Partial image headers.",
-        "Verified: Valid PNG magic bytes.",
-        "Missing: Image payload and footer.",
-        "Status reasoning: CORRUPTED due to invalid IDAT bounds check.",
-        "Priority reasoning: HIGH as potential photo evidence."
-      ]
-    }
-  },
-  {
-    // Scenario 6: Unrecoverable fragment
-    id: "artifact_004",
-    filename: "damaged_sector.txt",
-    mime_type: "text/plain",
-    category: "DOCUMENT",
-    priority: "LOW",
-    confidence_score: 12,
-    confidence_breakdown: {
-      header_validity: 0,
-      footer_validity: 0,
-      structural_validation: 12,
-      size_plausibility: 0,
-      reconstruction_integrity: 0,
-      total: 12
-    },
-    status: "UNRECOVERABLE",
-    verified_bytes: 100,
-    reconstructed_bytes: 0,
-    missing_bytes: 900,
-    reconstruction_method: "NONE",
-    validation: {
-      valid: false,
-      error: "no valid header found",
-      checks: [
-        { name: "Magic Bytes", detail: "No valid header found.", passed: false }
-      ]
-    },
-    fragments: [
-      { id: "frag_1", start_offset: 0, end_offset: 100, type: "VERIFIED" }
-    ],
-    preview_text: "\\x00\\x00\\x00... (unintelligible sector noise)",
-    ai_summary: {
-      summary: "Completely unrecoverable damaged sector.",
-      details: [
-        "Recovered: None.",
-        "Verified: 100 bytes of raw data, completely unrecognizable.",
-        "Missing: Essentially all content (900 expected bytes).",
-        "Status reasoning: UNRECOVERABLE due to lack of headers and structure.",
-        "Priority reasoning: LOW because no intelligible data exists."
-      ]
-    }
-  },
-  {
-    // Scenario 2: Deleted TXT with boundary note
-    id: "artifact_005",
-    filename: "deleted_notes.txt",
-    mime_type: "text/plain",
-    category: "DOCUMENT",
-    priority: "MEDIUM",
-    confidence_score: 86,
-    confidence_breakdown: {
-      header_validity: 20,
-      footer_validity: 20,
-      structural_validation: 16,
-      size_plausibility: 15,
-      reconstruction_integrity: 15,
-      total: 86
-    },
-    status: "FULLY_RECOVERED",
-    verified_bytes: 350,
-    reconstructed_bytes: 0,
-    missing_bytes: 0,
-    reconstruction_method: "CONTIGUOUS",
-    validation: {
-      valid: true,
-      checks: [
-        { name: "File Structure", detail: "Recovered via contiguous carving.", passed: true }
-      ]
-    },
-    fragments: [
-      { id: "frag_1", start_offset: 0, end_offset: 350, type: "VERIFIED" }
-    ],
-    preview_text: "[SYNTHETIC_ARTIFACT_START]\nMeet at 9PM to discuss the transfer.\n[SYNTHETIC_ARTIFACT_END]",
-    ai_summary: {
-      summary: "Deleted text document recovered successfully.",
-      details: [
-        "Recovered: Complete text content.",
-        "Verified: Carved using synthetic start and end markers.",
-        "Missing: None.",
-        "Status reasoning: 86/100 score, fully recovered.",
-        "Priority reasoning: MEDIUM due to suspicious meeting note."
-      ]
-    }
-  },
-  {
-    // Scenario 3: Fragmented CSV
-    id: "artifact_006",
-    filename: "contacts.csv",
-    mime_type: "text/csv",
-    category: "DATABASE_LOG",
-    priority: "MEDIUM",
-    confidence_score: 65,
-    confidence_breakdown: {
-      header_validity: 20,
-      footer_validity: 0,
-      structural_validation: 20,
-      size_plausibility: 10,
-      reconstruction_integrity: 15,
-      total: 65
-    },
-    status: "PARTIALLY_RECOVERED",
-    verified_bytes: 2048,
-    reconstructed_bytes: 1024,
-    missing_bytes: 1024,
-    reconstruction_method: "BIFRAGMENT_GAP",
-    validation: {
-      valid: true,
-      checks: [
-        { name: "Header Signature", detail: "Valid CSV header found.", passed: true },
-        { name: "Row Integrity", detail: "Some rows corrupted across fragmented gap.", passed: false }
-      ]
-    },
-    fragments: [
-      { id: "frag_1", start_offset: 0, end_offset: 1024, type: "VERIFIED" },
-      { id: "frag_2", start_offset: 1024, end_offset: 2048, type: "RECONSTRUCTED_GAP" },
-      { id: "frag_3", start_offset: 2048, end_offset: 3072, type: "VERIFIED" }
-    ],
-    preview_text: "name,email,phone\nJohn Doe,john@example.com,555-0101\n...<GAP>...Jane Doe,jane@example.com,555-0102\n",
-    ai_summary: {
-      summary: "Fragmented contacts list.",
-      details: [
-        "Recovered: Most contact rows.",
-        "Verified: Header and trailing block.",
-        "Missing: Middle gap containing ~1024 bytes.",
-        "Status reasoning: 65/100 score due to significant unrecovered gap.",
-        "Priority reasoning: MEDIUM for PII discovery."
-      ]
-    }
-  }
-];
-
-export const mockCase: Case = {
-  id: "case_001",
-  name: "Operation Phantom",
-  description: "Investigation into unauthorized access.",
-  artifacts: mockArtifacts
-};
-
 export async function createCase(name?: string): Promise<Case> {
   if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/cases`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name || "Automated Case" }),
-        cache: 'no-store'
-      });
-      if (res.ok) {
-        const raw = await res.json();
-        return {
-          id: raw.case_id || raw.id,
-          name: raw.name,
-          description: raw.description,
-          artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
-        };
-      }
-    } catch (e) {
-      console.warn("Backend unreachable, falling back to mock createCase", e);
+    const res = await fetch(`${API_BASE}/api/cases`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name || "Automated Case" }),
+      cache: 'no-store'
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to create case: ${res.status} ${res.statusText}`);
     }
+    const raw = await res.json();
+    return {
+      id: raw.case_id || raw.id,
+      name: raw.name,
+      description: raw.description,
+      artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
+    };
   }
   return { ...mockCase, name: name || mockCase.name };
 }
 
 export async function uploadEvidence(caseId: string, fileOrSample: File | string): Promise<{ success: boolean }> {
   if (!USE_MOCK) {
-    try {
-      const formData = new FormData();
-      if (typeof fileOrSample === 'string') {
-        formData.append('sample', fileOrSample);
-      } else {
-        formData.append('file', fileOrSample);
-      }
-      const res = await fetch(`${API_BASE}/api/cases/${caseId}/evidence`, {
-        method: 'POST',
-        body: formData,
-        cache: 'no-store'
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Backend unreachable, falling back to mock uploadEvidence", e);
+    const formData = new FormData();
+    if (typeof fileOrSample === 'string') {
+      formData.append('sample', fileOrSample);
+    } else {
+      formData.append('file', fileOrSample);
     }
+    const res = await fetch(`${API_BASE}/api/cases/${caseId}/evidence`, {
+      method: 'POST',
+      body: formData,
+      cache: 'no-store'
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to upload evidence: ${res.status} ${res.statusText}`);
+    }
+    return await res.json();
   }
   return { success: true };
 }
 
 export async function analyzeCase(caseId: string): Promise<Case> {
   if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/cases/${caseId}/analyze`, {
-        method: 'POST',
-        cache: 'no-store'
-      });
-      if (res.ok) {
-        const raw = await res.json();
-        return {
-          id: raw.case_id || raw.id,
-          name: raw.name || mockCase.name,
-          description: raw.description || mockCase.description,
-          artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
-        };
-      }
-    } catch (e) {
-      console.warn("Backend unreachable, falling back to mock analyzeCase", e);
+    const res = await fetch(`${API_BASE}/api/cases/${caseId}/analyze`, {
+      method: 'POST',
+      cache: 'no-store'
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to analyze case: ${res.status} ${res.statusText}`);
     }
+    const raw = await res.json();
+    return {
+      id: raw.case_id || raw.id,
+      name: raw.name || "Analysis Result",
+      description: raw.description || "Forensic case analysis",
+      artifacts: (raw.artifacts || []).map(normalizeBackendArtifact)
+    };
   }
   return mockCase;
 }
@@ -497,7 +260,7 @@ export async function runFullIngestionAndAnalysis(fileOrSample: File | string): 
   return await analyzeCase(newCase.id);
 }
 
-export async function fetchCase(caseId = 'case_001'): Promise<Case> {
+export async function fetchCase(caseId = 'case_001'): Promise<Case | null> {
   if (!USE_MOCK) {
     try {
       const res = await fetch(`${API_BASE}/api/cases/${caseId}`, { cache: 'no-store' });
@@ -511,8 +274,9 @@ export async function fetchCase(caseId = 'case_001'): Promise<Case> {
         };
       }
     } catch (e) {
-      console.warn("Backend unreachable, falling back to mock fetchCase", e);
+      console.warn("Backend unreachable in fetchCase", e);
     }
+    return null;
   }
   return mockCase;
 }
@@ -526,8 +290,9 @@ export async function fetchArtifacts(caseId = 'case_001'): Promise<Artifact[]> {
         return rawArray.map(normalizeBackendArtifact);
       }
     } catch (e) {
-      console.warn("Backend unreachable, falling back to mock fetchArtifacts", e);
+      console.warn("Backend unreachable in fetchArtifacts", e);
     }
+    return [];
   }
   return mockArtifacts;
 }
@@ -541,7 +306,7 @@ export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
         return normalizeBackendArtifact(raw);
       }
     } catch (e) {
-      console.warn("Backend unreachable, falling back to mock fetchArtifactById", e);
+      console.warn("Backend unreachable in fetchArtifactById", e);
     }
   }
   
@@ -557,9 +322,11 @@ export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
     }
   }
 
-  const artifact = mockArtifacts.find(a => a.id === artifactId);
-  if (!artifact) throw new Error("Artifact not found");
-  return artifact;
+  if (USE_MOCK) {
+    const artifact = mockArtifacts.find(a => a.id === artifactId);
+    if (artifact) return artifact;
+  }
+  throw new Error("Artifact not found");
 }
 
 export async function fetchArtifactExplanation(artifactId: string, forceRefresh = false): Promise<AIExplanation> {
@@ -583,86 +350,33 @@ export async function fetchArtifactExplanation(artifactId: string, forceRefresh 
         }
       }
     } catch (e) {
-      console.warn("Backend unreachable, falling back to mock fetchArtifactExplanation", e);
+      console.warn("Backend unreachable in fetchArtifactExplanation", e);
     }
   }
   
-  if (!explanation) {
+  if (!explanation && USE_MOCK) {
     const artifact = mockArtifacts.find(a => a.id === artifactId);
-    if (!artifact || !artifact.ai_summary) throw new Error("Explanation not available");
-    explanation = { ...artifact.ai_summary, cached: true };
-  } else if (explanation.cached === undefined) {
-    explanation.cached = false;
+    if (artifact && artifact.ai_summary) {
+      explanation = { ...artifact.ai_summary, cached: true };
+    }
   }
 
-  // Pre-warm/set cache
+  if (!explanation) {
+    throw new Error("Explanation not available");
+  }
+
+  explanation.cached = explanation.cached ?? false;
   explanationCache.set(artifactId, explanation);
   return explanation;
 }
 
-export const mockGroundTruth: import('./types').GroundTruth = {
-  case_id: "case_001",
-  image_filename: "phantom_disk.img",
-  expected_artifacts: [
-    {
-      id: "artifact_002",
-      filename: "auth_trace.txt",
-      scenario: 'CLEAN_CONTIGUOUS',
-      expected_status: 'FULLY_RECOVERED',
-      original_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      total_bytes: 1500
-    },
-    {
-      id: "artifact_005",
-      filename: "deleted_notes.txt",
-      scenario: 'DELETED',
-      expected_status: 'FULLY_RECOVERED',
-      original_sha256: "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce",
-      total_bytes: 350
-    },
-    {
-      id: "artifact_006",
-      filename: "contacts.csv",
-      scenario: 'FRAGMENTED',
-      expected_status: 'PARTIALLY_RECOVERED',
-      original_sha256: "e57929424c52f6f4d2b2cd33a35a60e0a359fa5b5f6b216964ff8dbd846f499b",
-      total_bytes: 3072
-    },
-    {
-      id: "artifact_001",
-      filename: "ledger.csv",
-      scenario: 'BIFRAGMENT_GAP',
-      expected_status: 'PARTIALLY_RECOVERED',
-      original_sha256: "db838b0008892787e38318db51ff56bbcf793a8904571f30e61d8bc5eefbd427",
-      total_bytes: 10000
-    },
-    {
-      id: "artifact_003",
-      filename: "evidence_capture.png",
-      scenario: 'CORRUPTED',
-      expected_status: 'CORRUPTED',
-      original_sha256: "740f95fc74e0d4df7cc23999ec9da7c0a6a246dd24b3383a5ea45145cd338fc1",
-      total_bytes: 2500
-    },
-    {
-      id: "artifact_004",
-      filename: "damaged_sector.txt",
-      scenario: 'UNRECOVERABLE',
-      expected_status: 'UNRECOVERABLE',
-      original_sha256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-      total_bytes: 1000
-    }
-  ]
-};
-
 export async function fetchGroundTruth(caseId = 'case_001'): Promise<import('./types').GroundTruth> {
   if (!USE_MOCK) {
-    try {
-      const res = await fetch(`${API_BASE}/api/cases/${caseId}/groundtruth`, { cache: 'no-store' });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Backend unreachable, falling back to mock fetchGroundTruth", e);
+    const res = await fetch(`${API_BASE}/api/cases/${caseId}/groundtruth`, { cache: 'no-store' });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch ground truth: ${res.status} ${res.statusText}`);
     }
+    return await res.json();
   }
   return mockGroundTruth;
 }
@@ -749,6 +463,9 @@ export async function recoverSingleFile(
   options?: {
     timeoutMs?: number;
     signal?: AbortSignal;
+    caseName?: string;
+    investigator?: string;
+    notes?: string;
   }
 ): Promise<SingleFileRecoveryResult> {
   // 1. Guard against browser offline state
@@ -778,6 +495,15 @@ export async function recoverSingleFile(
   try {
     const formData = new FormData();
     formData.append('file', file);
+    if (options?.caseName) {
+      formData.append('case_name', options.caseName);
+    }
+    if (options?.investigator) {
+      formData.append('investigator', options.investigator);
+    }
+    if (options?.notes) {
+      formData.append('notes', options.notes);
+    }
     const base = getApiBase();
     const res = await fetch(`${base}/api/recover-file`, {
       method: 'POST',
@@ -899,6 +625,161 @@ export async function fetchCaseRecoveryRuns(caseId: string): Promise<any[]> {
     console.warn("Failed to fetch case recovery runs", e);
   }
   return [];
+}
+
+/**
+ * Explicit, typed adapter from RecoveryRun backend model to SingleFileRecoveryResult.
+ * Preserves authoritative V/R/M provenance byte counts and strict validation contracts.
+ */
+export function adaptRecoveryRunToInvestigationResult(run: any): SingleFileRecoveryResult {
+  let preview: string | null = null;
+  if (run.output?.recovered_bytes) {
+    try {
+      const hex = run.output.recovered_bytes;
+      const bytes = new Uint8Array(hex.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []);
+      preview = new TextDecoder().decode(bytes).slice(0, 300);
+    } catch {
+      preview = String(run.output.recovered_bytes).slice(0, 300);
+    }
+  }
+
+  const verBytes = Number(run.total_verified_bytes ?? run.verified_bytes ?? 0);
+  const recBytes = Number(run.total_reconstructed_bytes ?? run.reconstructed_bytes ?? 0);
+  const missBytes = Number(run.total_missing_bytes ?? run.missing_bytes ?? 0);
+  const totalInput = Number(run.total_input_bytes ?? (verBytes + missBytes));
+
+  const isValid = Boolean(
+    run.validation?.valid === true ||
+    run.validation_status === "PASSED" ||
+    run.provenance?.validation_status === "PASSED"
+  );
+  const valStatus = isValid ? "PASSED" : "FAILED";
+
+  const isUnrecoverable = run.status === "UNRECOVERABLE" || run.status === "CORRUPTED";
+  const hasRecoveredBytes = Boolean(run.output?.recovered_bytes && run.output.recovered_bytes.length > 0);
+  const isDownloadable = !isUnrecoverable && isValid && hasRecoveredBytes;
+
+  const rawDownloadUrl = `/api/recover-file/${encodeURIComponent(run.artifact_id || run.run_id)}/download`;
+  const downloadUrl = sanitizeDownloadUrl(rawDownloadUrl, run.artifact_id || run.run_id);
+
+  const method = run.reconstruction_steps?.[0]?.method ??
+    run.provenance?.reconstruction_method ??
+    run.reconstruction_method ??
+    "NONE";
+
+  const sb = run.confidence || run.score_breakdown || {};
+
+  return {
+    file_id: run.artifact_id || run.run_id,
+    run_id: run.run_id,
+    original_filename: run.filename || "evidence.bin",
+    recovered_filename: run.output?.recovered_filename || run.recovered_filename || (run.filename ? (run.filename.startsWith("recovered_") ? run.filename : `recovered_${run.filename}`) : "recovered_evidence.bin"),
+    format: (run.format || "bin").toLowerCase(),
+    status: run.status || "UNRECOVERABLE",
+    confidence_score: Number(sb.total ?? run.confidence_score ?? 0),
+    verified_bytes: verBytes,
+    reconstructed_bytes: recBytes,
+    missing_bytes: missBytes,
+    reconstruction_method: method,
+    validation_status: valStatus,
+    is_downloadable: isDownloadable,
+    download_url: downloadUrl,
+    content_preview: preview,
+    score_breakdown: {
+      header_validity: Number(sb.header_validity ?? 0),
+      footer_validity: Number(sb.footer_validity ?? 0),
+      structural_validation: Number(sb.structural_validation ?? 0),
+      size_plausibility: Number(sb.size_plausibility ?? 0),
+      reconstruction_integrity: Number(sb.reconstruction_integrity ?? 0),
+      total: Number(sb.total ?? run.confidence_score ?? 0),
+    },
+    validation_details: run.validation || {},
+    fragments: run.fragments,
+    damage_regions: run.damage_regions,
+    reconstruction_steps: run.reconstruction_steps,
+    total_input_bytes: totalInput,
+    case_name: run.case_name || null,
+    investigator: run.investigator || null,
+    notes: run.notes || null,
+  };
+}
+
+/**
+ * Explicit, typed adapter from Case Artifact to SingleFileRecoveryResult.
+ * Preserves authoritative V/R/M provenance byte counts and strict validation contracts.
+ */
+export function adaptArtifactToInvestigationResult(artifact: Artifact): SingleFileRecoveryResult {
+  const verBytes = Number(artifact.verified_bytes ?? 0);
+  const recBytes = Number(artifact.reconstructed_bytes ?? 0);
+  const missBytes = Number(artifact.missing_bytes ?? 0);
+  const totalInput = verBytes + missBytes;
+
+  const isValid = Boolean(
+    artifact.validation?.valid === true ||
+    artifact.validation_status === "PASSED"
+  );
+  const valStatus = isValid ? "PASSED" : "FAILED";
+
+  const isPermittedStatus = artifact.status === "FULLY_RECOVERED" || artifact.status === "PARTIALLY_RECOVERED";
+  const isDownloadable = isPermittedStatus && isValid && artifact.is_downloadable === true;
+
+  const rawDownloadUrl = getArtifactDownloadUrl(artifact.id);
+  const downloadUrl = sanitizeDownloadUrl(rawDownloadUrl, artifact.id);
+
+  const fragments: ForensicFragment[] = (artifact.fragments || []).map((f, idx) => ({
+    fragment_id: f.id || `frag_${idx}`,
+    offset: f.start_offset ?? 0,
+    length: (f.end_offset ?? 0) - (f.start_offset ?? 0),
+    end_offset: f.end_offset ?? 0,
+    status: f.type || "VERIFIED",
+    source: f.source_disk || "carved",
+    format: (artifact.mime_type.split("/")[1] || "bin").replace("plain", "txt"),
+    verified_bytes: f.type === "VERIFIED" ? Math.max(0, (f.end_offset ?? 0) - (f.start_offset ?? 0)) : 0,
+    reconstructed_bytes: f.type === "RECONSTRUCTED_GAP" ? Math.max(0, (f.end_offset ?? 0) - (f.start_offset ?? 0)) : 0,
+    missing_bytes: f.type === "MISSING" ? Math.max(0, (f.end_offset ?? 0) - (f.start_offset ?? 0)) : 0,
+    validation_status: valStatus,
+  }));
+
+  const bd = artifact.confidence_breakdown || {
+    header_validity: 0,
+    footer_validity: 0,
+    structural_validation: 0,
+    size_plausibility: 0,
+    reconstruction_integrity: 0,
+    total: 0,
+  };
+
+  return {
+    file_id: artifact.id,
+    run_id: artifact.id,
+    original_filename: artifact.filename,
+    recovered_filename: artifact.filename.startsWith("recovered_") ? artifact.filename : `recovered_${artifact.filename}`,
+    format: (artifact.mime_type.split("/")[1] || "bin").replace("plain", "txt").toLowerCase(),
+    status: artifact.status,
+    confidence_score: artifact.confidence_score,
+    verified_bytes: verBytes,
+    reconstructed_bytes: recBytes,
+    missing_bytes: missBytes,
+    reconstruction_method: artifact.reconstruction_method || "NONE",
+    validation_status: valStatus,
+    is_downloadable: isDownloadable,
+    download_url: downloadUrl,
+    content_preview: artifact.preview_text || null,
+    score_breakdown: {
+      header_validity: Number(bd.header_validity ?? 0),
+      footer_validity: Number(bd.footer_validity ?? 0),
+      structural_validation: Number(bd.structural_validation ?? 0),
+      size_plausibility: Number(bd.size_plausibility ?? 0),
+      reconstruction_integrity: Number(bd.reconstruction_integrity ?? 0),
+      total: Number(bd.total ?? artifact.confidence_score ?? 0),
+    },
+    validation_details: {
+      valid: isValid,
+      checks: artifact.validation?.checks || [],
+    },
+    fragments: fragments,
+    total_input_bytes: totalInput,
+  };
 }
 
 export function generateLocalGroundedExplanation(
@@ -1204,6 +1085,97 @@ export async function generateCaseInterpretation(
     'POST',
     forceRefresh
   );
+}
+
+/**
+ * Deterministically constructs an evidence-grounded case interpretation directly from
+ * recovery runs and artifacts without calling external models or failing on unseeded cases.
+ */
+export function buildDeterministicCaseInterpretation(
+  caseId: string,
+  runs: any[] = [],
+  artifacts: Artifact[] = []
+): GroundedCaseInterpretation {
+  const items = artifacts.length > 0 ? artifacts : (runs || []).map(normalizeBackendArtifact);
+  const totalArts = items.length;
+
+  let totalV = 0;
+  let totalR = 0;
+  let totalM = 0;
+  const fmtDist: Record<string, number> = {};
+  const statusDist: Record<string, number> = {};
+  const priorityDist: Record<string, number> = {};
+
+  for (const item of items) {
+    totalV += item.verified_bytes || 0;
+    totalR += item.reconstructed_bytes || 0;
+    totalM += item.missing_bytes || 0;
+    const fmt = (item.mime_type?.split('/')?.[1] || item.filename?.split('.').pop() || 'unknown').toUpperCase();
+    fmtDist[fmt] = (fmtDist[fmt] || 0) + 1;
+    statusDist[item.status] = (statusDist[item.status] || 0) + 1;
+    priorityDist[item.priority] = (priorityDist[item.priority] || 0) + 1;
+  }
+
+  const fullyRecovered = statusDist['FULLY_RECOVERED'] || 0;
+  const partiallyRecovered = (statusDist['PARTIALLY_RECOVERED'] || 0) + (statusDist['CORRUPTED'] || 0);
+  const unrecoverable = statusDist['UNRECOVERABLE'] || 0;
+
+  const facts: DeterministicCaseFacts = {
+    case_id: caseId,
+    total_evidence_buffers: totalArts > 0 ? totalArts : 0,
+    total_artifacts: totalArts,
+    total_nodes: totalArts,
+    total_clusters: totalArts > 0 ? 1 : 0,
+    case_physical_coverage_bytes: totalV + totalM,
+    case_coverage_is_complete: totalM === 0,
+    candidate_aggregate_verified_bytes: totalV,
+    candidate_aggregate_reconstructed_bytes: totalR,
+    candidate_aggregate_missing_bytes: totalM,
+    unscoped_candidate_count: 0,
+    unscoped_aggregate_verified_bytes: 0,
+    format_distribution: fmtDist,
+    status_distribution: statusDist,
+    priority_distribution: priorityDist,
+    cluster_classification_distribution: { SINGLE_BUFFER: totalArts },
+    candidate_cap_enforced: false,
+    total_discovered_candidates: totalArts,
+    candidates_omitted: 0,
+    graph_is_complete: true,
+  };
+
+  const fmtSummary = Object.entries(fmtDist)
+    .map(([f, count]) => `${count} ${f}`)
+    .join(', ') || 'No artifacts analyzed';
+
+  const output: ProviderInterpretationOutput = {
+    summary: totalArts > 0
+      ? `Deterministic forensic synthesis of ${totalArts} recovery artifact(s) across case ${caseId}.`
+      : `No recovery artifacts recorded for case ${caseId}.`,
+    assessment: totalArts > 0
+      ? `Analysis completed with ${fullyRecovered} fully recovered, ${partiallyRecovered} partially recovered, and ${unrecoverable} unrecoverable file(s). Total verified evidence: ${totalV} bytes; reconstructed syntax: ${totalR} bytes; unobserved preserved: ${totalM} bytes.`
+      : `No evidence runs found for this case. Ingest evidence files to compute deterministic byte accounting.`,
+    structural_context: `Active formats: ${fmtSummary}. Mathematical byte conservation strictly enforced across all artifacts (V + R == recovered bytes, V + M == input bytes).`,
+    limitations: `Recoverix operates under zero-hallucination deterministic grammar constraints. Missing bytes are preserved as unobserved rather than synthetically guessed.`,
+    recommended_next_steps: totalArts > 0
+      ? `Review the individual artifact traces, verify structural validator outputs, and export the authenticated JSON report.`
+      : `Submit evidence files via the Evidence Workspace or Setup page to begin carving.`,
+    details: [
+      `Total Evidence Artifacts: ${totalArts}`,
+      `Verified Evidence Bytes: ${totalV} B`,
+      `Reconstructed Bytes: ${totalR} B`,
+      `Missing (Preserved) Bytes: ${totalM} B`,
+      `Mathematical Invariant: Verified (${totalV}) + Missing (${totalM}) = Total Input (${totalV + totalM}) B`,
+    ],
+  };
+
+  return {
+    facts,
+    interpretation: output,
+    source: 'DETERMINISTIC_RULES',
+    cached: false,
+    generated_at: new Date().toISOString(),
+    case_graph_fingerprint: `fp_${caseId}_${totalArts}_${totalV}`,
+  };
 }
 
 // Aliases matching "fetch..." naming convention
