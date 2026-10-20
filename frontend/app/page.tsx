@@ -25,9 +25,21 @@ import {
   FileText,
   Archive,
   Image as ImageIcon,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { recoverSingleFile } from "@/lib/api";
+import { computeFileSha256 } from "@/lib/crypto";
 import { SingleFileRecoveryResult } from "@/lib/types";
+import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
+
+import {
+  FIXTURE_JSON,
+  FIXTURE_TXT,
+  FIXTURE_CSV,
+  FIXTURE_XML,
+  FIXTURE_JPEG_B64,
+} from "@/lib/fixtures/benchmarkEvidence";
 
 const RECOVERY_STAGES = [
   "Reading local byte buffer & calculating SHA-256",
@@ -36,24 +48,6 @@ const RECOVERY_STAGES = [
   "Auditing verified, reconstructed & missing byte invariants",
   "Finalizing verified recovery package",
 ];
-
-// Presets for instant 1-click live browser evaluation
-const FIXTURE_JSON = '{"case":"IR-99","status":"active","tags":["malware","network"';
-const FIXTURE_TXT =
-  "Subject: Security Incident Escalation\nTo: Operations Team\n\n" +
-  "\x00".repeat(48) +
-  "Action Taken: Contained affected workstation and isolated host.\n";
-const FIXTURE_CSV =
-  "id,name,role,department\n" +
-  "101,Alice Vance,Forensics Lead,Incident Response\n" +
-  "102,Bob Miller,Security Analyst,SOC\n" +
-  "103,Charlie Chen,Malware Engineer,Reverse Eng\n";
-const FIXTURE_XML =
-  '<?xml version="1.0" encoding="UTF-8"?>\n' +
-  '<audit_log id="LOG-884">\n' +
-  '  <source>firewall-edge-01</source>\n' +
-  '  <event status="blocked">Unauthorized access attempt</event>\n';
-const FIXTURE_JPEG_B64 = "/9j/wAARCAAQABADAREAAhEBAxEB/9oADAMBAAIRAxEAPwAAf//Z";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -67,6 +61,13 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedPreview, setCopiedPreview] = useState(false);
   const [showScoreDetails, setShowScoreDetails] = useState(false);
+
+  // Optional Investigation Context
+  const [caseName, setCaseName] = useState("");
+  const [investigator, setInvestigator] = useState("");
+  const [notes, setNotes] = useState("");
+  const [fileSha256, setFileSha256] = useState<string | null>(null);
+  const [showInvestigationContext, setShowInvestigationContext] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isAnalyzingRef = useRef(false);
@@ -105,7 +106,21 @@ export default function Home() {
     }, 1500);
 
     try {
-      const res = await recoverSingleFile(evidenceFile);
+      let hash = fileSha256;
+      if (!hash) {
+        try {
+          hash = await computeFileSha256(evidenceFile);
+          if (hash) setFileSha256(hash);
+        } catch {
+          // Non-blocking fallback
+        }
+      }
+
+      const res = await recoverSingleFile(evidenceFile, {
+        caseName: caseName.trim() || undefined,
+        investigator: investigator.trim() || undefined,
+        notes: notes.trim() || undefined,
+      });
       if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       setCurrentStageIdx(RECOVERY_STAGES.length - 1);
@@ -113,6 +128,15 @@ export default function Home() {
 
       if (typeof window !== "undefined") {
         localStorage.setItem(`recoverix_result_${res.file_id}`, JSON.stringify(res));
+        const investigationContext = {
+          case_name: res.case_name || caseName.trim() || "Single File Recovery",
+          investigator: res.investigator || investigator.trim() || "Forensic Analyst",
+          evidence_description: `Direct intake recovery of ${res.original_filename}`,
+          notes: res.notes || notes.trim() || "",
+          sha256: hash || "",
+          created_at: new Date().toISOString(),
+        };
+        localStorage.setItem(`recoverix_context_${res.file_id}`, JSON.stringify(investigationContext));
       }
     } catch (err: any) {
       if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
@@ -168,6 +192,9 @@ export default function Home() {
   const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
     if (selected) {
+      computeFileSha256(selected).then((hash) => {
+        if (hash) setFileSha256(hash);
+      });
       executeRecovery(selected);
     }
   };
@@ -187,6 +214,9 @@ export default function Home() {
     setIsDragging(false);
     const dropped = e.dataTransfer.files?.[0];
     if (dropped) {
+      computeFileSha256(dropped).then((hash) => {
+        if (hash) setFileSha256(hash);
+      });
       executeRecovery(dropped);
     }
   };
@@ -218,6 +248,7 @@ export default function Home() {
     setIsAnalyzing(false);
     isAnalyzingRef.current = false;
     setElapsedSeconds(0);
+    setFileSha256(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -247,7 +278,9 @@ export default function Home() {
 
         <div className="max-w-5xl mx-auto px-4 sm:px-6 relative z-10 text-center space-y-6">
           {/* Eyebrow Badge */}
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white border border-slate-200 shadow-xs text-xs font-mono text-emerald-800">
+          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-white border border-slate-200/90 shadow-xs text-xs font-mono text-emerald-800">
+            <RecoverixLogo size={22} showText={false} markOnly />
+            <div className="h-3.5 w-px bg-slate-200" />
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-semibold uppercase tracking-wider">Public File Recovery Engine</span>
             <span className="text-slate-300">|</span>
@@ -283,8 +316,9 @@ export default function Home() {
           {/* ============================================================== */}
           <div className="pt-4 max-w-3xl mx-auto text-left">
             {!result && !isAnalyzing && (
-              <div
-                onDragOver={handleDragOver}
+              <>
+                <div
+                  onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
@@ -366,7 +400,99 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-            )}
+
+              {/* Optional Investigation Context Accordion */}
+              <div className="mt-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setShowInvestigationContext(!showInvestigationContext)}
+                  aria-expanded={showInvestigationContext}
+                  className="w-full px-5 py-3.5 bg-slate-50/70 hover:bg-slate-100/80 flex items-center justify-between text-xs font-mono transition-colors"
+                >
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <FileText className="w-4 h-4 text-emerald-600" />
+                    <span className="font-bold">Investigation Context</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 text-slate-600 font-semibold">
+                      Optional
+                    </span>
+                    {(caseName || investigator || notes) && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" title="Metadata attached" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-500">
+                    <span className="text-[11px] font-sans">
+                      {showInvestigationContext ? "Hide Details" : "Attach Case / Investigator / Notes"}
+                    </span>
+                    {showInvestigationContext ? (
+                      <ChevronUp className="w-4 h-4 text-slate-400" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                    )}
+                  </div>
+                </button>
+
+                {showInvestigationContext && (
+                  <div className="p-5 bg-white border-t border-slate-200 space-y-4 font-mono text-xs">
+                    <p className="text-[11px] font-sans text-slate-500 leading-relaxed">
+                      Optional investigation parameters attached to this recovery run. Recorded in audit trails and carried into the Investigation Workbench.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label htmlFor="case-name" className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Case Reference / Name
+                        </label>
+                        <input
+                          id="case-name"
+                          type="text"
+                          value={caseName}
+                          onChange={(e) => setCaseName(e.target.value)}
+                          maxLength={128}
+                          placeholder="e.g. Incident 2026-04A / Server Logs"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50/50 text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-sans"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="investigator" className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Lead Investigator
+                        </label>
+                        <input
+                          id="investigator"
+                          type="text"
+                          value={investigator}
+                          onChange={(e) => setInvestigator(e.target.value)}
+                          maxLength={128}
+                          placeholder="e.g. Forensic Analyst #402"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50/50 text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-sans"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label htmlFor="notes" className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Operational Notes
+                      </label>
+                      <textarea
+                        id="notes"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        maxLength={1000}
+                        rows={2}
+                        placeholder="e.g. Damaged flash drive dump from workstation partition..."
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50/50 text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-sans resize-none"
+                      />
+                    </div>
+                    {fileSha256 && (
+                      <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-slate-500">
+                        <span className="font-bold">Original Evidence SHA-256:</span>
+                        <span className="font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[10px] break-all">
+                          {fileSha256}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
             {/* Error Message */}
             {errorMessage && (
@@ -529,6 +655,35 @@ export default function Home() {
                       </div>
                     )}
                   </div>
+
+                  {/* Investigation Metadata Banner (if provided) */}
+                  {(result.case_name || result.investigator || result.notes) && (
+                    <div className="mt-3 p-3.5 rounded-xl bg-white border border-slate-200 text-xs font-mono space-y-1 shadow-2xs">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">
+                          Investigation Metadata
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-700 pt-0.5">
+                        {result.case_name && (
+                          <span>
+                            Case: <strong className="text-slate-900">{result.case_name}</strong>
+                          </span>
+                        )}
+                        {result.investigator && (
+                          <span>
+                            Investigator: <strong className="text-slate-900">{result.investigator}</strong>
+                          </span>
+                        )}
+                      </div>
+                      {result.notes && (
+                        <p className="text-[11px] text-slate-600 font-sans pt-0.5 truncate">
+                          {result.notes}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. The Honest V/R/M Byte Audit */}
@@ -773,15 +928,16 @@ export default function Home() {
                         className="w-full sm:w-auto flex-1 bg-slate-200 text-slate-400 font-mono font-bold text-sm px-6 py-4 rounded-xl cursor-not-allowed flex items-center justify-center gap-2"
                       >
                         <Download className="w-4 h-4" />
-                        <span>DOWNLOAD UNAVAILABLE (UNRECOVERABLE)</span>
+                        <span>DOWNLOAD UNAVAILABLE ({result.status === "UNRECOVERABLE" ? "UNRECOVERABLE" : "VALIDATION FAILED"})</span>
                       </button>
                     )}
 
                     <Link
                       href={`/investigation/${result.file_id}`}
-                      className="w-full sm:w-auto px-4 py-4 rounded-xl border border-slate-300 hover:border-slate-400 text-slate-700 font-mono text-xs text-center transition-colors hover:bg-slate-50"
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-4 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-mono font-bold text-xs transition-colors shadow-2xs text-center"
                     >
-                      Deep Forensic Trace →
+                      <span>Open Full Investigation Workbench</span>
+                      <ArrowRight className="w-4 h-4 text-emerald-700" />
                     </Link>
                   </div>
 
@@ -979,10 +1135,10 @@ export default function Home() {
       {/* Footer */}
       <footer id="about" className="py-12 bg-white text-xs font-mono text-slate-500 border-t border-slate-200">
         <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-emerald-600" />
-            <span className="text-slate-900 font-bold">RECOVERIX</span>
-            <span>— Deterministic Digital Evidence Recovery</span>
+          <div className="flex items-center gap-3">
+            <RecoverixLogo size={24} showText={true} subtitle="" />
+            <span className="text-slate-300">|</span>
+            <span>Deterministic Digital Evidence Recovery</span>
           </div>
           <div className="flex items-center gap-6">
             <Link href="/setup" className="hover:text-slate-900 transition-colors">
