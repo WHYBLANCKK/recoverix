@@ -655,15 +655,28 @@ def _recover_contiguous_candidate(
                         actual_missing_bytes=pdf_missing_bytes,
                     )
 
-                    status_val = eval_res.status.value
-                    ver_bytes = eval_res.provenance.verified_bytes
-                    rec_byte_cnt = eval_res.provenance.reconstructed_bytes
-                    miss_bytes = eval_res.provenance.missing_bytes
                     score_breakdown_dict = asdict(eval_res.score_breakdown)
                     val_details_dict = asdict(val_res)
-                    prov_dict = asdict(eval_res.provenance)
-                    prov_dict["evidence_size"] = len(content)
-                    output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+                    if val_res.valid:
+                        status_val = eval_res.status.value
+                        ver_bytes = eval_res.provenance.verified_bytes
+                        rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                        miss_bytes = eval_res.provenance.missing_bytes
+                        output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+                        prov_dict = asdict(eval_res.provenance)
+                        prov_dict["evidence_size"] = len(content)
+                    else:
+                        status_val = "UNRECOVERABLE"
+                        ver_bytes = 0
+                        rec_byte_cnt = 0
+                        miss_bytes = len(content)
+                        output_dict = {"recovered_bytes": ""}
+                        prov_dict = {
+                            "verified_bytes": 0,
+                            "reconstructed_bytes": 0,
+                            "missing_bytes": len(content),
+                            "evidence_size": len(content),
+                        }
 
                     step0 = ReconstructionStep(
                         step_id="step-0",
@@ -1486,16 +1499,31 @@ def _recover_standalone_candidate(
                     actual_missing_bytes=pdf_missing_bytes,
                 )
 
-                status_val = eval_res.status.value
-                ver_bytes = eval_res.provenance.verified_bytes
-                rec_byte_cnt = eval_res.provenance.reconstructed_bytes
-                miss_bytes = eval_res.provenance.missing_bytes
-                total_input_bytes = ver_bytes + miss_bytes
-                score_breakdown_dict = asdict(eval_res.score_breakdown)
-                val_details_dict = asdict(val_res)
-                prov_dict = asdict(eval_res.provenance)
-                prov_dict["evidence_size"] = len(content)
-                output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+                if val_res.valid:
+                    status_val = eval_res.status.value
+                    ver_bytes = eval_res.provenance.verified_bytes
+                    rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                    miss_bytes = eval_res.provenance.missing_bytes
+                    total_input_bytes = ver_bytes + miss_bytes
+                    score_breakdown_dict = asdict(eval_res.score_breakdown)
+                    val_details_dict = asdict(val_res)
+                    prov_dict = asdict(eval_res.provenance)
+                    prov_dict["evidence_size"] = len(content)
+                    output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+                else:
+                    status_val = "UNRECOVERABLE"
+                    ver_bytes = 0
+                    rec_byte_cnt = 0
+                    miss_bytes = total_input_bytes
+                    score_breakdown_dict = asdict(eval_res.score_breakdown)
+                    val_details_dict = asdict(val_res)
+                    prov_dict = {
+                        "verified_bytes": 0,
+                        "reconstructed_bytes": 0,
+                        "missing_bytes": total_input_bytes,
+                        "evidence_size": len(content),
+                    }
+                    output_dict = {"recovered_bytes": ""}
 
                 step0 = ReconstructionStep(
                     step_id="step-0",
@@ -2557,16 +2585,30 @@ def _recover_direct_fallback(
                     actual_missing_bytes=miss_bytes,
                 )
                 fmt = "pdf"
-                status_val = eval_res.status.value
-                ver_bytes = eval_res.provenance.verified_bytes
-                rec_byte_cnt = eval_res.provenance.reconstructed_bytes
-                miss_bytes = eval_res.provenance.missing_bytes
                 score_breakdown_dict = asdict(eval_res.score_breakdown)
                 val_details_dict = asdict(val_res)
-                prov_dict = asdict(eval_res.provenance)
-                prov_dict["evidence_size"] = len(content)
-                prov_dict["reconstruction_method"] = "XREF_RECONSTRUCTION"
-                output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+                if val_res.valid:
+                    status_val = eval_res.status.value
+                    ver_bytes = eval_res.provenance.verified_bytes
+                    rec_byte_cnt = eval_res.provenance.reconstructed_bytes
+                    miss_bytes = eval_res.provenance.missing_bytes
+                    prov_dict = asdict(eval_res.provenance)
+                    prov_dict["evidence_size"] = len(content)
+                    prov_dict["reconstruction_method"] = "XREF_RECONSTRUCTION"
+                    output_dict = {"recovered_bytes": rebuilt_bytes.hex()}
+                else:
+                    status_val = "UNRECOVERABLE"
+                    ver_bytes = 0
+                    rec_byte_cnt = 0
+                    miss_bytes = total_input_bytes
+                    prov_dict = {
+                        "verified_bytes": 0,
+                        "reconstructed_bytes": 0,
+                        "missing_bytes": total_input_bytes,
+                        "evidence_size": len(content),
+                        "reconstruction_method": "XREF_RECONSTRUCTION",
+                    }
+                    output_dict = {"recovered_bytes": ""}
 
                 fragments.append(
                     Fragment(
