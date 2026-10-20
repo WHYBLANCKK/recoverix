@@ -366,7 +366,7 @@ export function ClusterInterpretationCard({
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-3.5 h-3.5" />
+                  <Cpu className="w-3.5 h-3.5" />
                   <span>Generate Interpretation</span>
                 </>
               )}
@@ -464,17 +464,10 @@ export function ClusterInterpretationCard({
 
       {/* Metadata Row: Source, Cache Status, Fingerprint, and Generation Timestamp */}
       <div className="flex flex-wrap items-center gap-2.5 pb-4 border-b border-slate-100 text-xs">
-        {source === "GEMINI_1_5_FLASH" ? (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md font-semibold bg-purple-50 text-purple-800 border border-purple-300">
-            <Sparkles className="w-3 h-3 text-purple-600" />
-            Gemini interpretation
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md font-semibold bg-slate-100 text-slate-700 border border-slate-300">
-            <Cpu className="w-3 h-3 text-slate-500" />
-            Deterministic interpretation
-          </span>
-        )}
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md font-semibold bg-slate-100 text-slate-700 border border-slate-300">
+          <Cpu className="w-3 h-3 text-slate-500" />
+          Deterministic interpretation
+        </span>
 
         <span
           className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md font-semibold border ${
