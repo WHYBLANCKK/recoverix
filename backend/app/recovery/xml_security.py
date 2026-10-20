@@ -103,7 +103,7 @@ def check_xml_security(data: bytes | str) -> Optional[str]:
 
     # External DTD and external entities (SYSTEM / PUBLIC)
     if "<!doctype" in lower and ("system" in lower or "public" in lower):
-        return "XML contains external entity reference (XXE vulnerability protection)"
+        return "XML contains external DOCTYPE declaration: external entity reference (XXE vulnerability protection)"
 
     if "<!entity" in lower:
         # Check for external entities (SYSTEM, PUBLIC)
@@ -140,6 +140,11 @@ def safe_parse_xml(
         XMLSecurityError: When forbidden DTD or entity construct is encountered.
         expat.ExpatError / ET.ParseError: When XML syntax is malformed.
     """
+    # Always enforce baseline security invariants against XXE and Billion Laughs
+    sec_err = check_xml_security(text)
+    if sec_err:
+        raise XMLSecurityError(f"XML security policy violation: {sec_err}")
+
     if defused_ET is not None:
         try:
             return defused_ET.fromstring(
