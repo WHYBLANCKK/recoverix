@@ -44,6 +44,7 @@ class ArtifactResponse(BaseModel):
     priority: Optional[str] = None
     ai_summary: Optional[str] = None
     content_preview: Optional[str] = None
+    sha256: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -80,12 +81,21 @@ class ArtifactRecord(BaseModel):
     category: Optional[str] = None
     priority: Optional[str] = None
     ai_summary: Optional[str] = None
+    sha256: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     corrupted_fields: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def verify_status_and_download_invariants(self) -> "ArtifactRecord":
-        if self.status == "UNRECOVERABLE":
+        if self.status == "FULLY_RECOVERED" and (self.reconstructed_bytes > 0 or self.missing_bytes > 0):
+            self.status = "PARTIALLY_RECOVERED"
+
+        if (
+            self.status not in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED")
+            or self.validation_status != "PASSED"
+            or not self.is_downloadable
+            or self.verified_bytes < 0
+        ):
             self.is_downloadable = False
         return self
 
@@ -113,11 +123,13 @@ class ArtifactRecord(BaseModel):
             meta["_corrupted_fields"] = list(self.corrupted_fields)
         if self.run_id and "run_id" not in meta:
             meta["run_id"] = self.run_id
+        if self.sha256 and "sha256" not in meta:
+            meta["sha256"] = self.sha256
 
         eff_total_input = (
             self.total_input_bytes
             if self.total_input_bytes is not None
-            else (self.verified_bytes + self.reconstructed_bytes + self.missing_bytes)
+            else (self.verified_bytes + self.missing_bytes)
         )
         meta["total_input_bytes"] = eff_total_input
         meta["is_downloadable"] = self.is_downloadable
@@ -141,8 +153,11 @@ class ArtifactRecord(BaseModel):
             priority=self.priority,
             ai_summary=self.ai_summary,
             content_preview=self.content_preview,
+            sha256=self.sha256,
             metadata=meta,
         )
+
+    to_response = to_artifact_response
 
     def to_file_recovery_dict(self) -> Dict[str, Any]:
         """Convert internal ArtifactRecord to flat dictionary representation for FileRecoveryResponse."""
@@ -162,6 +177,7 @@ class ArtifactRecord(BaseModel):
             "is_downloadable": self.is_downloadable,
             "download_url": self.download_url or f"/api/recover-file/{self.artifact_id}/download",
             "content_preview": self.content_preview,
+            "sha256": self.sha256,
             "score_breakdown": {k: float(v) for k, v in self.score_breakdown.items()} if self.score_breakdown else {},
             "validation_details": self.validation_details,
             "fragments": self.fragments,
@@ -192,11 +208,13 @@ class ArtifactRecord(BaseModel):
         if total_inp is None:
             total_inp = (
                 art.provenance.verified_bytes
-                + art.provenance.reconstructed_bytes
                 + art.provenance.missing_bytes
             )
 
-        if art.status == "UNRECOVERABLE":
+        if (
+            art.status in ("UNRECOVERABLE", "CORRUPTED")
+            or art.provenance.validation_status == "FAILED"
+        ):
             is_dl = False
         elif art.metadata and "is_downloadable" in art.metadata:
             is_dl = bool(art.metadata["is_downloadable"])
@@ -231,6 +249,7 @@ class ArtifactRecord(BaseModel):
             category=art.category,
             priority=art.priority,
             ai_summary=art.ai_summary,
+            sha256=art.sha256 or (art.metadata.get("sha256") if art.metadata else None),
             metadata=dict(art.metadata),
             corrupted_fields=corrupted_fields,
         )
@@ -250,11 +269,15 @@ class ArtifactRecord(BaseModel):
             try:
                 total_inp = int(total_inp)
             except (ValueError, TypeError):
-                total_inp = ver + rec + miss
+                total_inp = ver + miss
         else:
-            total_inp = ver + rec + miss
+            total_inp = ver + miss
 
-        if status_val == "UNRECOVERABLE":
+        val_status_in = meta.get("validation_status", "PASSED")
+        if (
+            status_val in ("UNRECOVERABLE", "CORRUPTED")
+            or val_status_in == "FAILED"
+        ):
             is_dl = False
         elif "is_downloadable" in meta:
             is_dl = bool(meta["is_downloadable"])
@@ -266,6 +289,15 @@ class ArtifactRecord(BaseModel):
             if isinstance(meta.get("metadata"), dict) and "_corrupted_fields" in meta["metadata"]
             else None
         )
+
+        metadata_dict = dict(meta.get("metadata") or {})
+        if run_id and "run_id" not in metadata_dict:
+            metadata_dict["run_id"] = run_id
+        if "created_at" in meta and "created_at" not in metadata_dict:
+            metadata_dict["created_at"] = meta["created_at"]
+        for extra_key in ("case_name", "investigator", "notes"):
+            if extra_key in meta and extra_key not in metadata_dict:
+                metadata_dict[extra_key] = meta[extra_key]
 
         return cls(
             artifact_id=f_id,
@@ -291,6 +323,7 @@ class ArtifactRecord(BaseModel):
             fragments=meta.get("fragments"),
             damage_regions=meta.get("damage_regions"),
             reconstruction_steps=meta.get("reconstruction_steps"),
-            metadata={"run_id": run_id} if run_id else {},
+            sha256=meta.get("sha256") or (meta.get("metadata", {}).get("sha256") if isinstance(meta.get("metadata"), dict) else None),
+            metadata=metadata_dict,
             corrupted_fields=corrupted_fields,
         )

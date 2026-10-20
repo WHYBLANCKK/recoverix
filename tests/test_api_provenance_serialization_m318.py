@@ -129,15 +129,16 @@ def test_02_partially_recovered_file_damage_region_and_missing_bytes():
     assert response.status_code == 200
     data = response.json()
 
-    # Byte accounting invariant: V + R + M == total_input_bytes
+    # Byte accounting invariant: V + M == total_input_bytes, V + R == output length
     v = data["verified_bytes"]
     r = data["reconstructed_bytes"]
     m = data["missing_bytes"]
     total = data["total_input_bytes"]
-    assert v + r + m == total
+    assert v + m == total
     assert v == len(damaged_json)
     assert r == 2
-    assert total == len(damaged_json) + 2
+    assert total == len(damaged_json)
+    assert v + r == len(damaged_json) + 2
     assert data["provenance"]["evidence_size"] == len(damaged_json)
 
     # Status must not falsely claim FULLY_RECOVERED

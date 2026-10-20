@@ -167,8 +167,13 @@ async def upload_evidence(
 @router.get("/{case_id}/groundtruth", status_code=status.HTTP_200_OK)
 def get_groundtruth(case_id: str):
     """Return synthetic ground-truth for UI verification."""
-    # case_001 auto-seed removed
-        
+    case = store.get_case(case_id)
+    if case is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Case '{case_id}' not found",
+        )
+
     return {
         "case_id": case_id,
         "image_filename": "phantom_disk.img",

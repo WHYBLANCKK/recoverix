@@ -381,11 +381,23 @@ class InterpretationService:
         method = str(method)
         validation_status = str(validation_status)
 
-        total_input_bytes = (
-            getattr(artifact, "total_input_bytes", None)
-            or d.get("total_input_bytes")
-            or (v_bytes + r_bytes + m_bytes if (v_bytes + r_bytes + m_bytes) > 0 else None)
-        )
+        total_input_bytes = None
+        if hasattr(artifact, "total_input_bytes") and artifact.total_input_bytes is not None:
+            total_input_bytes = artifact.total_input_bytes
+        elif isinstance(d, dict) and d.get("total_input_bytes") is not None:
+            total_input_bytes = d["total_input_bytes"]
+        elif prov is not None:
+            if isinstance(prov, dict) and prov.get("total_input_bytes") is not None:
+                total_input_bytes = prov["total_input_bytes"]
+            elif hasattr(prov, "total_input_bytes") and getattr(prov, "total_input_bytes", None) is not None:
+                total_input_bytes = getattr(prov, "total_input_bytes")
+
+        if total_input_bytes is None:
+            # Forensic Invariant: total input bytes equals surviving verified bytes plus missing unobserved bytes.
+            # Reconstructed syntax delimiters (r_bytes) belong to the output domain and must NEVER inflate input bytes.
+            fallback_input = v_bytes + m_bytes
+            total_input_bytes = fallback_input if fallback_input > 0 else None
+
         if total_input_bytes is not None:
             total_input_bytes = int(total_input_bytes)
 
