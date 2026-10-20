@@ -24,6 +24,46 @@ MAX_SAFE_EXPANSION_RATIO = 100.0
 MAX_SAFE_UNCOMPRESSED_SIZE = 100 * 1024 * 1024  # 100 MiB
 
 
+def check_zip_path_security(path: str) -> Optional[str]:
+    """Check whether an archive member path is safe from Zip-Slip and path traversal.
+
+    Normalizes separators, checks for Windows drive prefixes, UNC network paths,
+    absolute paths, and parent-directory traversal ('..') components.
+
+    Returns:
+        None if the path is safe, or an error description string if unsafe.
+    """
+    if not path or "\x00" in path:
+        return "Null or empty path"
+
+    # Reject Windows drive-prefixed paths (C:\file, C:/file, C:payload, d:foo/bar)
+    if len(path) >= 2 and path[0].isalpha() and path[1] == ":":
+        return f"Windows drive prefix in member path '{path}'"
+
+    # Normalize all backslashes to forward slashes for unified path analysis
+    norm = path.replace("\\", "/")
+
+    # Reject UNC / network paths (//server/share or \\server\share)
+    if norm.startswith("//"):
+        return f"UNC network path in member path '{path}'"
+
+    # Reject absolute paths (/etc/passwd or \Windows\...)
+    if norm.startswith("/"):
+        return f"Absolute path in member path '{path}'"
+
+    # Reject parent traversal components
+    parts = norm.split("/")
+    if ".." in parts:
+        return f"Parent directory traversal ('..') in member path '{path}'"
+
+    return None
+
+
+def is_safe_zip_path(path: str) -> bool:
+    """Return True if archive member path is safe, False otherwise."""
+    return check_zip_path_security(path) is None
+
+
 def validate_zip(data: bytes | RecoveredArtifact) -> ValidationResult:
     """Validate the structural and security integrity of a recovered ZIP archive.
 
@@ -151,9 +191,9 @@ def validate_zip(data: bytes | RecoveredArtifact) -> ValidationResult:
             # Security Audit: Path Traversal (Zip-Slip)
             for zinfo in infolist:
                 fname = zinfo.filename
-                # Check for absolute path or directory traversal sequences
-                if fname.startswith("/") or fname.startswith("\\") or ".." in fname.split("/") or ".." in fname.split("\\"):
-                    errors.append(f"Security: Detected Zip-Slip path traversal vulnerability in member '{fname}'")
+                path_err = check_zip_path_security(fname)
+                if path_err:
+                    errors.append(f"Security: Detected Zip-Slip path traversal vulnerability: {path_err}")
 
                 total_uncompressed += zinfo.file_size
                 total_compressed += zinfo.compress_size
@@ -172,17 +212,30 @@ def validate_zip(data: bytes | RecoveredArtifact) -> ValidationResult:
             details["total_compressed_bytes"] = total_compressed
 
             # Security Audit: Zip-Bomb expansion check
+            has_security_violation = False
             if total_compressed > 0:
                 ratio = total_uncompressed / total_compressed
                 if ratio > MAX_SAFE_EXPANSION_RATIO and total_uncompressed > MAX_SAFE_UNCOMPRESSED_SIZE:
                     errors.append(
                         f"Security: Decompression ratio {ratio:.1f}:1 exceeds safe limits (potential Zip-Bomb)"
                     )
+                    has_security_violation = True
 
-            # Integrity test: verify CRC-32 of every member file
-            bad_file = zf.testzip()
-            if bad_file is not None:
-                errors.append(f"CRC-32 checksum mismatch or corruption detected in archive member: '{bad_file}'")
+            if total_uncompressed > MAX_SAFE_UNCOMPRESSED_SIZE:
+                errors.append(
+                    f"Security: Total uncompressed archive size ({total_uncompressed} bytes) exceeds safe limit ({MAX_SAFE_UNCOMPRESSED_SIZE} bytes)"
+                )
+                has_security_violation = True
+
+            if any("Zip-Slip" in e for e in errors):
+                has_security_violation = True
+
+            # Integrity test: verify CRC-32 of member files ONLY if no security violations were detected.
+            # Never invoke zf.testzip() if decompression-bomb or Zip-Slip thresholds were breached.
+            if not has_security_violation and not errors:
+                bad_file = zf.testzip()
+                if bad_file is not None:
+                    errors.append(f"CRC-32 checksum mismatch or corruption detected in archive member: '{bad_file}'")
 
     except zipfile.BadZipFile as bzf:
         errors.append(f"Corrupted or invalid ZIP structure: {str(bzf)}")

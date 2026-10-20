@@ -2,13 +2,16 @@
 xml.py — Deterministic XML artifact structural validator.
 
 Validates recovered XML artifact bytes against synthetic harness boundaries (if present)
-or direct XML syntax, UTF-8 encoding, and ElementTree parsing rules.
+or direct XML syntax, encoding requirements (UTF-8, UTF-16LE, UTF-16BE), and safe parsing rules.
+Defends against XML External Entity (XXE) and recursive entity expansion (Billion Laughs) attacks
+at both lexical and parser-level layers.
 """
 
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from typing import Union, Any, Optional
+import xml.parsers.expat as expat
+from typing import Union, Any, Optional, Tuple
 
 from backend.app.models.validation import ValidationResult
 from backend.app.recovery.carver import RecoveredArtifact
@@ -16,25 +19,20 @@ from backend.app.recovery.signatures import (
     SYNTHETIC_START_MARKER,
     SYNTHETIC_END_MARKER,
 )
+from backend.app.recovery.xml_security import (
+    decode_xml_bytes,
+    check_xml_security,
+    safe_parse_xml,
+    XMLSecurityError,
+)
 
-
-def check_xml_security(data: bytes) -> Optional[str]:
-    """Check for unsafe XML constructs (XXE, Billion Laughs entity bombs).
-
-    Returns an error description if unsafe, or None if safe.
-    """
-    lower = data.lower()
-    if b"<!doctype" in lower and (b"system" in lower or b"public" in lower):
-        return "XML contains external entity reference (XXE vulnerability protection)"
-    if b"<!entity" in lower:
-        # Check for external entities (SYSTEM, PUBLIC)
-        if b"system" in lower or b"public" in lower:
-            return "XML contains external entity reference (XXE vulnerability protection)"
-        # Check for recursive entity expansion (Billion Laughs)
-        entity_count = lower.count(b"<!entity")
-        if entity_count > 3:
-            return "XML contains excessive entity declarations (Entity expansion protection)"
-    return None
+__all__ = [
+    "validate_xml",
+    "check_xml_security",
+    "decode_xml_bytes",
+    "safe_parse_xml",
+    "XMLSecurityError",
+]
 
 
 def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
@@ -45,10 +43,10 @@ def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
     Checks performed:
       1. input_type: input is bytes or RecoveredArtifact yielding bytes
       2. non_empty: input is non-empty
-      3. security_audit: checks for XXE and recursive entity expansion
+      3. security_audit: checks for XXE and recursive entity expansion (multi-byte safe)
       4. synthetic markers check (if present: start_marker_exists, end_marker_exists, marker_ordering)
-      5. utf8_decoding: payload can be safely decoded as UTF-8
-      6. xml_parsing: text parses successfully with ElementTree.fromstring
+      5. encoding_decoding: payload can be safely decoded (UTF-8, UTF-16LE, UTF-16BE)
+      6. xml_parsing: text parses successfully with parser-level safety controls
       7. root_structure: checks root element tag, attribute count, and child count
 
     Args:
@@ -117,11 +115,24 @@ def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
                 body_start = start_pos + len(SYNTHETIC_START_MARKER)
                 body_bytes = raw_bytes[body_start:end_pos]
 
-    # 4. UTF-8 decoding check
-    try:
-        text = body_bytes.decode("utf-8")
-    except UnicodeDecodeError as e:
-        errors.append(f"UTF-8 decoding failed: {e}")
+    # 3. Security audit check (applied to decoded text, neutralizes multi-byte evasion)
+    sec_err = check_xml_security(body_bytes)
+    if sec_err:
+        errors.append(f"Security: {sec_err}")
+        return ValidationResult(
+            valid=False,
+            format=fmt,
+            checks_performed=checks,
+            errors=errors,
+            warnings=warnings,
+            details=details,
+        )
+
+    # 4. Decoding check (supports UTF-8, UTF-16LE, UTF-16BE)
+    text, encoding, decode_err = decode_xml_bytes(body_bytes)
+    details["encoding"] = encoding
+    if decode_err:
+        errors.append(decode_err)
         return ValidationResult(
             valid=False,
             format=fmt,
@@ -143,28 +154,17 @@ def validate_xml(data: bytes | RecoveredArtifact) -> ValidationResult:
             details=details,
         )
 
-    # 5. Security audit check
-    sec_err = check_xml_security(body_bytes)
-    if sec_err:
-        errors.append(f"Security: {sec_err}")
-        return ValidationResult(
-            valid=False,
-            format=fmt,
-            checks_performed=checks,
-            errors=errors,
-            warnings=warnings,
-            details=details,
-        )
-
-    # 6. XML parsing check
+    # 5. Safe XML parsing check with parser-level controls
     try:
-        root = ET.fromstring(stripped_text)
+        root = safe_parse_xml(stripped_text)
         details["root_tag"] = root.tag
         details["child_count"] = len(root)
         details["attribute_count"] = len(root.attrib)
         if stripped_text.startswith("<?xml"):
             details["has_xml_declaration"] = True
-    except ET.ParseError as e:
+    except XMLSecurityError as e:
+        errors.append(f"Security: {e}")
+    except (expat.ExpatError, ET.ParseError) as e:
         errors.append(f"XML parsing failed: {e}")
     except Exception as e:
         errors.append(f"Unexpected error during XML parsing: {e}")
