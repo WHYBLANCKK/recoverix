@@ -303,14 +303,12 @@ export default function Home() {
 
           {/* Hero Headline */}
           <div className="space-y-4 max-w-3xl mx-auto">
-            <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold tracking-tight text-slate-900 font-mono leading-tight">
-              Recover What Can Be Recovered.{" "}
-              <span className="text-emerald-600 underline decoration-emerald-500/40 underline-offset-8">
-                Verify What Can Be Proven.
-              </span>
+            <h1 className="text-[clamp(2.25rem,4.5vw,3.375rem)] font-bold tracking-tight text-slate-900 font-mono leading-tight max-w-2xl mx-auto text-balance">
+              Recover What Can Be{" "}
+              <span className="text-emerald-600">Proven.</span>
             </h1>
             <p className="text-base sm:text-lg text-slate-600 max-w-2xl mx-auto font-sans leading-relaxed">
-              Recover usable content from damaged files, see what could not be recovered, and inspect how the output was reconstructed. Recoverix distinguishes recovered evidence from missing data and necessary file-structure repairs.
+              Damaged or corrupted file? Recover the content that can be saved with Recoverix. Find out what was recovered and what may be lost.
             </p>
           </div>
 
