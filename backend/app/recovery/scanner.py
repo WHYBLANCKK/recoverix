@@ -57,6 +57,7 @@ from backend.app.recovery.signatures import (
     PDF_TRAILER_SIGNATURE,
     XML_HEADER_SIGNATURE,
     ZIP_LOCAL_HEADER,
+    ZIP_CENTRAL_HEADER,
     ZIP_EOCD_SIGNATURE,
 )
 from backend.app.recovery.xml_security import safe_parse_xml
@@ -1095,19 +1096,32 @@ def _find_zip_end(
         return None
 
     search_slice = data[start_pos:territory_limit]
-    eocd_rel = search_slice.rfind(ZIP_EOCD_SIGNATURE)
-    if eocd_rel == -1:
-        return None
+    pos = len(search_slice)
+    fallback_end: Optional[int] = None
 
-    eocd_pos = start_pos + eocd_rel
-    if eocd_pos + 22 > territory_limit:
-        return None
+    while True:
+        eocd_rel = search_slice.rfind(ZIP_EOCD_SIGNATURE, 0, pos)
+        if eocd_rel == -1:
+            break
+        eocd_pos = start_pos + eocd_rel
+        if eocd_pos + 22 <= territory_limit:
+            cd_size = struct.unpack("<I", data[eocd_pos + 12 : eocd_pos + 16])[0]
+            cd_offset = struct.unpack("<I", data[eocd_pos + 16 : eocd_pos + 20])[0]
+            comment_len = struct.unpack("<H", data[eocd_pos + 20 : eocd_pos + 22])[0]
+            total_end = eocd_pos + 22 + comment_len
+            cd_start = start_pos + cd_offset
+            if (
+                cd_start >= start_pos
+                and cd_start + cd_size == eocd_pos
+                and data[cd_start : cd_start + 4] == ZIP_CENTRAL_HEADER
+            ):
+                if total_end <= territory_limit:
+                    return total_end
+            elif fallback_end is None and total_end <= territory_limit:
+                fallback_end = total_end
+        pos = eocd_rel
 
-    comment_len = struct.unpack("<H", data[eocd_pos + 20 : eocd_pos + 22])[0]
-    total_end = eocd_pos + 22 + comment_len
-    if total_end <= territory_limit:
-        return total_end
-    return None
+    return fallback_end
 
 
 def _scan_zip(
@@ -1131,7 +1145,7 @@ def _scan_zip(
     if not raw_starts:
         return
 
-    other_starts = [c.offset for c in candidates]
+    other_starts = [c.offset for c in candidates if c.format != "zip"]
     valid_cands: List[Candidate] = []
 
     for idx, pos in enumerate(raw_starts):
@@ -1145,13 +1159,27 @@ def _scan_zip(
             if pos < valid_cands[-1].estimated_end_offset:
                 continue
 
-        next_raw_start = raw_starts[idx + 1] if idx + 1 < len(raw_starts) else evidence_len
-        territory_limit = next_raw_start
+        territory_limit = evidence_len
         for o in other_starts:
             if o > pos and o < territory_limit:
                 territory_limit = o
 
         estimated_end = _find_zip_end(data, pos, territory_limit)
+        if estimated_end is None:
+            # Check for a contiguous chain of local file headers in a truncated archive
+            chain_off = pos
+            while chain_off + 30 <= territory_limit:
+                if data[chain_off : chain_off + 4] != ZIP_LOCAL_HEADER:
+                    break
+                m_fn_len = struct.unpack("<H", data[chain_off + 26 : chain_off + 28])[0]
+                m_extra_len = struct.unpack("<H", data[chain_off + 28 : chain_off + 30])[0]
+                m_comp_size = struct.unpack("<I", data[chain_off + 18 : chain_off + 22])[0]
+                m_len = 30 + m_fn_len + m_extra_len + m_comp_size
+                if chain_off + m_len > territory_limit:
+                    break
+                chain_off += m_len
+            if chain_off > pos:
+                estimated_end = chain_off
 
         cand = Candidate(
             candidate_id="",

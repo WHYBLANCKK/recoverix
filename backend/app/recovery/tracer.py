@@ -376,6 +376,7 @@ def _recover_contiguous_candidate(
     case_name: Optional[str] = None,
     investigator: Optional[str] = None,
     notes: Optional[str] = None,
+    next_offset: Optional[int] = None,
 ) -> RecoveryRun:
     """Execute traced recovery for a single contiguous candidate with known boundaries."""
     if scan_meta is None:
@@ -454,8 +455,26 @@ def _recover_contiguous_candidate(
     carved_bytes: bytes = b""
     try:
         if cand.estimated_end_offset is not None:
-            carved: RecoveredArtifact = carve_candidate(content, cand)
-            carved_bytes = carved.recovered_bytes
+            if (
+                detection_mode == "known_file"
+                and cand.offset == 0
+                and next_offset is None
+                and len(content) > cand.estimated_end_offset
+            ):
+                carved_bytes = content
+                carved = RecoveredArtifact(
+                    candidate_id=cand.candidate_id,
+                    format=cand.format,
+                    mime_type=cand.mime_type,
+                    category=cand.category,
+                    source_offset=0,
+                    recovered_bytes=content,
+                    recovered_byte_count=len(content),
+                    carving_method="KNOWN_FILE_STREAM",
+                )
+            else:
+                carved: RecoveredArtifact = carve_candidate(content, cand)
+                carved_bytes = carved.recovered_bytes
         else:
             search_end = span.search_limit
             carved_bytes = content[span.evidence_start:search_end]
@@ -1510,6 +1529,61 @@ def _recover_standalone_candidate(
                 val_details_dict = asdict(val_res)
                 prov_dict = asdict(eval_res.provenance)
                 output_dict = {"recovered_bytes": ""}
+        elif not shuffled_recovered and val_initial.valid:
+            status_val = "FULLY_RECOVERED"
+            ver_bytes = span.bound_verified_bytes(len(raw_bytes))
+            rec_byte_cnt = 0
+            miss_bytes = max(0, search_len - ver_bytes)
+            val_res = val_initial
+            val_status_str = "PASSED"
+            val_details_dict = asdict(val_res)
+            output_dict = {"recovered_bytes": raw_bytes.hex()}
+
+            eval_res = evaluate_artifact_confidence(
+                validation_result=val_res,
+                artifact=raw_bytes,
+                actual_verified_bytes=ver_bytes,
+                actual_reconstructed_bytes=0,
+                actual_missing_bytes=miss_bytes,
+                is_complete=True,
+            )
+            score_breakdown_dict = asdict(eval_res.score_breakdown)
+            prov_dict = asdict(eval_res.provenance)
+            prov_dict["evidence_size"] = len(content)
+            prov_dict["reconstruction_method"] = "NONE"
+
+            step0 = ReconstructionStep(
+                step_id="step-0",
+                method="NONE",
+                input_fragment_ids=["frag-0"],
+                gap_start=None,
+                gap_end=None,
+                gap_size=None,
+                result="SUCCESS",
+                verified_bytes=ver_bytes,
+                reconstructed_bytes=0,
+                missing_bytes=miss_bytes,
+                validation_status="PASSED",
+                confidence=float(eval_res.score_breakdown.total),
+            )
+            reconstruction_steps.append(step0)
+        elif not shuffled_recovered:
+            val_res = val_initial
+            status_val = "UNRECOVERABLE"
+            ver_bytes = 0
+            rec_byte_cnt = 0
+            miss_bytes = search_len
+            eval_res = evaluate_artifact_confidence(
+                validation_result=val_res,
+                artifact=None,
+                actual_verified_bytes=0,
+                actual_missing_bytes=search_len,
+                is_complete=False,
+            )
+            score_breakdown_dict = asdict(eval_res.score_breakdown)
+            val_details_dict = asdict(val_res)
+            prov_dict = asdict(eval_res.provenance)
+            output_dict = {"recovered_bytes": ""}
 
     if not reconstruction_attempted and status_val == "UNRECOVERABLE":
         try:
@@ -2860,25 +2934,19 @@ def execute_traced_recoveries(
 
         # Filter out spurious candidates when unambiguous evidence signatures or hints exist
         # ONLY enforce format suppression when running in known_file mode with a specific format hint
-        if detection_mode == "known_file":
-            if ext_fmt == "pdf":
-                pdf_cands = [c for c in candidates_to_process if c.format == "pdf"]
-                if pdf_cands:
-                    candidates_to_process = pdf_cands
-            elif ext_fmt == "png":
-                png_cands = [c for c in candidates_to_process if c.format == "png"]
-                if png_cands:
-                    candidates_to_process = png_cands
-            elif ext_fmt == "zip":
-                zip_cands = [c for c in candidates_to_process if c.format == "zip"]
-                if zip_cands:
-                    candidates_to_process = zip_cands
-            elif ext_fmt in ("txt", "csv", "json") and not any(c.detection_method == "synthetic_boundary" for c in candidates_to_process):
-                matching_cands = [c for c in candidates_to_process if c.format == ext_fmt]
-                if matching_cands:
-                    candidates_to_process = matching_cands
-                else:
-                    candidates_to_process = []
+        if detection_mode == "known_file" and ext_fmt:
+            def _matches_ext(fmt_cand: str, fmt_target: str) -> bool:
+                if fmt_cand == fmt_target:
+                    return True
+                if fmt_target in ("jpeg", "jpg") and fmt_cand in ("jpeg", "jpg"):
+                    return True
+                return False
+
+            matching_cands = [c for c in candidates_to_process if _matches_ext(c.format, ext_fmt)]
+            if matching_cands:
+                candidates_to_process = matching_cands
+            elif not any(c.detection_method == "synthetic_boundary" for c in candidates_to_process):
+                candidates_to_process = []
 
             if not any(c.detection_method == "synthetic_boundary" for c in candidates_to_process):
                 if not (b"%PDF-" in content or PNG_SIGNATURE in content or content.startswith(b"\xff\xd8") or content.startswith(b"<?xml") or content.startswith(b"PK\x03\x04")):
@@ -2957,6 +3025,11 @@ def execute_traced_recoveries(
                         if is_explicit_bifrag:
                             should_pair = True
 
+            next_offset = (
+                getattr(candidates_to_process[idx + 1], "offset", None)
+                if idx + 1 < len(candidates_to_process)
+                else None
+            )
             if should_pair and cand2 is not None:
                 pair_run = _recover_bifragment_candidate_pair(
                     filename=filename,
@@ -2985,16 +3058,12 @@ def execute_traced_recoveries(
                     case_name=case_name,
                     investigator=investigator,
                     notes=notes,
+                    next_offset=next_offset,
                 )
                 runs.append(contig_run)
                 idx += 1
             else:
                 # Standalone candidate without estimated end offset (bound by next candidate or EOF)
-                next_offset = (
-                    getattr(candidates_to_process[idx + 1], "offset", None)
-                    if idx + 1 < len(candidates_to_process)
-                    else None
-                )
                 standalone_run = _recover_standalone_candidate(
                     filename=filename,
                     content=content,
