@@ -22,6 +22,7 @@ import {
   ChevronUp,
   Trash2,
   ShieldCheck,
+  Heart,
 } from "lucide-react";
 import { recoverSingleFile, deleteRecoveredFile } from "@/lib/api";
 import { computeFileSha256 } from "@/lib/crypto";
@@ -1384,18 +1385,29 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-10 bg-white text-xs font-mono text-slate-500 border-t border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <RecoverixLogo size={24} showText={true} subtitle="" />
             <span className="text-slate-300">|</span>
             <span>Deterministic Digital Evidence Recovery</span>
           </div>
-          <div className="flex items-center gap-4 text-[11px] text-slate-500">
+          <div className="flex flex-wrap items-center justify-center gap-3.5 text-[11px] text-slate-500">
             <span>Non-Fabricated Recovery</span>
             <span className="text-slate-300">·</span>
             <span>Automatic 24h Purge</span>
             <span className="text-slate-300">·</span>
             <span>Open Source (MIT)</span>
+            <span className="text-slate-300">·</span>
+            <a
+              href="https://github.com/sponsors/WHYBLANCKK"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/50 text-slate-700 hover:text-emerald-800 text-[11px] font-medium transition-all shadow-2xs group focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500"
+              aria-label="Sponsor Recoverix on GitHub Sponsors (opens in a new tab)"
+            >
+              <Heart className="w-3 h-3 text-rose-500 fill-rose-500/20 group-hover:scale-110 transition-transform" />
+              <span>Sponsor Recoverix</span>
+            </a>
           </div>
         </div>
       </footer>

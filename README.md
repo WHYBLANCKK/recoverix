@@ -52,6 +52,7 @@ Recoverix operates on strict deterministic principles:
 - [Security & Privacy Considerations](#security--privacy-considerations)
 - [Known Limitations](#known-limitations)
 - [Contributing](#contributing)
+- [Sponsorship](#sponsorship)
 - [License](#license)
 
 ---
@@ -428,6 +429,16 @@ Contributions to Recoverix are welcome. As an evidence-driven open-source projec
    - Fork the repository and create a feature branch (`git checkout -b feature/my-feature`).
    - Run tests locally before submitting.
    - Open a Pull Request targeting `recoverix/staging-candidate` (or `main`) with a clear description of the change and test verification evidence.
+
+---
+
+## Sponsorship
+
+If you find Recoverix valuable for digital forensics, incident response, or verifiable file recovery research, consider supporting ongoing development through GitHub Sponsors:
+
+- **GitHub Sponsors**: [https://github.com/sponsors/WHYBLANCKK](https://github.com/sponsors/WHYBLANCKK)
+
+Sponsorship supports ongoing maintenance, format parser improvements, automated test infrastructure, and research into non-probabilistic evidence recovery.
 
 ---
 
