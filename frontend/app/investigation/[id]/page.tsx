@@ -50,7 +50,7 @@ export default function InvestigationPage({
   const [activeSection, setActiveSection] = useState<
     "overview" | "fragments" | "cluster" | "map" | "preview" | "provenance" | "analyst"
   >("overview");
-  const [activeCaseId, setActiveCaseId] = useState<string>("case_001");
+  const [activeCaseId, setActiveCaseId] = useState<string>("");
   const [activeClusterId, setActiveClusterId] = useState<string>("cluster_0");
 
   useEffect(() => {

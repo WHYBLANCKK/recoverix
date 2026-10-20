@@ -69,7 +69,7 @@ export function RecoverixLogo({
           </div>
           {subtitle && (
             <span
-              className={`font-mono text-[9px] uppercase tracking-wider mt-1 ${
+              className={`font-mono text-[9px] uppercase tracking-wider mt-1 hidden sm:block ${
                 isNavy ? "text-slate-500" : "text-slate-400"
               }`}
             >

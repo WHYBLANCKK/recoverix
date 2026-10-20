@@ -84,12 +84,14 @@ export function CaseInterpretationCard({
     setCustomCaseInput(caseId);
   }
 
-  const activeCaseId = selectedCaseId || caseId || "case_001";
+  const activeCaseId = selectedCaseId || caseId || "";
 
   const [interpretation, setInterpretation] = useState<GroundedCaseInterpretation | null>(
-    () => getCachedCaseInterpretation(activeCaseId)
+    () => (activeCaseId ? getCachedCaseInterpretation(activeCaseId) : null)
   );
-  const [isLoading, setIsLoading] = useState<boolean>(() => !getCachedCaseInterpretation(activeCaseId));
+  const [isLoading, setIsLoading] = useState<boolean>(
+    () => Boolean(activeCaseId && !getCachedCaseInterpretation(activeCaseId))
+  );
   const [isNotGenerated, setIsNotGenerated] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -178,6 +180,13 @@ export function CaseInterpretationCard({
     if (!activeCaseId || isActionLoading) return;
     setIsActionLoading(true);
     setActionError(null);
+
+    const hasEvidence = artifacts.length > 0 || recoveryRuns.length > 0;
+    if (!hasEvidence) {
+      setActionError("Cannot generate interpretation: no evidence files or recovery runs exist for this case.");
+      setIsActionLoading(false);
+      return;
+    }
 
     try {
       const data = await generateCaseInterpretation(activeCaseId, false);
@@ -378,33 +387,46 @@ export function CaseInterpretationCard({
         )}
 
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center space-y-3">
-          <p className="text-xs text-slate-700 font-sans font-medium leading-relaxed">
-            No grounded interpretation has been generated for this case yet.
-          </p>
-          <p className="text-[11px] text-slate-400 font-sans max-w-lg mx-auto">
-            Click below to generate an executive forensic briefing and cross-cluster evidence synthesis based
-            on the deterministic recovery results for case <code className="font-mono text-slate-600">{activeCaseId}</code>.
-          </p>
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={isActionLoading}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Generating case synthesis…</span>
-                </>
-              ) : (
-                <>
-                  <Cpu className="w-3.5 h-3.5" />
-                  <span>Generate Interpretation</span>
-                </>
-              )}
-            </button>
-          </div>
+          {artifacts.length === 0 && recoveryRuns.length === 0 ? (
+            <>
+              <p className="text-xs text-slate-700 font-sans font-medium leading-relaxed">
+                No evidence artifacts or recovery runs exist for this case yet.
+              </p>
+              <p className="text-[11px] text-slate-400 font-sans max-w-lg mx-auto">
+                Upload or ingest evidence files to compute deterministic byte accounting and enable grounded forensic synthesis.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-700 font-sans font-medium leading-relaxed">
+                No grounded interpretation has been generated for this case yet.
+              </p>
+              <p className="text-[11px] text-slate-400 font-sans max-w-lg mx-auto">
+                Click below to generate an executive forensic briefing and cross-cluster evidence synthesis based
+                on the deterministic recovery results for case <code className="font-mono text-slate-600">{activeCaseId}</code>.
+              </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={isActionLoading}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isActionLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Generating case synthesis…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span>Generate Interpretation</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

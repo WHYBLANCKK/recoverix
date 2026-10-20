@@ -116,7 +116,7 @@ export function ClusterInterpretationCard({
   const activeClusterId = selectedClusterId || clusterId || "cluster_0";
 
   const [interpretation, setInterpretation] = useState<GroundedClusterInterpretation | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => Boolean(caseId));
   const [isNotGenerated, setIsNotGenerated] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -200,7 +200,9 @@ export function ClusterInterpretationCard({
       setInterpretation(data);
       setIsNotGenerated(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unable to generate cluster interpretation.";
+      const msg = err instanceof ApiError && err.status === 404
+        ? "Case or cluster does not exist in backend database. Ingest compound disk evidence to compute cluster topology."
+        : (err instanceof Error ? err.message : "Unable to generate cluster interpretation.");
       setActionError(msg);
     } finally {
       setIsActionLoading(false);
@@ -216,12 +218,28 @@ export function ClusterInterpretationCard({
       const data = await generateClusterInterpretation(caseId, activeClusterId, true);
       setInterpretation(data);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unable to refresh cluster interpretation.";
+      const msg = err instanceof ApiError && err.status === 404
+        ? "Case or cluster does not exist in backend database. Ingest compound disk evidence to compute cluster topology."
+        : (err instanceof Error ? err.message : "Unable to refresh cluster interpretation.");
       setActionError(msg);
     } finally {
       setIsActionLoading(false);
     }
   };
+
+  if (!caseId) {
+    return (
+      <div className={`bg-white border border-slate-200 rounded-xl p-6 font-mono shadow-xs space-y-3 ${className}`}>
+        <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+          <BrainCircuit className="w-5 h-5 text-slate-400" />
+          <h2 className="text-base font-bold text-slate-900 uppercase tracking-wider">Spatial Cluster Synthesis</h2>
+        </div>
+        <p className="text-xs text-slate-500 font-sans leading-relaxed">
+          Spatial cluster topology and cross-cluster hypothesis synthesis apply to compound forensic disk images. Standalone file recoveries use direct deterministic format reconstruction.
+        </p>
+      </div>
+    );
+  }
 
   // 1. Initial Loading State
   if (isLoading) {

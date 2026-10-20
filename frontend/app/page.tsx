@@ -317,13 +317,12 @@ export default function Home() {
 
         <div className="max-w-5xl mx-auto px-4 sm:px-6 relative z-10 text-center space-y-6">
           {/* Eyebrow Badge */}
-          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-white border border-slate-200/90 shadow-xs text-xs font-mono text-emerald-800">
-            <RecoverixLogo size={22} showText={false} markOnly />
-            <div className="h-3.5 w-px bg-slate-200" />
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-semibold uppercase tracking-wider">Public File Recovery Engine</span>
+          <div className="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs text-xs font-mono text-slate-700">
+            <RecoverixLogo size={18} showText={false} markOnly />
+            <div className="h-3 w-px bg-slate-200" />
+            <span className="font-semibold text-slate-900">Deterministic File Recovery</span>
             <span className="text-slate-300">|</span>
-            <span className="text-slate-600 font-sans">Deterministic V/R/M Standard</span>
+            <span className="text-slate-500 font-sans text-[11px]">V/R/M Provenance Standard</span>
           </div>
 
           {/* Hero Headline */}
@@ -353,7 +352,7 @@ export default function Home() {
           {/* ============================================================== */}
           {/* THE 1-STEP RECOVERY CARD */}
           {/* ============================================================== */}
-          <div className="pt-4 max-w-3xl mx-auto text-left">
+          <div id="upload" className="pt-4 max-w-3xl mx-auto text-left scroll-mt-24">
             {!result && !isAnalyzing && (
               <>
                 <div
@@ -1113,7 +1112,7 @@ export default function Home() {
           <div className="bg-slate-900 text-slate-100 rounded-2xl p-6 sm:p-8 font-mono border border-slate-800 shadow-xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
               <span className="text-xs uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span>Deterministic Law: Byte Conservation Invariants</span>
               </span>
               <span className="text-[10px] text-slate-400">ZERO HEURISTIC GUESSWORK · NO LLM HALLUCINATION</span>
@@ -1264,23 +1263,19 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer id="about" className="py-12 bg-white text-xs font-mono text-slate-500 border-t border-slate-200">
+      <footer className="py-10 bg-white text-xs font-mono text-slate-500 border-t border-slate-200">
         <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <RecoverixLogo size={24} showText={true} subtitle="" />
             <span className="text-slate-300">|</span>
             <span>Deterministic Digital Evidence Recovery</span>
           </div>
-          <div className="flex items-center gap-6">
-            <Link href="/setup" className="hover:text-slate-900 transition-colors">
-              Case Setup
-            </Link>
-            <Link href="/cases" className="hover:text-slate-900 transition-colors">
-              Case History
-            </Link>
-            <Link href="/dashboard" className="hover:text-slate-900 transition-colors">
-              Metrics
-            </Link>
+          <div className="flex items-center gap-4 text-[11px] text-slate-500">
+            <span>Zero-Invention Guarantee</span>
+            <span className="text-slate-300">·</span>
+            <span>Automatic 24h Purge</span>
+            <span className="text-slate-300">·</span>
+            <span>Open Source (MIT)</span>
           </div>
         </div>
       </footer>

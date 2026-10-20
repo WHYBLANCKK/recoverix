@@ -24,12 +24,12 @@ function DashboardContent() {
       setIsLoading(true);
       const urlId = searchParams.get('case_id');
       const localId = typeof window !== 'undefined' ? localStorage.getItem('recoverix_active_case_id') : null;
-      const activeCaseId = urlId || localId || 'case_001';
+      const requestedCaseId = urlId || localId || null;
 
       try {
         const [runs, c] = await Promise.all([
           fetchRecoveryRuns().catch(() => []),
-          activeCaseId ? fetchCase(activeCaseId).catch(() => null) : Promise.resolve(null),
+          requestedCaseId ? fetchCase(requestedCaseId).catch(() => null) : Promise.resolve(null),
         ]);
 
         const runArtifacts = (runs || []).map(normalizeBackendArtifact);
@@ -48,12 +48,12 @@ function DashboardContent() {
         const combined = Array.from(map.values());
 
         setData({
-          caseData: c || {
-            id: activeCaseId,
-            name: activeCaseId === 'case_001' ? 'Default Investigation Case' : `Case ${activeCaseId}`,
+          caseData: c || (combined.length > 0 ? {
+            id: requestedCaseId || 'session_evidence',
+            name: requestedCaseId ? `Case ${requestedCaseId}` : 'Session Evidence Workspace',
             description: 'Canonical recovery runs and forensic evidence workspace',
             artifacts: combined,
-          },
+          } : null),
           artifacts: combined,
           rawRuns: runs || [],
         });
@@ -76,7 +76,60 @@ function DashboardContent() {
   }
 
   const { caseData, artifacts, rawRuns } = data;
-  const activeCaseId = caseData?.id || searchParams.get('case_id') || (typeof window !== 'undefined' ? localStorage.getItem('recoverix_active_case_id') : null) || 'case_001';
+  const activeCaseId = caseData?.id || searchParams.get('case_id') || 'session_evidence';
+
+  if (artifacts.length === 0) {
+    return (
+      <main className="min-h-screen bg-[#F8FAFC] text-slate-900 py-8 px-6 font-mono selection:bg-emerald-500/20 selection:text-emerald-950">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <Link href="/" className="inline-flex items-center text-xs font-mono text-slate-700 hover:text-slate-900 transition-colors bg-white hover:bg-slate-50 border border-slate-300 px-3.5 py-2 rounded-lg shadow-2xs font-semibold" aria-label="Recoverix Home">
+                <RecoverixLogo size={16} showText={false} markOnly className="mr-2" /> Evidence Workspace
+              </Link>
+              <h1 className="text-xl font-bold font-mono tracking-tight text-slate-900 border-l border-slate-200 pl-4">
+                RECOVERY RUNS & CASE ARTIFACTS
+              </h1>
+            </div>
+            <Link
+              href="/setup"
+              className="inline-flex items-center text-xs font-mono text-slate-700 hover:text-slate-900 transition-colors bg-white hover:bg-slate-50 border border-slate-300 px-3.5 py-2 rounded-lg shadow-2xs font-semibold"
+            >
+              <FileText className="w-4 h-4 mr-2 text-slate-500" /> New Investigation
+            </Link>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-12 sm:p-16 text-center space-y-4 max-w-lg mx-auto shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center mx-auto shadow-2xs">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                No Recorded Cases in this Session
+              </h2>
+              <p className="text-xs text-slate-500 font-sans leading-relaxed">
+                Recoverix enforces strict per-session cryptographic data isolation. Your uploads and recoveries are private to your browser session and automatically purged within 24 hours. Because no evidence has been processed in this session yet, no case artifacts exist.
+              </p>
+            </div>
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Link
+                href="/#upload"
+                className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-mono font-bold px-4 py-2.5 rounded-lg text-xs transition-all shadow-xs"
+              >
+                <span>Upload & Recover a File</span>
+              </Link>
+              <Link
+                href="/setup"
+                className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-mono font-semibold px-4 py-2.5 rounded-lg text-xs transition-all shadow-2xs"
+              >
+                <span>New Investigation Setup</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   const totalArts = artifacts.length;
   const fullyRec = artifacts.filter(a => a.status === 'FULLY_RECOVERED').length;

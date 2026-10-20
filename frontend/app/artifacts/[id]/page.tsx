@@ -24,9 +24,7 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
         const artifact = await fetchArtifactById(artifactId);
         
         const localCaseId = typeof window !== 'undefined' ? localStorage.getItem('recoverix_active_case_id') : null;
-        const activeCaseId = localCaseId || 'case_001';
-        
-        const allArtifacts = await fetchArtifacts(activeCaseId);
+        const allArtifacts = localCaseId ? await fetchArtifacts(localCaseId).catch(() => []) : [];
         const relatedArtifacts = allArtifacts.filter(a => a.id !== artifact.id).slice(0, 3);
         
         setData({ artifact, relatedArtifacts });
