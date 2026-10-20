@@ -135,6 +135,8 @@ def validate_json(data: bytes | RecoveredArtifact) -> ValidationResult:
             details["item_count"] = len(parsed)
         else:
             warnings.append(f"JSON root element is primitive ({type(parsed).__name__}), expected object or array")
+    except RecursionError:
+        errors.append("JSON nesting depth exceeds system recursion limit")
     except json.JSONDecodeError as e:
         errors.append(f"JSON parsing failed at line {e.lineno}, col {e.colno}: {e.msg}")
     except Exception as e:

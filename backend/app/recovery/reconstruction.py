@@ -773,7 +773,13 @@ def reconstruct_csv(
     # A byte-exact output can still contain structurally reconstructed
     # bytes (a restored quote or trailing newline), and those bytes are not
     # verified, so the status must not claim full recovery.
-    if val_res.valid and missing_bytes_count == 0 and reconstructed_bytes_count == 0 and is_complete:
+    if (
+        val_res.valid
+        and missing_bytes_count == 0
+        and reconstructed_bytes_count == 0
+        and len(reconstruction_methods) == 0
+        and is_complete
+    ):
         status_str = "FULLY_RECOVERED"
     elif val_res.valid:
         status_str = "PARTIALLY_RECOVERED"

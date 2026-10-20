@@ -155,6 +155,10 @@ def validate_jpeg(data: bytes | RecoveredArtifact) -> ValidationResult:
                 details["height"] = height
                 details["width"] = width
                 details["components"] = components
+                if width == 0 or height == 0:
+                    errors.append(
+                        f"Invalid SOF dimensions: width={width}, height={height} (dimensions must be positive non-zero)"
+                    )
         elif 0xE0 <= marker <= 0xEF:
             markers_found.append(f"APP{marker - 0xE0}")
         elif marker == 0xDB:
