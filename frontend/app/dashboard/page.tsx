@@ -258,7 +258,7 @@ function DashboardContent() {
                 Deterministic Byte Provenance: {totalVerifiedBytes.toLocaleString()} B Verified / {totalObservedInputBytes.toLocaleString()} B Input ({verifiedBytePercentage}%)
               </p>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Reconstructed Syntax: {totalReconstructedBytes.toLocaleString()} B • Preserved Gaps: {totalMissingBytes.toLocaleString()} B • Zero Heuristic Hallucination
+                Reconstructed Syntax: {totalReconstructedBytes.toLocaleString()} B • Preserved Gaps: {totalMissingBytes.toLocaleString()} B • Zero Fabricated Content
               </p>
             </div>
           </div>

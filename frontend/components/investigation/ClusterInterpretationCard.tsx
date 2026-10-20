@@ -903,12 +903,12 @@ export function ClusterInterpretationCard({
       </div>
 
       {/* 10. Recommended Next Steps */}
-      <div className="bg-sky-50/70 p-3.5 rounded-lg border border-sky-200/80 space-y-1">
-        <h3 className="text-xs font-bold text-sky-900 uppercase tracking-wider flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+      <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-1">
+        <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
           <span>Recommended Next Steps</span>
         </h3>
-        <p className="text-sky-900/90 text-xs font-sans leading-relaxed">
+        <p className="text-slate-700 text-xs font-sans leading-relaxed">
           {output.recommended_next_steps}
         </p>
       </div>

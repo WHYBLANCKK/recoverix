@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronUp,
   Trash2,
+  ShieldCheck,
 } from "lucide-react";
 import { recoverSingleFile, deleteRecoveredFile } from "@/lib/api";
 import { computeFileSha256 } from "@/lib/crypto";
@@ -328,11 +329,13 @@ export default function Home() {
           {/* Hero Headline */}
           <div className="space-y-4 max-w-3xl mx-auto">
             <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold tracking-tight text-slate-900 font-mono leading-tight">
-              Recover What Can Be <span className="text-emerald-600 underline decoration-emerald-500/40 underline-offset-8">Proven</span>.
+              Recover What Can Be Recovered.{" "}
+              <span className="text-emerald-600 underline decoration-emerald-500/40 underline-offset-8">
+                Verify What Can Be Proven.
+              </span>
             </h1>
             <p className="text-base sm:text-lg text-slate-600 max-w-2xl mx-auto font-sans leading-relaxed">
-              Upload damaged or corrupted files from your phone or laptop. Recoverix deterministically
-              salvages valid data, isolates unobserved gaps, and never invents missing content.
+              Recover usable content from damaged files, see what could not be recovered, and inspect how the output was reconstructed. Recoverix distinguishes recovered evidence from missing data and necessary file-structure repairs.
             </p>
           </div>
 
@@ -346,7 +349,6 @@ export default function Home() {
                 .{fmt.toLowerCase()}
               </span>
             ))}
-            <span className="text-slate-400 text-[11px] self-center ml-1">· max 5 MiB</span>
           </div>
 
           {/* ============================================================== */}
@@ -540,6 +542,146 @@ export default function Home() {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* Value of Non-Fabrication Section */}
+              <div className="mt-8 bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-xs space-y-6">
+                <div className="space-y-1.5 border-b border-slate-100 pb-4">
+                  <div className="inline-flex items-center gap-2 text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Principle of Non-Fabrication</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tracking-tight">
+                    Recovery without fabricated evidence
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-600 font-sans leading-relaxed">
+                    Why Recoverix preserves authentic content, reports unobserved gaps, and never uses generative guessing.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 font-mono text-xs">
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">1</span>
+                      <span>Corruption Destroys Real Bytes</span>
+                    </div>
+                    <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                      Physical damage, truncated network transfers, or interrupted writes often destroy original file bytes completely. When bytes are gone, no tool can genuinely recover them without guessing.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">2</span>
+                      <span>Fabricating Data Misrepresents Truth</span>
+                    </div>
+                    <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                      Generative models that invent plausible replacement text, numbers, or pixels risk altering the historical record and presenting artificial data as original evidence.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">3</span>
+                      <span>Preserve Content & Isolate Gaps</span>
+                    </div>
+                    <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                      Recoverix extracts every recoverable byte, clearly identifies missing spans, and only reconstructs the minimal specification framing (such as closing brackets or trailers) required to open the file.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">4</span>
+                      <span>Inspect Every Step of the Output</span>
+                    </div>
+                    <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                      Instead of an opaque “recovered successfully” banner, you receive byte-exact accounting, structural parser validation checks, and full transparency on what was salvaged and what was lost.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* How Recovery is Demonstrated (5-Step Sequence) */}
+              <div className="mt-8 bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-xs space-y-6">
+                <div className="space-y-1.5 border-b border-slate-100 pb-4">
+                  <div className="inline-flex items-center gap-2 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Verifiable Workflow</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tracking-tight">
+                    How Recoverix Demonstrates Recovery
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-600 font-sans leading-relaxed">
+                    A deterministic sequence from damaged input to validated, downloadable output.
+                  </p>
+                </div>
+
+                <div className="space-y-3 font-mono text-xs">
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center shrink-0 text-xs">
+                      1
+                    </div>
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 text-sm">Inspect Damaged File Structure</div>
+                      <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                        Examines raw evidence bytes, extracts format signatures, and checks initial structural integrity against official specification standards.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center shrink-0 text-xs">
+                      2
+                    </div>
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 text-sm">Recover Valid Content Using Format Logic</div>
+                      <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                        Applies deterministic parsers for each of the 8 supported formats (PDF, JSON, CSV, TXT, XML, PNG, JPEG, ZIP) to carve valid records, table cells, or image streams.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center shrink-0 text-xs">
+                      3
+                    </div>
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 text-sm">Account for Bytes: Verified, Reconstructed, and Missing</div>
+                      <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                        Enforces mathematical byte accounting where format logic supports it: Verified original bytes (V), structural framing repairs (R), and unobserved gaps (M), verifying V + M = Input and V + R = Output.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center shrink-0 text-xs">
+                      4
+                    </div>
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 text-sm">Validate the Resulting Output</div>
+                      <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                        Runs the repaired file buffer through strict format validators (JSON parser, XML document tree validator, image decompressor, or ZIP directory tester) to confirm it is valid and readable.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center shrink-0 text-xs">
+                      5
+                    </div>
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 text-sm">Disclose Outcome, Limitations, and Checksums</div>
+                      <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                        Presents an explicit recovery status (Fully Recovered, Partially Recovered, or Unrecoverable), displays the recovered file SHA-256 integrity hash, and provides the download file with immediate deletion controls.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 text-[11px] font-sans text-slate-500 leading-relaxed">
+                  <strong className="font-mono text-slate-700">Integrity Note:</strong> Byte accounting and SHA-256 checksums verify that data handling and recovery are transparent and reproducible. They do not prove that destroyed original information was magically recovered, or guarantee complete semantic authenticity.
+                </div>
               </div>
             </>
           )}
@@ -765,7 +907,7 @@ export default function Home() {
                     />
                     <div
                       style={{ width: `${reconPct}%` }}
-                      className="bg-sky-500 h-full"
+                      className="bg-slate-400 h-full"
                       title={`Reconstructed: ${result.reconstructed_bytes} bytes (${reconPct}%)`}
                     />
                     <div
@@ -790,8 +932,8 @@ export default function Home() {
                       </p>
                     </div>
 
-                    <div className="p-3 bg-sky-50/60 border border-sky-200 rounded-xl">
-                      <div className="text-[10px] text-sky-800 uppercase font-bold">
+                    <div className="p-3 bg-slate-100/70 border border-slate-200 rounded-xl">
+                      <div className="text-[10px] text-slate-700 uppercase font-bold">
                         Reconstructed (R)
                       </div>
                       <div className="text-lg font-bold text-slate-900 mt-1">
@@ -826,7 +968,7 @@ export default function Home() {
                 <div className="p-6 sm:p-8 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-sky-500" />
+                      <span className="w-2 h-2 rounded-full bg-slate-400" />
                       <span>Point 2: Objective 100-Point Confidence Score</span>
                     </h3>
                     <button
@@ -1085,7 +1227,7 @@ export default function Home() {
 
             {/* Principle 2: PROVE */}
             <div className="bg-[#F8FAFC] border border-slate-200 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
-              <div className="w-10 h-10 rounded-xl bg-sky-100 border border-sky-300 flex items-center justify-center text-sky-700">
+              <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-300 flex items-center justify-center text-slate-700">
                 <Cpu className="w-5 h-5" />
               </div>
               <h4 className="text-lg font-bold text-slate-900 tracking-tight">PROVE</h4>
@@ -1108,14 +1250,14 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Byte Conservation Law & Zero-AI Guarantee */}
+          {/* Byte Conservation Invariants */}
           <div className="bg-slate-900 text-slate-100 rounded-2xl p-6 sm:p-8 font-mono border border-slate-800 shadow-xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
               <span className="text-xs uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Deterministic Law: Byte Conservation Invariants</span>
+                <span>Verifiable Principle: Byte Conservation Invariants</span>
               </span>
-              <span className="text-[10px] text-slate-400">ZERO HEURISTIC GUESSWORK · NO LLM HALLUCINATION</span>
+              <span className="text-[10px] text-slate-400">VERIFIED PROVENANCE · NON-FABRICATED RECOVERY</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
               <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
@@ -1127,7 +1269,7 @@ export default function Home() {
                 </p>
               </div>
               <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
-                <div className="text-sky-300 font-bold text-sm">
+                <div className="text-slate-200 font-bold text-sm">
                   Verified (V) + Reconstructed (R) = Total Output Bytes
                 </div>
                 <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
@@ -1271,7 +1413,7 @@ export default function Home() {
             <span>Deterministic Digital Evidence Recovery</span>
           </div>
           <div className="flex items-center gap-4 text-[11px] text-slate-500">
-            <span>Zero-Invention Guarantee</span>
+            <span>Non-Fabricated Recovery</span>
             <span className="text-slate-300">·</span>
             <span>Automatic 24h Purge</span>
             <span className="text-slate-300">·</span>

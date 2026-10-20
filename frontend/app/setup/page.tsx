@@ -232,7 +232,7 @@ export default function SetupPage() {
                 <FileCheck className="w-4 h-4 text-emerald-600" />
                 <span>1. Evidence Source</span>
               </h2>
-              <span className="text-[11px] font-mono text-slate-500">MAX BUFFER: 5 MiB</span>
+              <span className="text-[11px] font-mono text-slate-500">STRUCTURE AUDIT</span>
             </div>
 
             {/* Drag & Drop Area */}

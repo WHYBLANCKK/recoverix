@@ -378,7 +378,7 @@ export default function InvestigationPage({
             </div>
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
               <span className="text-[10px] text-slate-500 uppercase font-semibold block">RECOVERY METHOD</span>
-              <span className="text-sky-700 font-bold truncate block">{result.reconstruction_method}</span>
+              <span className="text-slate-700 font-bold truncate block">{result.reconstruction_method}</span>
             </div>
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
               <span className="text-[10px] text-slate-500 uppercase font-semibold block">RECOVERY RUN ID</span>
@@ -518,16 +518,16 @@ export default function InvestigationPage({
                 </div>
 
                 {/* RECONSTRUCTED BYTES */}
-                <div className="bg-white border border-sky-300 p-5 rounded-xl relative overflow-hidden shadow-2xs">
-                  <div className="text-[11px] uppercase font-bold text-sky-700 flex items-center justify-between mb-2">
+                <div className="bg-white border border-slate-300 p-5 rounded-xl relative overflow-hidden shadow-2xs">
+                  <div className="text-[11px] uppercase font-bold text-slate-700 flex items-center justify-between mb-2">
                     <span>[RECONSTRUCTED (R)]</span>
-                    <span className="bg-sky-50 text-sky-800 border border-sky-200 px-2 py-0.5 rounded text-[10px]">
+                    <span className="bg-slate-100 text-slate-800 border border-slate-200 px-2 py-0.5 rounded text-[10px]">
                       {reconPct}%
                     </span>
                   </div>
-                  <div className="text-3xl font-bold text-sky-600 font-mono">
+                  <div className="text-3xl font-bold text-slate-900 font-mono">
                     {result.reconstructed_bytes.toLocaleString()}
-                    <span className="text-sm font-normal text-sky-700 ml-1">B</span>
+                    <span className="text-sm font-normal text-slate-500 ml-1">B</span>
                   </div>
                   <p className="text-xs text-slate-600 font-sans mt-1">
                     Repaired via deterministic structural inference & container syntax.
@@ -656,18 +656,18 @@ export default function InvestigationPage({
 
             {/* Structural Reconstruction Callout (When R > 0) */}
             {result.reconstructed_bytes > 0 && (
-              <div className="bg-sky-50 border border-sky-200 rounded-xl p-3.5 text-xs text-sky-950 font-mono space-y-1">
+              <div className="bg-slate-100/80 border border-slate-300 rounded-xl p-3.5 text-xs text-slate-900 font-mono space-y-1">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-sky-800 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+                  <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse" />
                     STRUCTURAL RECONSTRUCTION ACTIVE (R &gt; 0)
                   </span>
-                  <span className="text-[10px] bg-sky-100 text-sky-800 px-2 py-0.5 rounded font-bold">
+                  <span className="text-[10px] bg-slate-200 text-slate-800 px-2 py-0.5 rounded font-bold">
                     +{result.reconstructed_bytes} B APPENDED
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-700 font-sans">
-                  Recoverix deterministically repaired missing structural closing syntax using format grammar (<code className="font-mono text-sky-700 font-semibold">{result.reconstruction_method}</code>). The resulting byte buffer passed schema and parser validation.
+                  Recoverix deterministically repaired missing structural closing syntax using format grammar (<code className="font-mono text-slate-800 font-semibold">{result.reconstruction_method}</code>). The resulting byte buffer passed schema and parser validation.
                 </p>
               </div>
             )}
@@ -708,7 +708,7 @@ export default function InvestigationPage({
               </div>
             ) : result.format === "png" || result.format === "jpeg" ? (
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-sky-50 border border-sky-200 flex items-center justify-center mx-auto text-sky-600">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-300 flex items-center justify-center mx-auto text-slate-700">
                   <FileCode className="w-8 h-8" />
                 </div>
                 <div className="space-y-1">
@@ -747,7 +747,7 @@ export default function InvestigationPage({
                 {result.reconstructed_bytes > 0 && (
                   <div className="text-[11px] text-slate-500 flex items-center justify-between px-1 font-mono">
                     <span>Observed Input: <strong>{result.verified_bytes} B</strong></span>
-                    <span className="text-sky-700 font-semibold">Reconstructed Syntax: <strong>+{result.reconstructed_bytes} B</strong></span>
+                    <span className="text-slate-700 font-semibold">Reconstructed Syntax: <strong>+{result.reconstructed_bytes} B</strong></span>
                     <span>Total Artifact: <strong>{result.verified_bytes + result.reconstructed_bytes} B</strong></span>
                   </div>
                 )}
@@ -809,7 +809,7 @@ export default function InvestigationPage({
               </div>
               <div className="flex justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                 <span className="text-slate-500 uppercase font-semibold">Reconstructed Bytes:</span>
-                <span className="text-sky-700 font-bold">{result.reconstructed_bytes.toLocaleString()} B</span>
+                <span className="text-slate-700 font-bold">{result.reconstructed_bytes.toLocaleString()} B</span>
               </div>
               <div className="flex justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                 <span className="text-slate-500 uppercase font-semibold">Missing Bytes:</span>
@@ -852,12 +852,12 @@ export default function InvestigationPage({
 
           <div className="space-y-3 text-xs leading-relaxed">
             {/* Deterministic Findings */}
-            <div className="bg-slate-50 border border-sky-200 p-4 rounded-xl space-y-2">
-              <div className="text-sky-800 font-bold uppercase flex items-center gap-2">
+            <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-2">
+              <div className="text-slate-800 font-bold uppercase flex items-center gap-2">
                 <span>[DETERMINISTIC STRUCTURAL FINDINGS]</span>
               </div>
               <p className="text-slate-700 font-sans">
-                Evidence file <strong className="text-slate-900 font-mono">{result.original_filename}</strong> was evaluated across format-specific structural parsers. Header signature validated. Structural validation executed via <code className="text-sky-700 font-mono font-semibold">{result.reconstruction_method}</code> returning <span className={`font-bold ${result.validation_status === "PASSED" ? "text-emerald-700" : "text-rose-700"}`}>{result.validation_status}</span>.
+                Evidence file <strong className="text-slate-900 font-mono">{result.original_filename}</strong> was evaluated across format-specific structural parsers. Header signature validated. Structural validation executed via <code className="text-slate-800 font-mono font-semibold">{result.reconstruction_method}</code> returning <span className={`font-bold ${result.validation_status === "PASSED" ? "text-emerald-700" : "text-rose-700"}`}>{result.validation_status}</span>.
               </p>
               <div className="text-[11px] text-slate-500 pt-1">
                 Zero synthetic predictions were used to generate or alter raw evidence byte offsets.

@@ -35,7 +35,7 @@ export function ConfidenceBreakdown({ artifact }: { artifact: Artifact }) {
               </div>
               <div className="w-full h-2 bg-slate-100 border border-slate-200 rounded-full overflow-hidden">
                 <div 
-                  className={`h-full rounded-full ${pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-sky-500' : 'bg-amber-500'}`}
+                  className={`h-full rounded-full ${pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-slate-500' : 'bg-amber-500'}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>

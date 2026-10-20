@@ -336,7 +336,7 @@ export default function CasesPage() {
                             {run.filename}
                           </td>
                           <td className="py-3.5 px-2">
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[10px] text-sky-800 uppercase font-bold">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[10px] text-slate-800 uppercase font-bold">
                               {run.format}
                             </span>
                           </td>
@@ -359,7 +359,7 @@ export default function CasesPage() {
                           <td className="py-3.5 px-4 text-[11px] font-mono">
                             <span className="text-emerald-700 font-bold">{run.total_verified_bytes}B</span>
                             <span className="text-slate-400 mx-1">/</span>
-                            <span className="text-sky-700 font-bold">{run.total_reconstructed_bytes}B</span>
+                            <span className="text-slate-700 font-bold">{run.total_reconstructed_bytes}B</span>
                             <span className="text-slate-400 mx-1">/</span>
                             <span className="text-amber-700 font-bold">{run.total_missing_bytes}B</span>
                           </td>

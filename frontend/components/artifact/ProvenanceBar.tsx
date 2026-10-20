@@ -29,7 +29,7 @@ export function ProvenanceBar({ artifact }: { artifact: Artifact }) {
 
       <div className="w-full h-4 rounded-full overflow-hidden flex mb-6 bg-slate-100 border border-slate-300 shadow-inner">
         <div style={{ width: `${vPct}%` }} className="h-full bg-emerald-500" title={`Verified: ${vPct.toFixed(1)}%`} />
-        <div style={{ width: `${rPct}%` }} className="h-full bg-sky-500" title={`Reconstructed: ${rPct.toFixed(1)}%`} />
+        <div style={{ width: `${rPct}%` }} className="h-full bg-slate-400" title={`Reconstructed: ${rPct.toFixed(1)}%`} />
         <div style={{ width: `${mPct}%` }} className="h-full bg-amber-500" title={`Missing: ${mPct.toFixed(1)}%`} />
       </div>
 
@@ -42,12 +42,12 @@ export function ProvenanceBar({ artifact }: { artifact: Artifact }) {
           <p className="text-2xl font-bold text-emerald-600 font-mono">{artifact.verified_bytes.toLocaleString()} B</p>
           <p className="text-xs text-slate-500 mt-1">{vPct.toFixed(1)}% of total</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-sky-300 shadow-2xs">
+        <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-2xs">
           <div className="flex items-center gap-2 mb-2">
-            <Server className="w-4 h-4 text-sky-600" />
-            <span className="text-xs uppercase font-bold text-sky-700">[RECONSTRUCTED]</span>
+            <Server className="w-4 h-4 text-slate-600" />
+            <span className="text-xs uppercase font-bold text-slate-700">[RECONSTRUCTED]</span>
           </div>
-          <p className="text-2xl font-bold text-sky-600 font-mono">{artifact.reconstructed_bytes.toLocaleString()} B</p>
+          <p className="text-2xl font-bold text-slate-900 font-mono">{artifact.reconstructed_bytes.toLocaleString()} B</p>
           <p className="text-xs text-slate-500 mt-1">{rPct.toFixed(1)}% of total</p>
         </div>
         <div className="bg-white p-4 rounded-xl border border-amber-300 shadow-2xs">
@@ -83,7 +83,7 @@ export function ProvenanceBar({ artifact }: { artifact: Artifact }) {
                     <td className="px-4 py-2">
                       <span className={`text-xs px-2 py-0.5 rounded font-semibold border ${
                         f.type === 'VERIFIED' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' :
-                        f.type === 'RECONSTRUCTED_GAP' ? 'bg-sky-50 text-sky-800 border-sky-300' :
+                        f.type === 'RECONSTRUCTED_GAP' ? 'bg-slate-100 text-slate-800 border-slate-300' :
                         'bg-amber-50 text-amber-800 border-amber-300'
                       }`}>
                         {f.type}

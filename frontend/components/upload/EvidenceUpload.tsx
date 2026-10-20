@@ -690,7 +690,7 @@ export default function EvidenceUpload() {
                 ))}
               </div>
               <p className="text-[11px] font-mono text-slate-500 mt-2">
-                Buffer limit: 5 MiB · Processed strictly in-memory · Zero synthetic hallucination
+                Processed strictly in-memory · Deterministic byte auditing · Non-fabricated content
               </p>
             </div>
           </div>
@@ -717,7 +717,7 @@ export default function EvidenceUpload() {
             </h2>
 
             <p className="text-xs text-slate-400 max-w-md mx-auto mb-6">
-              Load an unpartitioned or raw disk dump up to 5 MiB for multi-artifact carving, bifragment gap assembly, and full case triage.
+              Load an unpartitioned or raw disk dump for multi-artifact carving, bifragment gap assembly, and full case triage.
             </p>
 
             <input
@@ -747,7 +747,7 @@ export default function EvidenceUpload() {
             </button>
 
             <div className="mt-8 pt-6 border-t border-[#1E293B] font-mono text-[11px] text-slate-500 space-y-1">
-              <div>Accepted: .img, .dd, .raw, .bin forensic dumps (max 5 MiB)</div>
+              <div>Accepted: .img, .dd, .raw, .bin forensic dumps</div>
               <div>Carves contiguous artifacts & reconstructs bifragment gaps within MAX_GAP=4096</div>
             </div>
           </div>
