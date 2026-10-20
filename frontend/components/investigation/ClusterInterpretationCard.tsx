@@ -323,6 +323,8 @@ export function ClusterInterpretationCard({
               >
                 <input
                   type="text"
+                  id="custom-cluster-input-empty"
+                  name="cluster_id"
                   value={customClusterInput}
                   onChange={(e) => setCustomClusterInput(e.target.value)}
                   placeholder="cluster_0"
@@ -442,6 +444,8 @@ export function ClusterInterpretationCard({
             >
               <input
                 type="text"
+                id="custom-cluster-input-card"
+                name="cluster_id"
                 value={customClusterInput}
                 onChange={(e) => setCustomClusterInput(e.target.value)}
                 placeholder="cluster_0"

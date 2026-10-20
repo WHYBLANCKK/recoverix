@@ -330,6 +330,8 @@ export function CaseInterpretationCard({
               >
                 <input
                   type="text"
+                  id="custom-case-input-empty"
+                  name="case_id"
                   value={customCaseInput}
                   onChange={(e) => setCustomCaseInput(e.target.value)}
                   placeholder="case_001"
@@ -452,6 +454,8 @@ export function CaseInterpretationCard({
             >
               <input
                 type="text"
+                id="custom-case-input-card"
+                name="case_id"
                 value={customCaseInput}
                 onChange={(e) => setCustomCaseInput(e.target.value)}
                 placeholder="case_001"

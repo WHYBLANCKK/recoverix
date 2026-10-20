@@ -349,6 +349,8 @@ export default function Home() {
                 >
                   <input
                     ref={fileInputRef}
+                    id="home-dropzone-file-input"
+                    name="evidence_file"
                     type="file"
                     aria-label="Choose corrupted file to recover"
                     onChange={handleFileInputChange}

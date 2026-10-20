@@ -169,6 +169,9 @@ export default function CasesPage() {
             <Search className="w-4 h-4 text-slate-400 shrink-0" />
             <input
               type="text"
+              id="cases-search-input"
+              name="search_term"
+              aria-label="Search filename or Case ID"
               placeholder="Search filename or Case ID..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -179,8 +182,11 @@ export default function CasesPage() {
           <div className="flex items-center gap-3 w-full sm:w-auto">
             {/* Format Filter */}
             <div className="flex items-center gap-1.5">
-              <span className="text-slate-500 font-semibold text-[11px]">FORMAT:</span>
+              <label htmlFor="cases-format-filter" className="text-slate-500 font-semibold text-[11px]">FORMAT:</label>
               <select
+                id="cases-format-filter"
+                name="format_filter"
+                aria-label="Filter evidence by format"
                 value={formatFilter}
                 onChange={(e) => setFormatFilter(e.target.value)}
                 className="bg-slate-50 border border-slate-300 text-slate-800 rounded px-2.5 py-1.5 outline-none font-mono text-xs"
@@ -199,8 +205,11 @@ export default function CasesPage() {
 
             {/* Status Filter */}
             <div className="flex items-center gap-1.5">
-              <span className="text-slate-500 font-semibold text-[11px]">STATUS:</span>
+              <label htmlFor="cases-status-filter" className="text-slate-500 font-semibold text-[11px]">STATUS:</label>
               <select
+                id="cases-status-filter"
+                name="status_filter"
+                aria-label="Filter evidence by recovery status"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="bg-slate-50 border border-slate-300 text-slate-800 rounded px-2.5 py-1.5 outline-none font-mono text-xs"

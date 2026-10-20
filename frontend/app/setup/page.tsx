@@ -251,6 +251,9 @@ export default function SetupPage() {
             >
               <input
                 type="file"
+                id="setup-evidence-file-input"
+                name="evidence_file"
+                aria-label="Select damaged evidence file"
                 ref={fileInputRef}
                 onChange={handleFileInputChange}
                 className="hidden"
@@ -529,11 +532,13 @@ export default function SetupPage() {
             <div className="space-y-4 font-mono text-xs">
               {/* Case Name */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
+                <label htmlFor="setup-case-name" className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
                   Case Name
                 </label>
                 <input
                   type="text"
+                  id="setup-case-name"
+                  name="case_name"
                   value={caseName}
                   onChange={(e) => setCaseName(e.target.value)}
                   placeholder="Incident Response — Server Logs"
@@ -543,11 +548,13 @@ export default function SetupPage() {
 
               {/* Investigator / Analyst */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
+                <label htmlFor="setup-investigator" className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
                   Investigator / Analyst
                 </label>
                 <input
                   type="text"
+                  id="setup-investigator"
+                  name="investigator"
                   value={investigator}
                   onChange={(e) => setInvestigator(e.target.value)}
                   placeholder="Analyst #402"
@@ -557,11 +564,13 @@ export default function SetupPage() {
 
               {/* Evidence Description */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
+                <label htmlFor="setup-evidence-description" className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
                   Evidence Description
                 </label>
                 <input
                   type="text"
+                  id="setup-evidence-description"
+                  name="evidence_description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Damaged log file recovered from workstation image"
@@ -571,10 +580,12 @@ export default function SetupPage() {
 
               {/* Investigation Notes */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
+                <label htmlFor="setup-investigation-notes" className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider block">
                   Investigation Notes
                 </label>
                 <textarea
+                  id="setup-investigation-notes"
+                  name="investigation_notes"
                   rows={3}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
