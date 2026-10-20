@@ -47,8 +47,8 @@ def verify_artifact_download_integrity(
     2. The requested ID must match the record's artifact_id or linked run_id.
     3. The payload bytes must be present and non-empty.
     4. The record must have a valid 64-char hex SHA-256 digest persisted.
-    5. The constant-time HMAC comparison between persisted digest and recomputed digest
-       of exact payload bytes must strictly succeed.
+    5. The constant-time digest comparison (via hmac.compare_digest) between persisted
+       SHA-256 hex digest and recomputed SHA-256 hex digest of exact payload bytes must strictly succeed.
     6. On any violation, fails closed immediately with HTTP 404 without leaking server
        paths, database keys, or payload contents.
 
@@ -159,7 +159,7 @@ def verify_artifact_download_integrity(
             detail=f"Integrity verification failed for artifact '{requested_id}'",
         )
 
-    # 5. Cryptographic verification (constant-time HMAC compare)
+    # 5. Cryptographic verification (constant-time SHA-256 comparison via hmac.compare_digest)
     actual_sha = hashlib.sha256(payload_bytes).hexdigest().lower()
     if not hmac.compare_digest(stored_sha_clean, actual_sha):
         logger.error(

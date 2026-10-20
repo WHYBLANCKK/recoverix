@@ -356,6 +356,39 @@ def test_zip_zip_slip_hostile_path_dropped_or_rejected():
     assert len(extract_recovered_bytes(run)) == 0
 
 
+def test_zip_corrupted_first_entry_candidate_accounting():
+    """ZIP-3: Archive with corrupted first entry signature (XX..).
+    
+    Verifies candidate-level and container-level forensic byte accounting:
+    1. First entry signature is destroyed, so candidate cand-0 starts at entry 2.
+    2. Candidate input span is (evidence_size - evidence_start).
+    3. Forensic candidate invariant holds: V + M == total_input_bytes.
+    4. Forensic output invariant holds: V + R == len(recovered_bytes).
+    5. Evidence container reconciliation holds: V + M + evidence_start == evidence_size.
+    6. Independent parser verification succeeds with surviving member entries.
+    """
+    zip_ref = CANONICAL_REFERENCES["zip"]
+    corrupted_zip = b"XX\x03\x04" + zip_ref[4:]
+
+    run = execute_traced_recovery("sample.zip", corrupted_zip)
+    rec_bytes = extract_recovered_bytes(run)
+
+    assert run.status == "PARTIALLY_RECOVERED"
+    assert run.total_verified_bytes + run.total_missing_bytes == run.total_input_bytes
+    assert run.total_verified_bytes + run.total_reconstructed_bytes == len(rec_bytes)
+    assert run.total_input_bytes == run.provenance["evidence_end"] - run.provenance["evidence_start"]
+    assert (
+        run.total_verified_bytes
+        + run.total_missing_bytes
+        + run.provenance["evidence_start"]
+        == run.provenance["evidence_size"]
+    )
+    _assert_independent_consumability("zip", run.status, rec_bytes)
+    with zipfile.ZipFile(io.BytesIO(rec_bytes), "r") as zf:
+        assert zf.testzip() is None
+        assert len(zf.namelist()) == 1
+
+
 # ── Phase 4 Lifecycle and Download Gate Enforcement ──
 
 def test_full_lifecycle_upload_persist_restart_retrieve_and_download_gate():
