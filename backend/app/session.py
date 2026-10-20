@@ -19,13 +19,41 @@ SESSION_HEADER_NAME = "x-session-token"
 
 # Configurable secret key for HMAC-SHA256 token signing
 _DEFAULT_SECRET = "recoverix_forensic_session_secret_deterministic_2026"
-SESSION_SECRET = os.environ.get("RECOVERIX_SESSION_SECRET", _DEFAULT_SECRET).strip() or _DEFAULT_SECRET
+
+
+def get_session_secret() -> str:
+    """Retrieve the session signing secret.
+
+    Fails closed with a RuntimeError if strict security is enabled
+    (RECOVERIX_REQUIRE_SESSION_SECRET=1 or RECOVERIX_ENV=production) and no explicit
+    secret is configured.
+    Falls back to the deterministic default for local single-user forensic development.
+    """
+    secret = os.environ.get("RECOVERIX_SESSION_SECRET", "").strip()
+    if secret:
+        return secret
+
+    is_strict = (
+        os.environ.get("RECOVERIX_REQUIRE_SESSION_SECRET", "0").strip() in ("1", "true", "True")
+        or os.environ.get("RECOVERIX_ENV", "").strip().lower() == "production"
+    )
+    if is_strict:
+        raise RuntimeError(
+            "RECOVERIX_SESSION_SECRET must be configured with a high-entropy secret in production or strict mode."
+        )
+
+    return _DEFAULT_SECRET
+
+
+# Backwards compatibility alias for module-level access
+SESSION_SECRET = _DEFAULT_SECRET
 
 
 def sign_session_token(session_id: str) -> str:
     """Generate an HMAC-SHA256 signature for a session_id and return a combined token."""
+    secret = get_session_secret()
     signature = hmac.new(
-        SESSION_SECRET.encode("utf-8"),
+        secret.encode("utf-8"),
         session_id.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
@@ -48,8 +76,9 @@ def verify_session_token(token: Optional[str]) -> Optional[str]:
     if not session_id or not received_sig:
         return None
 
+    secret = get_session_secret()
     expected_sig = hmac.new(
-        SESSION_SECRET.encode("utf-8"),
+        secret.encode("utf-8"),
         session_id.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()

@@ -243,3 +243,37 @@ def test_cache_control_headers_enforced():
     res_dl = client.get(f"/api/recover-file/{file_id}/download")
     assert "no-store" in res_dl.headers.get("cache-control", "")
     assert res_dl.headers.get("pragma") == "no-cache"
+
+
+def test_session_secret_fail_closed_and_dynamic_resolution(monkeypatch):
+    """Verify get_session_secret resolves dynamically and fails closed in strict or production mode."""
+    from backend.app.session import get_session_secret, _DEFAULT_SECRET
+
+    # 1. Default non-strict behavior
+    monkeypatch.delenv("RECOVERIX_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("RECOVERIX_REQUIRE_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("RECOVERIX_ENV", raising=False)
+    assert get_session_secret() == _DEFAULT_SECRET
+
+    # 2. Explicit custom secret
+    monkeypatch.setenv("RECOVERIX_SESSION_SECRET", "super_high_entropy_secret_test_key_987654321")
+    assert get_session_secret() == "super_high_entropy_secret_test_key_987654321"
+
+    token = sign_session_token("sess_custom_secret_test")
+    assert verify_session_token(token) == "sess_custom_secret_test"
+
+    # Token signed with custom secret fails under different secret
+    monkeypatch.setenv("RECOVERIX_SESSION_SECRET", "another_different_secret_key_123456789")
+    assert verify_session_token(token) is None
+
+    # 3. Fail-closed when RECOVERIX_REQUIRE_SESSION_SECRET=1 and no secret provided
+    monkeypatch.delenv("RECOVERIX_SESSION_SECRET", raising=False)
+    monkeypatch.setenv("RECOVERIX_REQUIRE_SESSION_SECRET", "1")
+    with pytest.raises(RuntimeError, match="RECOVERIX_SESSION_SECRET must be configured"):
+        get_session_secret()
+
+    # 4. Fail-closed when RECOVERIX_ENV=production and no secret provided
+    monkeypatch.delenv("RECOVERIX_REQUIRE_SESSION_SECRET", raising=False)
+    monkeypatch.setenv("RECOVERIX_ENV", "production")
+    with pytest.raises(RuntimeError, match="RECOVERIX_SESSION_SECRET must be configured"):
+        get_session_secret()
