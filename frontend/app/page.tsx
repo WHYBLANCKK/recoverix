@@ -28,14 +28,6 @@ import { computeFileSha256 } from "@/lib/crypto";
 import { SingleFileRecoveryResult } from "@/lib/types";
 import { RecoverixLogo } from "@/components/ui/RecoverixLogo";
 
-import {
-  FIXTURE_JSON,
-  FIXTURE_TXT,
-  FIXTURE_CSV,
-  FIXTURE_XML,
-  FIXTURE_JPEG_B64,
-} from "@/lib/fixtures/benchmarkEvidence";
-
 interface RecoveryStageInfo {
   step: number;
   totalSteps: number;
@@ -237,23 +229,6 @@ export default function Home() {
     }
   };
 
-  const loadTextPreset = (name: string, content: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
-    const presetFile = new File([blob], name, { type: mimeType });
-    executeRecovery(presetFile);
-  };
-
-  const loadBinaryPreset = (name: string, b64Data: string, mimeType: string) => {
-    const binary = atob(b64Data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: mimeType });
-    const presetFile = new File([blob], name, { type: mimeType });
-    executeRecovery(presetFile);
-  };
-
   const handleReset = () => {
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     setFile(null);
@@ -407,49 +382,6 @@ export default function Home() {
                     <span>·</span>
                     <span>Automatic 24h Purge</span>
                   </div>
-                </div>
-
-                {/* Instant Try Presets */}
-                <div
-                  className="mt-8 pt-6 border-t border-slate-100 flex flex-wrap items-center justify-center gap-2 text-xs font-mono"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <span className="text-slate-400 mr-1 text-[11px]">Instant live test:</span>
-                  <button
-                    type="button"
-                    onClick={() => loadTextPreset("damaged_event.json", FIXTURE_JSON, "application/json")}
-                    className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
-                  >
-                    Truncated JSON
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadTextPreset("contacts_ragged.csv", FIXTURE_CSV, "text/csv")}
-                    className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
-                  >
-                    Truncated CSV
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadTextPreset("incident_escalation.txt", FIXTURE_TXT, "text/plain")}
-                    className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
-                  >
-                    Fragmented TXT
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadTextPreset("damaged_audit.xml", FIXTURE_XML, "application/xml")}
-                    className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
-                  >
-                    Truncated XML
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadBinaryPreset("salvaged_photo.jpg", FIXTURE_JPEG_B64, "image/jpeg")}
-                    className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200 transition-colors"
-                  >
-                    Damaged JPEG
-                  </button>
                 </div>
               </div>
 
