@@ -51,7 +51,7 @@ export interface AIExplanation {
   recovery_limitation?: string;
   recommended_next_step?: string;
   source?: string;
-  facts?: Record<string, any>;
+  facts?: Record<string, unknown>;
 }
 
 export interface Artifact {
@@ -114,7 +114,7 @@ export interface ForensicFragment {
     source_fragment_id: string;
     target_fragment_id: string;
     relationship_type: string;
-    details?: Record<string, any>;
+    details?: Record<string, unknown>;
   }[];
 }
 
@@ -165,12 +165,12 @@ export interface SingleFileRecoveryResult {
   download_url: string;
   content_preview?: string | null;
   score_breakdown: ConfidenceBreakdown;
-  validation_details?: Record<string, any>;
+  validation_details?: Record<string, unknown>;
   fragments?: ForensicFragment[];
   damage_regions?: DamageRegion[];
   reconstruction_steps?: ReconstructionStep[];
   total_input_bytes?: number;
-  provenance?: Record<string, any>;
+  provenance?: Record<string, unknown>;
   context?: InvestigationContext;
   case_name?: string | null;
   investigator?: string | null;

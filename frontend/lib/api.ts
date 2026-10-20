@@ -6,11 +6,17 @@ import {
   PriorityLevel,
   SingleFileRecoveryResult,
   ForensicFragment,
+  Fragment,
+  FragmentType,
   GroundedArtifactInterpretation,
   GroundedClusterInterpretation,
   GroundedCaseInterpretation,
   DeterministicCaseFacts,
   ProviderInterpretationOutput,
+  RecoveryStatus,
+  ConfidenceBreakdown,
+  DamageRegion,
+  ReconstructionStep,
 } from './types';
 export function getApiBase(): string {
   // If explicitly forced via environment variable (e.g., custom external backend override)
@@ -53,29 +59,82 @@ export function determinePriority(category: ArtifactCategory, previewText: strin
   return 'LOW';
 }
 
-export function parseAiSummary(rawSummary: any, _artifact?: any): AIExplanation | null {
+export interface RawBackendArtifact {
+  id?: string;
+  artifact_id?: string;
+  run_id?: string;
+  filename?: string;
+  original_filename?: string;
+  recovered_filename?: string;
+  name?: string;
+  mime_type?: string;
+  format?: string;
+  category?: string;
+  status?: RecoveryStatus;
+  validation_status?: string;
+  is_downloadable?: boolean;
+  sha256?: string | null;
+  content_preview?: string | null;
+  preview_text?: string | null;
+  validation?: { valid?: boolean };
+  provenance?: {
+    validation_status?: string;
+    verified_bytes?: number;
+    reconstructed_bytes?: number;
+    missing_bytes?: number;
+    reconstruction_method?: string;
+  };
+  score_breakdown?: ConfidenceBreakdown;
+  confidence_breakdown?: ConfidenceBreakdown;
+  confidence?: { total?: number } & Partial<ConfidenceBreakdown>;
+  metadata?: { offset?: number; filename?: string; [key: string]: unknown };
+  verified_bytes?: number;
+  total_verified_bytes?: number;
+  reconstructed_bytes?: number;
+  total_reconstructed_bytes?: number;
+  missing_bytes?: number;
+  total_missing_bytes?: number;
+  total_input_bytes?: number;
+  confidence_score?: number;
+  reconstruction_method?: string;
+  ai_summary?: unknown;
+  created_at?: string;
+  case_name?: string | null;
+  investigator?: string | null;
+  notes?: string | null;
+  output?: {
+    recovered_bytes?: string;
+    recovered_filename?: string;
+  };
+  fragments?: ForensicFragment[];
+  damage_regions?: DamageRegion[];
+  reconstruction_steps?: ReconstructionStep[];
+  [key: string]: unknown;
+}
+
+export function parseAiSummary(rawSummary: unknown): AIExplanation | null {
   if (!rawSummary) return null;
   try {
-    const parsed = typeof rawSummary === 'string' ? JSON.parse(rawSummary) : rawSummary;
-    const details = Array.isArray(parsed.details) ? parsed.details : [
-      parsed.what_was_recovered || 'N/A',
-      parsed.what_is_verified || 'N/A',
-      parsed.what_is_missing || 'N/A',
-      parsed.status_reasoning || 'N/A',
-      parsed.priority_reasoning || 'N/A'
+    const parsed = typeof rawSummary === 'string' ? JSON.parse(rawSummary) : (rawSummary as Record<string, unknown>);
+    const details = Array.isArray(parsed.details) ? (parsed.details as string[]) : [
+      String(parsed.what_was_recovered || 'N/A'),
+      String(parsed.what_is_verified || 'N/A'),
+      String(parsed.what_is_missing || 'N/A'),
+      String(parsed.status_reasoning || 'N/A'),
+      String(parsed.priority_reasoning || 'N/A')
     ];
     return {
-      summary: parsed.summary || 'Summary unavailable.',
+      summary: typeof parsed.summary === 'string' ? parsed.summary : 'Summary unavailable.',
       details: details,
       cached: Boolean(parsed.cached),
       available: parsed.available !== false,
-      assessment: parsed.assessment,
-      priority: parsed.priority,
-      why_it_matters: parsed.why_it_matters,
-      recovery_limitation: parsed.recovery_limitation,
-      recommended_next_step: parsed.recommended_next_step,
-      source: parsed.source,
-      facts: parsed.facts,
+      assessment: typeof parsed.assessment === 'string' ? parsed.assessment : undefined,
+      priority: parsed.priority as PriorityLevel | undefined,
+      why_it_matters: typeof parsed.why_it_matters === 'string' ? parsed.why_it_matters : undefined,
+      recovery_limitation: typeof parsed.recovery_limitation === 'string' ? parsed.recovery_limitation : undefined,
+      recommended_next_step: typeof parsed.recommended_next_step === 'string' ? parsed.recommended_next_step : undefined,
+      source: typeof parsed.source === 'string' ? parsed.source : undefined,
+      facts: parsed.facts as Record<string, unknown> | undefined,
     };
   } catch (e) {
     console.error("Failed to parse AI summary", e);
@@ -83,7 +142,7 @@ export function parseAiSummary(rawSummary: any, _artifact?: any): AIExplanation 
   }
 }
 
-export function normalizeBackendArtifact(raw: any): Artifact {
+export function normalizeBackendArtifact(raw: RawBackendArtifact): Artifact {
   const isPassed =
     raw.validation?.valid === true ||
     (raw.provenance?.validation_status || raw.validation_status) === 'PASSED';
@@ -109,7 +168,7 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   if (bd.reconstruction_integrity === 15) {
     reconStatus = "Contiguous PASSED";
     reconPassed = true;
-  } else if (bd.reconstruction_integrity > 0) {
+  } else if (bd.reconstruction_integrity && bd.reconstruction_integrity > 0) {
     reconStatus = "Bounded Gap Reconstructed";
     reconPassed = true;
   }
@@ -121,14 +180,14 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   const mBytes = raw.provenance?.missing_bytes ?? raw.missing_bytes ?? raw.total_missing_bytes ?? 0;
   const confScore = Math.round(Number(raw.confidence_score ?? raw.confidence?.total ?? 0));
   
-  const fragments = [];
+  const fragments: Fragment[] = [];
   if (Array.isArray(raw.fragments) && raw.fragments.length > 0) {
     for (const f of raw.fragments) {
       fragments.push({
-        id: f.fragment_id || f.id || `frag_${fragments.length}`,
-        start_offset: f.offset ?? f.start_offset ?? 0,
-        end_offset: f.end_offset ?? ((f.offset ?? 0) + (f.length ?? 0)),
-        type: f.status || "VERIFIED"
+        id: f.fragment_id || `frag_${fragments.length}`,
+        start_offset: f.offset ?? 0,
+        end_offset: f.end_offset ?? (Number(f.offset ?? 0) + Number(f.length ?? 0)),
+        type: (f.status as FragmentType) || "VERIFIED"
       });
     }
   } else if (rBytes > 0) {
@@ -141,7 +200,7 @@ export function normalizeBackendArtifact(raw: any): Artifact {
   }
 
   const format = (raw.format || '').toLowerCase();
-  let category: ArtifactCategory = raw.category || 'DOCUMENT';
+  let category: ArtifactCategory = (raw.category as ArtifactCategory) || 'DOCUMENT';
   if (!raw.category) {
     if (['png', 'jpeg', 'jpg'].includes(format)) category = 'PHOTO_MEDIA';
     else if (['json', 'csv'].includes(format)) category = 'DATABASE_LOG';
@@ -149,7 +208,7 @@ export function normalizeBackendArtifact(raw: any): Artifact {
     else category = 'DOCUMENT';
   }
 
-  let priority: PriorityLevel = raw.priority || 'LOW';
+  let priority: PriorityLevel = (raw.priority as PriorityLevel) || 'LOW';
   if (!raw.priority) {
     const st = raw.status;
     if (st === 'UNRECOVERABLE' || st === 'CORRUPTED') priority = 'LOW';
@@ -163,7 +222,7 @@ export function normalizeBackendArtifact(raw: any): Artifact {
     'NONE';
 
   return {
-    id: raw.artifact_id || raw.id || raw.run_id,
+    id: String(raw.artifact_id || raw.id || raw.run_id || 'art_0'),
     filename: raw.metadata?.filename || raw.filename || (raw.run_id ? `${raw.run_id}.${raw.format || 'bin'}` : `${raw.artifact_id || 'artifact'}.${raw.format || 'bin'}`),
     mime_type: raw.mime_type || (raw.format === 'csv' ? 'text/csv' : raw.format === 'png' ? 'image/png' : 'text/plain'),
     category,
@@ -177,7 +236,7 @@ export function normalizeBackendArtifact(raw: any): Artifact {
     validation_status: isPassed ? 'PASSED' : 'FAILED',
     confidence_breakdown: bd,
     preview_text: preview,
-    ai_summary: parseAiSummary(raw.ai_summary, raw) || null,
+    ai_summary: parseAiSummary(raw.ai_summary) || null,
     validation: {
       valid: isPassed,
       checks: checks
@@ -293,8 +352,8 @@ export async function fetchArtifactById(artifactId: string): Promise<Artifact> {
     const cachedStr = localStorage.getItem(`recoverix_artifacts_${activeCaseId}`);
     if (cachedStr) {
        try {
-         const cached = JSON.parse(cachedStr);
-         const found = cached.find((a: any) => a.id === artifactId);
+         const cached = JSON.parse(cachedStr) as Artifact[];
+         const found = cached.find((a: Artifact) => a.id === artifactId);
          if (found) return found;
        } catch {}
     }
@@ -399,7 +458,7 @@ export function sanitizeDownloadUrl(rawUrl: string | undefined | null, fileId: s
       if (typeof window !== 'undefined' && parsed.origin !== window.location.origin) {
         return `${base}${canonicalPath}`;
       }
-      let clean = parsed.pathname.replace(/^(\/backend-api)+/, '');
+      const clean = parsed.pathname.replace(/^(\/backend-api)+/, '');
       pathname = clean.startsWith('/') ? clean : `/${clean}`;
     } catch {
       return `${base}${canonicalPath}`;
@@ -506,8 +565,9 @@ export async function recoverSingleFile(
         ? rawDetail
         : (rawDetail ? JSON.stringify(rawDetail) : `Server returned HTTP ${res.status}`);
     throw new Error(message);
-  } catch (e: any) {
-    if (e.name === 'AbortError') {
+  } catch (e: unknown) {
+    const err = e as { name?: string; message?: string };
+    if (err.name === 'AbortError') {
       if (isTimedOut) {
         throw new Error(
           'The recovery request timed out after 75 seconds. The backend engine may still be processing your file or waking up from sleep. Please wait a moment and click Try Again.'
@@ -515,7 +575,7 @@ export async function recoverSingleFile(
       }
       throw new Error('The recovery request was cancelled.');
     }
-    if (e.message && !e.message.startsWith('TypeError: Failed to fetch') && !e.message.includes('fetch failed')) {
+    if (err.message && !err.message.startsWith('TypeError: Failed to fetch') && !err.message.includes('fetch failed')) {
       throw e;
     }
     throw new Error(
@@ -534,7 +594,7 @@ export function getArtifactDownloadUrl(artifactId: string): string {
   return `${base}/api/artifacts/${encodeURIComponent(artifactId)}/download`;
 }
 
-export async function fetchRecoveryRun(runId: string): Promise<any | null> {
+export async function fetchRecoveryRun(runId: string): Promise<RawBackendArtifact | null> {
   try {
     const base = getApiBase();
     const res = await fetch(`${base}/api/recovery-runs/${encodeURIComponent(runId)}`, { cache: 'no-store' });
@@ -560,7 +620,7 @@ export async function fetchRecoveredFile(fileId: string): Promise<SingleFileReco
   return null;
 }
 
-export async function fetchRecoveryRuns(): Promise<any[]> {
+export async function fetchRecoveryRuns(): Promise<RawBackendArtifact[]> {
   try {
     const res = await fetch(`${API_BASE}/api/recovery-runs`, { cache: 'no-store' });
     if (res.ok) {
@@ -572,7 +632,7 @@ export async function fetchRecoveryRuns(): Promise<any[]> {
   return [];
 }
 
-export async function fetchCaseRecoveryRuns(caseId: string): Promise<any[]> {
+export async function fetchCaseRecoveryRuns(caseId: string): Promise<RawBackendArtifact[]> {
   try {
     const res = await fetch(`${API_BASE}/api/cases/${caseId}/runs`, { cache: 'no-store' });
     if (res.ok) {
@@ -588,7 +648,7 @@ export async function fetchCaseRecoveryRuns(caseId: string): Promise<any[]> {
  * Explicit, typed adapter from RecoveryRun backend model to SingleFileRecoveryResult.
  * Preserves authoritative V/R/M provenance byte counts and strict validation contracts.
  */
-export function adaptRecoveryRunToInvestigationResult(run: any): SingleFileRecoveryResult {
+export function adaptRecoveryRunToInvestigationResult(run: RawBackendArtifact): SingleFileRecoveryResult {
   let preview: string | null = null;
   if (run.output?.recovered_bytes) {
     try {
@@ -616,8 +676,9 @@ export function adaptRecoveryRunToInvestigationResult(run: any): SingleFileRecov
   const hasRecoveredBytes = Boolean(run.output?.recovered_bytes && run.output.recovered_bytes.length > 0);
   const isDownloadable = !isUnrecoverable && isValid && hasRecoveredBytes;
 
-  const rawDownloadUrl = `/api/recover-file/${encodeURIComponent(run.artifact_id || run.run_id)}/download`;
-  const downloadUrl = sanitizeDownloadUrl(rawDownloadUrl, run.artifact_id || run.run_id);
+  const fileId = String(run.artifact_id || run.run_id || "evidence");
+  const rawDownloadUrl = `/api/recover-file/${encodeURIComponent(fileId)}/download`;
+  const downloadUrl = sanitizeDownloadUrl(rawDownloadUrl, fileId);
 
   const method = run.reconstruction_steps?.[0]?.method ??
     run.provenance?.reconstruction_method ??
@@ -627,7 +688,7 @@ export function adaptRecoveryRunToInvestigationResult(run: any): SingleFileRecov
   const sb = run.confidence || run.score_breakdown || {};
 
   return {
-    file_id: run.artifact_id || run.run_id,
+    file_id: fileId,
     run_id: run.run_id,
     original_filename: run.filename || "evidence.bin",
     recovered_filename: run.output?.recovered_filename || run.recovered_filename || (run.filename ? (run.filename.startsWith("recovered_") ? run.filename : `recovered_${run.filename}`) : "recovered_evidence.bin"),
@@ -741,13 +802,13 @@ export function adaptArtifactToInvestigationResult(artifact: Artifact): SingleFi
 
 export function generateLocalGroundedExplanation(
   fileId: string,
-  facts?: Record<string, any>
+  facts?: Record<string, unknown>
 ): AIExplanation {
   const v_bytes = Number(facts?.verified_bytes ?? 0);
   const r_bytes = Number(facts?.reconstructed_bytes ?? 0);
   const m_bytes = Number(facts?.missing_bytes ?? 0);
   const status = facts?.status || (m_bytes === 0 && r_bytes === 0 && v_bytes > 0 ? "FULLY_RECOVERED" : "PARTIALLY_RECOVERED");
-  const fmt = (facts?.format || "UNKNOWN").toUpperCase();
+  const fmt = String(facts?.format || "UNKNOWN").toUpperCase();
   const method = facts?.reconstruction_method || (r_bytes > 0 ? "STRUCTURAL_RECONSTRUCTION" : "NONE");
   const score = Number(facts?.confidence_score ?? (status === "FULLY_RECOVERED" ? 100 : 75));
 
@@ -815,7 +876,7 @@ export function generateLocalGroundedExplanation(
 
 export async function fetchInvestigationExplanation(
   fileId: string,
-  evidenceFacts?: Record<string, any>,
+  evidenceFacts?: Record<string, unknown>,
   forceRefresh = false
 ): Promise<AIExplanation> {
   if (!forceRefresh && explanationCache.has(fileId)) {
@@ -934,9 +995,9 @@ async function fetchInterpretationJson<T>(
     return (await res.json()) as T;
   }
 
-  let detail: any;
+  let detail: unknown;
   try {
-    const errData = await res.json();
+    const errData = (await res.json()) as { detail?: unknown };
     detail = errData.detail;
   } catch {
     // Non-JSON or empty response body
@@ -949,7 +1010,7 @@ async function fetchInterpretationJson<T>(
       ? JSON.stringify(detail)
       : `HTTP ${res.status}: ${res.statusText || 'Request failed'}`;
 
-  throw new ApiError(res.status, message, detail);
+  throw new ApiError(res.status, message, detail as string | Record<string, unknown> | undefined);
 }
 
 /**
@@ -1050,7 +1111,7 @@ export async function generateCaseInterpretation(
  */
 export function buildDeterministicCaseInterpretation(
   caseId: string,
-  runs: any[] = [],
+  runs: RawBackendArtifact[] = [],
   artifacts: Artifact[] = []
 ): GroundedCaseInterpretation {
   const items = artifacts.length > 0 ? artifacts : (runs || []).map(normalizeBackendArtifact);
