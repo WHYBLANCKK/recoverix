@@ -7,6 +7,7 @@ and orchestrates BlobStore instances for evidence and recovered bytes.
 
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 import threading
@@ -209,6 +210,46 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             self._cases[artifact.case_id]["artifact_count"] = len(self._case_artifacts[artifact.case_id])
             return artifact
 
+    def store_case_artifact(
+        self,
+        artifact: ArtifactResponse,
+        content: bytes,
+        run: Optional[RecoveryRun] = None,
+    ) -> ArtifactResponse:
+        """Atomically persist a case-associated recovered artifact, its raw bytes, and optional recovery run."""
+        with self._lock:
+            if artifact.case_id not in self._cases:
+                raise KeyError(f"Case '{artifact.case_id}' not found")
+
+            content_sha = hashlib.sha256(content).hexdigest() if content else None
+            if content_sha:
+                artifact.sha256 = content_sha
+                if artifact.metadata is not None:
+                    artifact.metadata["sha256"] = content_sha
+
+            record = ArtifactRecord.from_artifact_response(artifact)
+            if content_sha:
+                record.sha256 = content_sha
+                if record.metadata is not None:
+                    record.metadata["sha256"] = content_sha
+
+            if run is not None:
+                record.run_id = run.run_id
+                if artifact.metadata is None:
+                    artifact.metadata = {}
+                artifact.metadata["run_id"] = run.run_id
+                run.artifact_id = artifact.artifact_id
+                self._recovery_runs[run.run_id] = run
+                self._artifact_runs[artifact.artifact_id] = run.run_id
+
+            self._artifacts[artifact.artifact_id] = record
+            if artifact.artifact_id not in self._case_artifacts[artifact.case_id]:
+                self._case_artifacts[artifact.case_id].append(artifact.artifact_id)
+            self._cases[artifact.case_id]["artifact_count"] = len(self._case_artifacts[artifact.case_id])
+
+            self._artifact_blobs.put(artifact.artifact_id, content)
+            return artifact
+
     def save_artifact_record(self, record: ArtifactRecord) -> ArtifactRecord:
         """Directly store an internal ArtifactRecord (Pipeline B or internal ingestion)."""
         with self._lock:
@@ -253,6 +294,13 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
     def store_artifact_bytes(self, artifact_id: str, content: bytes) -> None:
         """Store raw bytes of a recovered artifact in the artifact BlobStore."""
         self._artifact_blobs.put(artifact_id, content)
+        with self._lock:
+            rec = self._artifacts.get(artifact_id)
+            if rec is not None:
+                digest = hashlib.sha256(content).hexdigest()
+                rec.sha256 = digest
+                if rec.metadata is not None:
+                    rec.metadata["sha256"] = digest
 
     def get_artifact_bytes(self, artifact_id: str) -> Optional[bytes]:
         """Get raw bytes of a recovered artifact by artifact_id from artifact BlobStore."""
@@ -288,7 +336,12 @@ class InMemoryStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
     def store_recovered_file(self, file_id: str, metadata: dict, content: bytes) -> dict:
         """Store single recovered file metadata and raw bytes into unified artifact storage."""
+        content_sha = hashlib.sha256(content).hexdigest() if content else None
+        if content_sha:
+            metadata["sha256"] = content_sha
         record = ArtifactRecord.from_file_recovery_dict(metadata)
+        if content_sha:
+            record.sha256 = content_sha
         self.save_artifact_record(record)
         self.store_artifact_bytes(file_id, content)
         with self._lock:

@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 from backend.app.ingestion import Chunk, chunk_evidence, compute_metadata
 from backend.app.models.artifact import ArtifactRecord, ArtifactResponse
@@ -110,6 +113,16 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         corrupted_fields.append("reconstruction_steps_json")
 
     metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
+    if "created_at" in row.keys() and row["created_at"] and "created_at" not in metadata_dict:
+        metadata_dict["created_at"] = row["created_at"]
+
+    sha256_val = None
+    if "sha256" in row.keys() and row["sha256"]:
+        sha256_val = str(row["sha256"])
+    elif isinstance(metadata_dict, dict) and metadata_dict.get("sha256"):
+        sha256_val = str(metadata_dict["sha256"])
+    if sha256_val and "sha256" not in metadata_dict:
+        metadata_dict["sha256"] = sha256_val
 
     run_id = row["run_id"] or (metadata_dict.get("run_id") if isinstance(metadata_dict, dict) else None)
 
@@ -119,12 +132,13 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
     total_inp = (
         int(row["total_input_bytes"])
         if row["total_input_bytes"] is not None
-        else (v_bytes + r_bytes + m_bytes)
+        else (v_bytes + m_bytes)
     )
 
     status_val = row["status"]
+    val_status_row = row["validation_status"]
     is_dl = bool(row["is_downloadable"])
-    if status_val == "UNRECOVERABLE":
+    if status_val not in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED") or val_status_row != "PASSED":
         is_dl = False
 
     return ArtifactRecord(
@@ -154,6 +168,7 @@ def _row_to_artifact_record(row: sqlite3.Row) -> ArtifactRecord:
         category=row["category"],
         priority=row["priority"],
         ai_summary=row["ai_summary"],
+        sha256=sha256_val,
         metadata=metadata_dict,
         corrupted_fields=corrupted_fields if corrupted_fields else None,
     )
@@ -243,6 +258,9 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         corrupted_fields.append("output_json")
 
     case_id = row["case_id"] if ("case_id" in row.keys() and row["case_id"]) else None
+    case_name = row["case_name"] if ("case_name" in row.keys() and row["case_name"]) else (provenance.get("case_name") if provenance else None)
+    investigator = row["investigator"] if ("investigator" in row.keys() and row["investigator"]) else (provenance.get("investigator") if provenance else None)
+    notes = row["notes"] if ("notes" in row.keys() and row["notes"]) else (provenance.get("notes") if provenance else None)
 
     return RecoveryRun(
         run_id=row["run_id"],
@@ -253,6 +271,9 @@ def _row_to_recovery_run(row: sqlite3.Row) -> RecoveryRun:
         format=row["format"],
         status=row["status"],
         detection_mode=row["detection_mode"],
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
         started_at=started_at,
         completed_at=completed_at,
         total_input_bytes=int(row["total_input_bytes"]),
@@ -850,6 +871,13 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         if record.run_id and "run_id" not in meta_dict:
             meta_dict["run_id"] = record.run_id
 
+        created_at_val = meta_dict.get("created_at") or datetime.now(timezone.utc).isoformat()
+        meta_dict["created_at"] = created_at_val
+
+        sha256_val = record.sha256 or meta_dict.get("sha256")
+        if sha256_val and "sha256" not in meta_dict:
+            meta_dict["sha256"] = sha256_val
+
         cursor.execute(
             """
             INSERT INTO artifacts (
@@ -858,14 +886,16 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 missing_bytes, total_input_bytes, reconstruction_method, validation_status,
                 is_downloadable, download_url, content_preview, category, priority,
                 ai_summary, score_breakdown_json, provenance_json, validation_details_json,
-                metadata_json, fragments_json, damage_regions_json, reconstruction_steps_json
+                metadata_json, fragments_json, damage_regions_json, reconstruction_steps_json,
+                created_at, sha256
             ) VALUES (
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?, ?
+                ?, ?, ?, ?,
+                ?, ?
             )
             ON CONFLICT(artifact_id) DO UPDATE SET
                 case_id = excluded.case_id,
@@ -893,7 +923,8 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 metadata_json = excluded.metadata_json,
                 fragments_json = excluded.fragments_json,
                 damage_regions_json = excluded.damage_regions_json,
-                reconstruction_steps_json = excluded.reconstruction_steps_json;
+                reconstruction_steps_json = excluded.reconstruction_steps_json,
+                sha256 = COALESCE(excluded.sha256, artifacts.sha256);
             """,
             (
                 record.artifact_id,
@@ -923,6 +954,8 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 json.dumps(record.fragments) if record.fragments is not None else None,
                 json.dumps(record.damage_regions) if record.damage_regions is not None else None,
                 json.dumps(record.reconstruction_steps) if record.reconstruction_steps is not None else None,
+                created_at_val,
+                sha256_val,
             ),
         )
 
@@ -1013,30 +1046,79 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
             return artifacts
 
     def _store_artifact_bytes_on_cursor(
-        self, cursor: sqlite3.Cursor, artifact_id: str, content: bytes
+        self, cursor: sqlite3.Cursor, artifact_id: str, content: bytes, created_at: Optional[str] = None
     ) -> None:
-        """Store raw bytes on an active cursor."""
+        """Store raw bytes on an active cursor and atomically record sha256 on artifact."""
         raw_bytes = bytes(content)
+        ts = created_at or datetime.now(timezone.utc).isoformat()
         cursor.execute(
             """
             INSERT INTO blobs (blob_key, data, size_bytes, created_at)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(blob_key) DO UPDATE SET
                 data = excluded.data,
-                size_bytes = excluded.size_bytes,
-                created_at = excluded.created_at;
+                size_bytes = excluded.size_bytes;
             """,
-            (self._artifact_blobs._make_key(artifact_id), sqlite3.Binary(raw_bytes), len(raw_bytes), datetime.now(timezone.utc).isoformat()),
+            (self._artifact_blobs._make_key(artifact_id), sqlite3.Binary(raw_bytes), len(raw_bytes), ts),
+        )
+        content_sha = hashlib.sha256(raw_bytes).hexdigest()
+        cursor.execute(
+            """
+            UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?;
+            """,
+            (content_sha, artifact_id),
         )
 
     def store_artifact_bytes(
-        self, artifact_id: str, content: bytes, cursor: Optional[sqlite3.Cursor] = None
+        self, artifact_id: str, content: bytes, cursor: Optional[sqlite3.Cursor] = None, created_at: Optional[str] = None
     ) -> None:
         """Store raw bytes of a recovered artifact in the artifact BlobStore."""
         if cursor is not None:
-            self._store_artifact_bytes_on_cursor(cursor, artifact_id, content)
+            self._store_artifact_bytes_on_cursor(cursor, artifact_id, content, created_at=created_at)
         else:
-            self._artifact_blobs.put(artifact_id, content)
+            with self._engine.transaction() as cur:
+                self._store_artifact_bytes_on_cursor(cur, artifact_id, content, created_at=created_at)
+
+    def _store_case_artifact_on_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+        artifact: ArtifactResponse,
+        content: bytes,
+        run: Optional[RecoveryRun] = None,
+    ) -> ArtifactResponse:
+        """Atomically persist case artifact, run, link, and bytes on a single cursor."""
+        content_sha = hashlib.sha256(content).hexdigest() if content else None
+        if content_sha:
+            artifact.sha256 = content_sha
+            if artifact.metadata is not None:
+                artifact.metadata["sha256"] = content_sha
+
+        if run is not None:
+            run.artifact_id = artifact.artifact_id
+            if artifact.metadata is None:
+                artifact.metadata = {}
+            if "run_id" not in artifact.metadata:
+                artifact.metadata["run_id"] = run.run_id
+            self._add_recovery_run_on_cursor(cursor, run)
+            self._link_artifact_to_run_on_cursor(cursor, artifact.artifact_id, run.run_id)
+
+        record = ArtifactRecord.from_artifact_response(artifact)
+        self._save_artifact_record_on_cursor(cursor, record)
+        self._store_artifact_bytes_on_cursor(cursor, artifact.artifact_id, content)
+        return artifact
+
+    def store_case_artifact(
+        self,
+        artifact: ArtifactResponse,
+        content: bytes,
+        run: Optional[RecoveryRun] = None,
+        cursor: Optional[sqlite3.Cursor] = None,
+    ) -> ArtifactResponse:
+        """Atomically persist a case-associated recovered artifact, its raw bytes, and optional recovery run."""
+        if cursor is not None:
+            return self._store_case_artifact_on_cursor(cursor, artifact, content, run)
+        with self._engine.transaction() as cur:
+            return self._store_case_artifact_on_cursor(cur, artifact, content, run)
 
     def get_artifact_bytes(self, artifact_id: str) -> Optional[bytes]:
         """Get raw bytes of a recovered artifact by artifact_id from artifact BlobStore."""
@@ -1078,10 +1160,15 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
 
     def store_recovered_file(self, file_id: str, metadata: dict, content: bytes) -> dict:
         """Store single recovered file metadata and raw bytes into unified artifact storage."""
+        content_sha = hashlib.sha256(content).hexdigest() if content else None
+        if content_sha:
+            metadata["sha256"] = content_sha
         record = ArtifactRecord.from_file_recovery_dict(metadata)
+        if content_sha:
+            record.sha256 = content_sha
         with self._engine.transaction() as cursor:
             self.save_artifact_record(record, cursor=cursor)
-            self.store_artifact_bytes(file_id, content, cursor=cursor)
+            self.store_artifact_bytes(file_id, content, cursor=cursor, created_at=record.metadata.get("created_at"))
             if record.run_id:
                 self.link_artifact_to_run(file_id, record.run_id, cursor=cursor)
         return metadata
@@ -1103,7 +1190,7 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         purged = 0
         try:
             with self._engine.transaction() as cursor:
-                # 1. Select standalone artifacts older than cutoff
+                # 1. Select standalone artifacts older than cutoff (case_id IS NULL only)
                 cursor.execute(
                     "SELECT artifact_id FROM artifacts WHERE case_id IS NULL AND created_at < ?;",
                     (cutoff,),
@@ -1111,18 +1198,33 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                 rows = cursor.fetchall()
                 art_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in rows]
 
-                # 2. Select expired blobs
+                # 2. Select expired artifact blobs older than cutoff
                 cursor.execute(
-                    "SELECT blob_key FROM blobs WHERE created_at < ?;",
+                    """
+                    SELECT blob_key FROM blobs
+                    WHERE created_at < ?
+                      AND (blob_key LIKE 'artifact:%' OR blob_key LIKE 'art_%');
+                    """,
                     (cutoff,),
                 )
                 blob_rows = cursor.fetchall()
                 expired_blob_keys = [r[0] if isinstance(r, (tuple, list)) else r["blob_key"] for r in blob_rows]
 
                 for b in expired_blob_keys:
-                    clean_id = b.replace("art_", "").replace("blob_", "")
+                    if b.startswith("artifact:"):
+                        clean_id = b[len("artifact:"):]
+                    elif b.startswith("art_"):
+                        clean_id = b[len("art_"):]
+                    else:
+                        continue
                     if clean_id not in art_ids:
-                        art_ids.append(clean_id)
+                        # Ensure this artifact does NOT belong to an active case before purging
+                        cursor.execute(
+                            "SELECT 1 FROM artifacts WHERE artifact_id = ? AND case_id IS NOT NULL;",
+                            (clean_id,),
+                        )
+                        if cursor.fetchone() is None:
+                            art_ids.append(clean_id)
 
                 if art_ids:
                     placeholders = ",".join("?" for _ in art_ids)
@@ -1131,24 +1233,34 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
                         f"DELETE FROM artifacts WHERE artifact_id IN ({placeholders}) AND case_id IS NULL;",
                         art_ids,
                     )
-                    blob_keys = list(set(expired_blob_keys + [f"art_{a}" for a in art_ids] + art_ids))
+                    blob_keys = list(set(
+                        expired_blob_keys
+                        + [f"artifact:{a}" for a in art_ids]
+                        + [f"art_{a}" for a in art_ids]
+                        + art_ids
+                    ))
                     blob_placeholders = ",".join("?" for _ in blob_keys)
                     cursor.execute(
                         f"""DELETE FROM blobs
                             WHERE blob_key IN ({blob_placeholders})
-                              AND blob_key NOT IN (SELECT file_id FROM evidence_files);""",
+                              AND blob_key NOT IN (SELECT case_id FROM evidence_files)
+                              AND blob_key NOT IN (SELECT 'evidence:' || case_id FROM evidence_files)
+                              AND blob_key NOT IN (SELECT artifact_id FROM artifacts WHERE case_id IS NOT NULL)
+                              AND blob_key NOT IN (SELECT 'artifact:' || artifact_id FROM artifacts WHERE case_id IS NOT NULL)
+                              AND blob_key NOT IN (SELECT 'art_' || artifact_id FROM artifacts WHERE case_id IS NOT NULL);""",
                         blob_keys,
                     )
                     purged = len(art_ids)
-        except Exception:
+        except Exception as e:
+            logger.error("Error purging expired recovered files: %s", e, exc_info=True)
             purged = 0
         return purged
 
 
     # ── RecoveryRunRepository Implementation ─────────────────────────────
 
-    def add_recovery_run(self, run: RecoveryRun) -> RecoveryRun:
-        """Store a RecoveryRun model in SQLite (persisted exactly once)."""
+    def _add_recovery_run_on_cursor(self, cursor: sqlite3.Cursor, run: RecoveryRun) -> RecoveryRun:
+        """Persist a RecoveryRun on an existing cursor."""
         started_at_str = run.started_at.isoformat()
         completed_at_str = run.completed_at.isoformat() if run.completed_at else None
 
@@ -1162,106 +1274,119 @@ class SqliteStore(CaseRepository, ArtifactRepository, RecoveryRunRepository):
         rec_json = json.dumps([s.model_dump() for s in run.reconstruction_steps])
         evt_json = json.dumps([e.model_dump(mode="json") for e in run.events])
 
-        with self._engine.transaction() as cursor:
-            case_id_val = run.case_id
-            if case_id_val:
-                cursor.execute("SELECT 1 FROM cases WHERE case_id = ?;", (case_id_val,))
-                if cursor.fetchone() is None:
-                    case_id_val = None
+        case_id_val = run.case_id
+        if case_id_val:
+            cursor.execute("SELECT 1 FROM cases WHERE case_id = ?;", (case_id_val,))
+            if cursor.fetchone() is None:
+                case_id_val = None
 
-            cursor.execute(
-                """
-                INSERT INTO recovery_runs (
-                    run_id, case_id, artifact_id, candidate_id, filename, format, status,
-                    detection_mode, started_at, completed_at, total_input_bytes,
-                    total_verified_bytes, total_reconstructed_bytes, total_missing_bytes,
-                    validation_json, confidence_json, provenance_json, output_json,
-                    fragments_json, damage_regions_json, reconstruction_steps_json, events_json
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?
-                )
-                ON CONFLICT(run_id) DO UPDATE SET
-                    case_id = COALESCE(excluded.case_id, recovery_runs.case_id),
-                    artifact_id = COALESCE(excluded.artifact_id, recovery_runs.artifact_id),
-                    candidate_id = COALESCE(excluded.candidate_id, recovery_runs.candidate_id),
-                    filename = excluded.filename,
-                    format = excluded.format,
-                    status = excluded.status,
-                    detection_mode = excluded.detection_mode,
-                    started_at = excluded.started_at,
-                    completed_at = excluded.completed_at,
-                    total_input_bytes = excluded.total_input_bytes,
-                    total_verified_bytes = excluded.total_verified_bytes,
-                    total_reconstructed_bytes = excluded.total_reconstructed_bytes,
-                    total_missing_bytes = excluded.total_missing_bytes,
-                    validation_json = excluded.validation_json,
-                    confidence_json = excluded.confidence_json,
-                    provenance_json = excluded.provenance_json,
-                    output_json = excluded.output_json,
-                    fragments_json = excluded.fragments_json,
-                    damage_regions_json = excluded.damage_regions_json,
-                    reconstruction_steps_json = excluded.reconstruction_steps_json,
-                    events_json = excluded.events_json;
-                """,
-                (
-                    run.run_id,
-                    case_id_val,
-                    run.artifact_id,
-                    run.candidate_id,
-                    run.filename,
-                    run.format,
-                    run.status,
-                    run.detection_mode or "known_file",
-                    started_at_str,
-                    completed_at_str,
-                    run.total_input_bytes,
-                    run.total_verified_bytes,
-                    run.total_reconstructed_bytes,
-                    run.total_missing_bytes,
-                    val_json,
-                    conf_json,
-                    prov_json,
-                    out_json,
-                    frag_json,
-                    dam_json,
-                    rec_json,
-                    evt_json,
-                ),
+        cursor.execute(
+            """
+            INSERT INTO recovery_runs (
+                run_id, case_id, artifact_id, candidate_id, filename, format, status,
+                detection_mode, case_name, investigator, notes, started_at, completed_at, total_input_bytes,
+                total_verified_bytes, total_reconstructed_bytes, total_missing_bytes,
+                validation_json, confidence_json, provenance_json, output_json,
+                fragments_json, damage_regions_json, reconstruction_steps_json, events_json
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?
             )
+            ON CONFLICT(run_id) DO UPDATE SET
+                case_id = COALESCE(excluded.case_id, recovery_runs.case_id),
+                artifact_id = COALESCE(excluded.artifact_id, recovery_runs.artifact_id),
+                candidate_id = COALESCE(excluded.candidate_id, recovery_runs.candidate_id),
+                filename = excluded.filename,
+                format = excluded.format,
+                status = excluded.status,
+                detection_mode = excluded.detection_mode,
+                case_name = COALESCE(excluded.case_name, recovery_runs.case_name),
+                investigator = COALESCE(excluded.investigator, recovery_runs.investigator),
+                notes = COALESCE(excluded.notes, recovery_runs.notes),
+                started_at = excluded.started_at,
+                completed_at = excluded.completed_at,
+                total_input_bytes = excluded.total_input_bytes,
+                total_verified_bytes = excluded.total_verified_bytes,
+                total_reconstructed_bytes = excluded.total_reconstructed_bytes,
+                total_missing_bytes = excluded.total_missing_bytes,
+                validation_json = excluded.validation_json,
+                confidence_json = excluded.confidence_json,
+                provenance_json = excluded.provenance_json,
+                output_json = excluded.output_json,
+                fragments_json = excluded.fragments_json,
+                damage_regions_json = excluded.damage_regions_json,
+                reconstruction_steps_json = excluded.reconstruction_steps_json,
+                events_json = excluded.events_json
+            WHERE recovery_runs.status NOT IN ('FULLY_RECOVERED', 'PARTIALLY_RECOVERED', 'UNRECOVERABLE', 'CORRUPTED')
+               OR excluded.status NOT IN ('PENDING', 'RUNNING');
+            """,
+            (
+                run.run_id,
+                case_id_val,
+                run.artifact_id,
+                run.candidate_id,
+                run.filename,
+                run.format,
+                run.status,
+                run.detection_mode or "known_file",
+                run.case_name,
+                run.investigator,
+                run.notes,
+                started_at_str,
+                completed_at_str,
+                run.total_input_bytes,
+                run.total_verified_bytes,
+                run.total_reconstructed_bytes,
+                run.total_missing_bytes,
+                val_json,
+                conf_json,
+                prov_json,
+                out_json,
+                frag_json,
+                dam_json,
+                rec_json,
+                evt_json,
+            ),
+        )
 
-            if run.artifact_id:
-                cursor.execute(
-                    """
-                    INSERT INTO artifact_runs (artifact_id, run_id)
-                    VALUES (?, ?)
-                    ON CONFLICT(artifact_id) DO UPDATE SET run_id = excluded.run_id;
-                    """,
-                    (run.artifact_id, run.run_id),
-                )
-
-            # Auto-link any artifacts that were saved with this run_id before run was created
-            cursor.execute(
-                """
-                UPDATE artifacts SET run_id = ?
-                WHERE run_id IS NULL AND json_extract(metadata_json, '$.run_id') = ?;
-                """,
-                (run.run_id, run.run_id),
-            )
+        if run.artifact_id:
             cursor.execute(
                 """
                 INSERT INTO artifact_runs (artifact_id, run_id)
-                SELECT artifact_id, ? FROM artifacts
-                WHERE run_id = ?
+                VALUES (?, ?)
                 ON CONFLICT(artifact_id) DO UPDATE SET run_id = excluded.run_id;
                 """,
-                (run.run_id, run.run_id),
+                (run.artifact_id, run.run_id),
             )
 
+        # Auto-link any artifacts that were saved with this run_id before run was created
+        cursor.execute(
+            """
+            UPDATE artifacts SET run_id = ?
+            WHERE run_id IS NULL AND json_extract(metadata_json, '$.run_id') = ?;
+            """,
+            (run.run_id, run.run_id),
+        )
+        cursor.execute(
+            """
+            INSERT INTO artifact_runs (artifact_id, run_id)
+            SELECT artifact_id, ? FROM artifacts
+            WHERE run_id = ?
+            ON CONFLICT(artifact_id) DO UPDATE SET run_id = excluded.run_id;
+            """,
+            (run.run_id, run.run_id),
+        )
         return run
+
+    def add_recovery_run(self, run: RecoveryRun, cursor: Optional[sqlite3.Cursor] = None) -> RecoveryRun:
+        """Store a RecoveryRun model in SQLite (persisted exactly once)."""
+        if cursor is not None:
+            return self._add_recovery_run_on_cursor(cursor, run)
+        with self._engine.transaction() as cur:
+            return self._add_recovery_run_on_cursor(cur, run)
 
     def get_recovery_run(self, run_id: str) -> Optional[RecoveryRun]:
         """Retrieve RecoveryRun by run_id."""
