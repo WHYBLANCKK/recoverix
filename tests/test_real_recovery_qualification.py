@@ -234,6 +234,22 @@ def test_txt_internal_null_runs_repaired():
     _assert_independent_consumability("txt", run.status, rec_bytes)
 
 
+def test_txt_truncated_multibyte_tail_prefix_preserved():
+    """TXT with truncated multibyte UTF-8 sequence trims damaged tail and preserves valid prefix."""
+    valid_prefix = b"Recoverix Investigation Report: "
+    damaged_txt = valid_prefix + b"\xe2\x82"  # Incomplete 3-byte UTF-8 sequence
+    run = execute_traced_recovery("sample.txt", damaged_txt)
+    rec_bytes = extract_recovered_bytes(run)
+
+    assert run.status == "PARTIALLY_RECOVERED"
+    assert rec_bytes == valid_prefix
+    assert run.total_verified_bytes == len(valid_prefix)
+    assert run.total_missing_bytes == 2
+    assert run.total_verified_bytes + run.total_missing_bytes == len(damaged_txt)
+    assert run.total_verified_bytes + run.total_reconstructed_bytes == len(rec_bytes)
+    _assert_independent_consumability("txt", run.status, rec_bytes)
+
+
 def test_xml_closable_truncation_reconstruction():
     """XML with missing element closures is deterministically repaired."""
     cut_xml = b'<?xml version="1.0" encoding="utf-8"?>\n<forensicReport id="R-404">\n  <evidence id="1">DiskImage</evidence>\n  <examiner>Agent Cooper</examiner>'

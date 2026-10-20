@@ -1748,32 +1748,99 @@ def _recover_direct_fallback(
             )
 
         if not detected:
-            status_val = "UNRECOVERABLE"
-            fmt = target_fmt
-            ver_bytes = 0
-            rec_byte_cnt = 0
-            miss_bytes = len(content)
-            val_details_dict = {"error": "No text-structured fragment detected"}
-            prov_dict = {
-                "verified_bytes": 0,
-                "reconstructed_bytes": 0,
-                "missing_bytes": len(content),
-            }
-            damage_regions.append(
-                DamageRegion(
-                    region_id="damage-0",
-                    start_offset=0,
-                    end_offset=len(content),
-                    length=len(content),
-                    type="UNRECOVERABLE",
-                    status="UNRECOVERABLE",
-                    affected_fragment_ids=[],
+            recon_res = reconstruct_artifact(target_fmt, content, detection_mode=detection_mode)
+            if (
+                recon_res.success
+                and recon_res.status in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED")
+                and recon_res.recovered_bytes
+            ):
+                fmt = target_fmt
+                status_val = recon_res.status
+                ver_bytes = recon_res.verified_bytes
+                rec_byte_cnt = recon_res.reconstructed_bytes
+                miss_bytes = recon_res.missing_bytes
+                val_res = recon_res.validation_result or validate_artifact(target_fmt, recon_res.recovered_bytes)
+                val_status_str = "PASSED" if (val_res and val_res.valid) else "FAILED"
+                val_details_dict = asdict(val_res) if val_res else {}
+                output_dict = {"recovered_bytes": recon_res.recovered_bytes.hex()}
+                score_breakdown_dict = {"total": recon_res.details.get("confidence_score", 70.0)}
+                prov_dict = {
+                    "verified_bytes": ver_bytes,
+                    "reconstructed_bytes": rec_byte_cnt,
+                    "missing_bytes": miss_bytes,
+                    "attributed_input_bytes": ver_bytes,
+                }
+                frag = Fragment(
+                    fragment_id="frag-recon-0",
+                    offset=0,
+                    length=ver_bytes,
+                    end_offset=ver_bytes,
+                    status="VERIFIED",
+                    source="reconstruction",
+                    format=target_fmt,
+                    verified_bytes=ver_bytes,
+                    reconstructed_bytes=rec_byte_cnt,
+                    missing_bytes=0,
+                    validation_status=val_status_str,
                 )
-            )
-            emit_event(
-                "DAMAGE_DETECTED",
-                f"No recoverable text structure in {len(content)} bytes of evidence",
-            )
+                fragments.append(frag)
+                if miss_bytes > 0:
+                    damage_regions.append(
+                        DamageRegion(
+                            region_id="damage-tail-0",
+                            start_offset=ver_bytes,
+                            end_offset=len(content),
+                            length=miss_bytes,
+                            type="TRUNCATED_UTF8_TAIL" if "TRUNCATED_TAIL_TRIM" in recon_res.reconstruction_methods else "MISSING",
+                            status="UNRECOVERABLE",
+                            affected_fragment_ids=[frag.fragment_id],
+                        )
+                    )
+                for idx_m, step_m in enumerate(recon_res.reconstruction_methods):
+                    reconstruction_steps.append(
+                        ReconstructionStep(
+                            step_id=f"step-{idx_m}",
+                            method=step_m,
+                            input_fragment_ids=[frag.fragment_id],
+                            result="SUCCESS" if recon_res.success else "FAILED",
+                            verified_bytes=ver_bytes,
+                            reconstructed_bytes=rec_byte_cnt,
+                            missing_bytes=miss_bytes,
+                            validation_status=val_status_str,
+                            confidence=float(score_breakdown_dict.get("total", 70.0)),
+                        )
+                    )
+                emit_event(
+                    "RECONSTRUCTION_COMPLETED",
+                    f"{target_fmt.upper()} fallback reconstruction completed with status '{recon_res.status}'",
+                )
+            else:
+                status_val = "UNRECOVERABLE"
+                fmt = target_fmt
+                ver_bytes = 0
+                rec_byte_cnt = 0
+                miss_bytes = len(content)
+                val_details_dict = {"error": "No text-structured fragment detected"}
+                prov_dict = {
+                    "verified_bytes": 0,
+                    "reconstructed_bytes": 0,
+                    "missing_bytes": len(content),
+                }
+                damage_regions.append(
+                    DamageRegion(
+                        region_id="damage-0",
+                        start_offset=0,
+                        end_offset=len(content),
+                        length=len(content),
+                        type="UNRECOVERABLE",
+                        status="UNRECOVERABLE",
+                        affected_fragment_ids=[],
+                    )
+                )
+                emit_event(
+                    "DAMAGE_DETECTED",
+                    f"No recoverable text structure in {len(content)} bytes of evidence",
+                )
         else:
             fmt = target_fmt
             pairs = select_fragment_pairs(detected)
