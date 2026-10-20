@@ -2,7 +2,7 @@
 test_recovery_accounting_invariants_m319.py — Recovery Accounting and Persistence Invariant Audit Test Suite.
 
 Milestone M3.19.0:
-- Verifies byte accounting invariants: total_verified_bytes + total_reconstructed_bytes + total_missing_bytes == total_input_bytes
+- Verifies byte accounting invariants: total_verified_bytes + total_missing_bytes == total_input_bytes, and total_verified_bytes + total_reconstructed_bytes == recovered_bytes
 - Verifies exact payload byte and SHA-256 round-trip integrity across storage boundaries
 - Verifies multi-candidate provenance, Fragment, and DamageRegion span invariants (end_offset - start_offset == length)
 - Verifies payload size disambiguation (size_bytes vs total_input_bytes)
@@ -27,11 +27,11 @@ from backend.app.storage.memory_store import InMemoryStore
 from backend.app.storage.sqlite_store import SqliteStore
 
 
-# ── Test 1: Byte Accounting Invariant (V + R + M == total_input_bytes) ────────
+# ── Test 1: Byte Accounting Invariant (V + M == total_input_bytes, V + R == recovered_bytes) ────────
 
 
 def test_accounting_invariant_across_recovery_statuses(tmp_path):
-    """Verify that V + R + M == total_input_bytes across all recovery execution paths."""
+    """Verify that V + M == total_input_bytes and V + R == recovered_bytes across all recovery execution paths."""
     # 1. FULLY_RECOVERED (Clean JSON)
     valid_json = b'{"name": "Recoverix", "status": "active", "code": 100}'
     run_full = execute_traced_recovery(
@@ -43,13 +43,15 @@ def test_accounting_invariant_across_recovery_statuses(tmp_path):
     assert run_full.status == "FULLY_RECOVERED"
     assert (
         run_full.total_verified_bytes
-        + run_full.total_reconstructed_bytes
         + run_full.total_missing_bytes
         == run_full.total_input_bytes
     )
     assert run_full.total_input_bytes == len(valid_json)
     assert run_full.total_verified_bytes == len(valid_json)
     assert run_full.total_missing_bytes == 0
+    assert run_full.total_reconstructed_bytes == 0
+    recovered_full = bytes.fromhex(run_full.output["recovered_bytes"])
+    assert len(recovered_full) == run_full.total_verified_bytes + run_full.total_reconstructed_bytes
 
     # 2. PARTIALLY_RECOVERED (Truncated JSON with reconstruction)
     trunc_json = b'{"name": "Recoverix", "items": [1, 2, 3'
@@ -59,12 +61,17 @@ def test_accounting_invariant_across_recovery_statuses(tmp_path):
         case_id="case-1",
         artifact_id="art-2",
     )
+    assert run_part.status == "PARTIALLY_RECOVERED"
     assert (
         run_part.total_verified_bytes
-        + run_part.total_reconstructed_bytes
         + run_part.total_missing_bytes
         == run_part.total_input_bytes
     )
+    assert run_part.total_input_bytes == len(trunc_json)
+    assert run_part.total_verified_bytes == len(trunc_json)
+    assert run_part.total_reconstructed_bytes > 0
+    recovered_part = bytes.fromhex(run_part.output["recovered_bytes"])
+    assert len(recovered_part) == run_part.total_verified_bytes + run_part.total_reconstructed_bytes
 
     # 3. UNRECOVERABLE (High entropy random garbage)
     garbage = b"\x00\xff\x1a\x2b\x3c\x4d\x5e\x6f" * 30
@@ -77,7 +84,6 @@ def test_accounting_invariant_across_recovery_statuses(tmp_path):
     assert run_unrec.status == "UNRECOVERABLE"
     assert (
         run_unrec.total_verified_bytes
-        + run_unrec.total_reconstructed_bytes
         + run_unrec.total_missing_bytes
         == run_unrec.total_input_bytes
     )

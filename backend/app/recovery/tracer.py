@@ -204,8 +204,17 @@ def _finalize_recovery_run(
     output_dict: Optional[Dict[str, Any]],
     output_raw: bytes,
     detection_mode: str,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     prov_dict["detection_mode"] = detection_mode
+    if case_name:
+        prov_dict["case_name"] = case_name
+    if investigator:
+        prov_dict["investigator"] = investigator
+    if notes:
+        prov_dict["notes"] = notes
 
     # Coordinate system provenance guard
     if "coordinate_system" not in prov_dict:
@@ -231,7 +240,7 @@ def _finalize_recovery_run(
     if (rec_byte_cnt > 0 or miss_bytes > 0 or not is_complete_final) and status_val == "FULLY_RECOVERED":
         status_val = "PARTIALLY_RECOVERED"
 
-    total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+    total_input_bytes = ver_bytes + miss_bytes
     emit_event("RECOVERY_COMPLETED", f"Recovery run completed with status '{status_val}'")
 
     completed_at = datetime.now(timezone.utc)
@@ -242,6 +251,9 @@ def _finalize_recovery_run(
         candidate_id=candidate_id,
         filename=filename,
         format=fmt,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
         status=status_val,
         started_at=started_at,
         completed_at=completed_at,
@@ -284,6 +296,9 @@ def _create_error_recovery_run(
     artifact_id: Optional[str] = None,
     detection_mode: str = "known_file",
     scan_meta: Optional[Dict[str, Any]] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     """Constructs an isolated UNRECOVERABLE run when a candidate raises an unexpected exception."""
     if scan_meta is None:
@@ -313,6 +328,12 @@ def _create_error_recovery_run(
         "total_discovered_candidates": scan_meta.get("total_discovered_candidates", 0) if scan_meta else 0,
         "candidates_omitted": scan_meta.get("candidates_omitted", 0) if scan_meta else 0,
     }
+    if case_name:
+        prov_dict["case_name"] = case_name
+    if investigator:
+        prov_dict["investigator"] = investigator
+    if notes:
+        prov_dict["notes"] = notes
     run = RecoveryRun(
         run_id=run_id,
         case_id=case_id,
@@ -320,6 +341,9 @@ def _create_error_recovery_run(
         candidate_id=cand_id,
         filename=filename,
         format=fmt,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
         status="UNRECOVERABLE",
         started_at=started_at,
         completed_at=completed_at,
@@ -349,6 +373,9 @@ def _recover_contiguous_candidate(
     artifact_id: Optional[str] = None,
     detection_mode: str = "known_file",
     scan_meta: Optional[Dict[str, Any]] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     """Execute traced recovery for a single contiguous candidate with known boundaries."""
     if scan_meta is None:
@@ -791,6 +818,9 @@ def _recover_contiguous_candidate(
         output_dict=output_dict,
         output_raw=output_raw,
         detection_mode=detection_mode,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
     )
 
 
@@ -804,6 +834,9 @@ def _recover_bifragment_candidate_pair(
     scan_meta: Optional[Dict[str, Any]] = None,
     precomputed_recon: Optional[Any] = None,
     next_offset: Optional[int] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     """Execute traced recovery for a bifragment candidate pair of matching formats."""
     if scan_meta is None:
@@ -1070,6 +1103,9 @@ def _recover_bifragment_candidate_pair(
         output_dict=output_dict,
         output_raw=output_raw,
         detection_mode=detection_mode,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
     )
 
 
@@ -1082,6 +1118,9 @@ def _recover_standalone_candidate(
     detection_mode: str = "known_file",
     next_offset: Optional[int] = None,
     scan_meta: Optional[Dict[str, Any]] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     """Execute traced recovery for a single candidate without estimated end offset."""
     if scan_meta is None:
@@ -1432,7 +1471,7 @@ def _recover_standalone_candidate(
                 ver_bytes = eval_res.provenance.verified_bytes
                 rec_byte_cnt = eval_res.provenance.reconstructed_bytes
                 miss_bytes = eval_res.provenance.missing_bytes
-                total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+                total_input_bytes = ver_bytes + miss_bytes
                 score_breakdown_dict = asdict(eval_res.score_breakdown)
                 val_details_dict = asdict(val_res)
                 prov_dict = asdict(eval_res.provenance)
@@ -1572,6 +1611,9 @@ def _recover_standalone_candidate(
         output_dict=output_dict,
         output_raw=output_raw,
         detection_mode=detection_mode,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
     )
 
 
@@ -1583,6 +1625,9 @@ def _recover_direct_fallback(
     detection_mode: str = "known_file",
     forced_text_fmt: Optional[str] = None,
     scan_meta: Optional[Dict[str, Any]] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     """Execute direct fallback recovery when zero candidates are detected."""
     run_id = f"run_{uuid.uuid4().hex[:8]}"
@@ -1932,13 +1977,13 @@ def _recover_direct_fallback(
             if (not is_complete or miss_bytes > 0 or rec_byte_cnt > 0 or (detected and any(f.is_truncated for f in detected))) and status_val == "FULLY_RECOVERED":
                 status_val = "PARTIALLY_RECOVERED"
 
-            total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+            total_input_bytes = ver_bytes + miss_bytes
 
             # Structural validity alone must not yield full confidence. Scale it by
             # the fraction of the artifact budget that is actually accounted for, so
             # a file missing most of its bytes can never report near-100% confidence.
             if total_input_bytes:
-                coverage = (ver_bytes + rec_byte_cnt) / total_input_bytes
+                coverage = min(1.0, ver_bytes / total_input_bytes)
                 score_breakdown_dict = {
                     **score_breakdown_dict,
                     "total": round(
@@ -2109,10 +2154,7 @@ def _recover_direct_fallback(
             ver_bytes = recon_res.verified_bytes
             rec_byte_cnt = recon_res.reconstructed_bytes
             miss_bytes = recon_res.missing_bytes
-            # The artifact budget is verified + reconstructed + missing (the
-            # convention enforced by tests/test_fragment_pipeline.py); the actual
-            # uploaded evidence size is preserved separately as evidence_size.
-            total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+            total_input_bytes = ver_bytes + miss_bytes
 
             out_bytes = recon_res.recovered_bytes
             val_res = recon_res.validation_result or validate_artifact("json", out_bytes)
@@ -2198,7 +2240,7 @@ def _recover_direct_fallback(
             ver_bytes = recon_res.verified_bytes
             rec_byte_cnt = recon_res.reconstructed_bytes
             miss_bytes = recon_res.missing_bytes
-            total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+            total_input_bytes = ver_bytes + miss_bytes
             out_bytes = recon_res.recovered_bytes
             val_res = recon_res.validation_result or validate_artifact("xml", out_bytes)
             val_status_str = "PASSED" if val_res.valid else "FAILED"
@@ -2278,7 +2320,7 @@ def _recover_direct_fallback(
             ver_bytes = recon_res.verified_bytes
             rec_byte_cnt = recon_res.reconstructed_bytes
             miss_bytes = recon_res.missing_bytes
-            total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+            total_input_bytes = ver_bytes + miss_bytes
             out_bytes = recon_res.recovered_bytes
             val_res = recon_res.validation_result or validate_artifact("png", out_bytes)
             val_status_str = "PASSED" if val_res.valid else "FAILED"
@@ -2365,7 +2407,7 @@ def _recover_direct_fallback(
                 ver_bytes = min(pdf_input_bytes, clean_base_len)
                 miss_bytes = max(0, pdf_input_bytes - ver_bytes)
                 rec_byte_cnt = max(0, len(rebuilt_bytes) - ver_bytes)
-                total_input_bytes = ver_bytes + rec_byte_cnt + miss_bytes
+                total_input_bytes = ver_bytes + miss_bytes
                 eval_res = evaluate_artifact_confidence(
                     validation_result=val_res,
                     artifact=rebuilt_bytes,
@@ -2450,9 +2492,169 @@ def _recover_direct_fallback(
                     )
                 )
                 total_input_bytes = len(content)
+        elif target_fmt in ("jpeg", "jpg") or ext in ("jpeg", "jpg"):
+            emit_event(
+                "RECONSTRUCTION_STARTED",
+                "Attempting deterministic JPEG structural reconstruction",
+            )
+            recon_res = reconstruct_artifact("jpeg", content, detection_mode=detection_mode)
+            emit_event(
+                "RECONSTRUCTION_COMPLETED",
+                f"JPEG reconstruction completed with status '{recon_res.status}'",
+            )
+            ver_bytes = recon_res.verified_bytes
+            rec_byte_cnt = recon_res.reconstructed_bytes
+            miss_bytes = recon_res.missing_bytes
+            total_input_bytes = ver_bytes + miss_bytes
+            out_bytes = recon_res.recovered_bytes
+            val_res = recon_res.validation_result or validate_artifact("jpeg", out_bytes)
+            val_status_str = "PASSED" if val_res.valid else "FAILED"
+            val_details_dict = asdict(val_res)
+            output_dict = {"recovered_bytes": out_bytes.hex()}
+
+            eval_res = evaluate_artifact_confidence(
+                validation_result=val_res,
+                artifact=out_bytes,
+                actual_verified_bytes=ver_bytes,
+                actual_reconstructed_bytes=rec_byte_cnt,
+                actual_missing_bytes=miss_bytes,
+            )
+            score_breakdown_dict = asdict(eval_res.score_breakdown)
+            prov_dict = asdict(eval_res.provenance)
+            prov_dict["evidence_size"] = len(content)
+            prov_dict["reconstruction_method"] = recon_res.details.get(
+                "reconstruction_method", "JPEG_STRUCTURAL_RECONSTRUCTION"
+            )
+            status_val = recon_res.status
+            fmt = "jpeg"
+
+            fragments.append(
+                Fragment(
+                    fragment_id="frag-0",
+                    offset=0,
+                    length=len(content),
+                    end_offset=len(content),
+                    status="VERIFIED" if status_val == "FULLY_RECOVERED" else ("PARTIAL" if recon_res.success else "UNRECOVERABLE"),
+                    source="direct_reconstruction",
+                    format=fmt,
+                    verified_bytes=ver_bytes,
+                    reconstructed_bytes=rec_byte_cnt,
+                    missing_bytes=miss_bytes,
+                    validation_status=val_status_str,
+                )
+            )
+            for idx_m, m in enumerate(recon_res.reconstruction_methods):
+                reconstruction_steps.append(
+                    ReconstructionStep(
+                        step_id=f"step-{idx_m}",
+                        method=m,
+                        input_fragment_ids=["frag-0"],
+                        gap_start=None,
+                        gap_end=None,
+                        gap_size=None,
+                        result="SUCCESS" if recon_res.success else "FAILED",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                        confidence=float(score_breakdown_dict.get("total", 0.0)),
+                    )
+                )
+            for idx_d, dmg in enumerate(recon_res.damage_regions):
+                damage_regions.append(
+                    DamageRegion(
+                        region_id=f"damage-{idx_d}",
+                        start_offset=dmg.get("offset", 0),
+                        end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
+                        length=dmg.get("length", 0),
+                        type=dmg.get("type", "CORRUPTED"),
+                        status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
+                        affected_fragment_ids=["frag-0"],
+                    )
+                )
+        elif target_fmt == "zip" or ext == "zip":
+            emit_event(
+                "RECONSTRUCTION_STARTED",
+                "Attempting deterministic ZIP structural reconstruction",
+            )
+            recon_res = reconstruct_artifact("zip", content, detection_mode=detection_mode)
+            emit_event(
+                "RECONSTRUCTION_COMPLETED",
+                f"ZIP reconstruction completed with status '{recon_res.status}'",
+            )
+            ver_bytes = recon_res.verified_bytes
+            rec_byte_cnt = recon_res.reconstructed_bytes
+            miss_bytes = recon_res.missing_bytes
+            total_input_bytes = ver_bytes + miss_bytes
+            out_bytes = recon_res.recovered_bytes
+            val_res = recon_res.validation_result or validate_artifact("zip", out_bytes)
+            val_status_str = "PASSED" if val_res.valid else "FAILED"
+            val_details_dict = asdict(val_res)
+            output_dict = {"recovered_bytes": out_bytes.hex()}
+
+            eval_res = evaluate_artifact_confidence(
+                validation_result=val_res,
+                artifact=out_bytes,
+                actual_verified_bytes=ver_bytes,
+                actual_reconstructed_bytes=rec_byte_cnt,
+                actual_missing_bytes=miss_bytes,
+            )
+            score_breakdown_dict = asdict(eval_res.score_breakdown)
+            prov_dict = asdict(eval_res.provenance)
+            prov_dict["evidence_size"] = len(content)
+            prov_dict["reconstruction_method"] = recon_res.details.get(
+                "reconstruction_method", "ZIP_STRUCTURAL_RECONSTRUCTION"
+            )
+            status_val = recon_res.status
+            fmt = "zip"
+
+            fragments.append(
+                Fragment(
+                    fragment_id="frag-0",
+                    offset=0,
+                    length=len(content),
+                    end_offset=len(content),
+                    status="VERIFIED" if status_val == "FULLY_RECOVERED" else ("PARTIAL" if recon_res.success else "UNRECOVERABLE"),
+                    source="direct_reconstruction",
+                    format=fmt,
+                    verified_bytes=ver_bytes,
+                    reconstructed_bytes=rec_byte_cnt,
+                    missing_bytes=miss_bytes,
+                    validation_status=val_status_str,
+                )
+            )
+            for idx_m, m in enumerate(recon_res.reconstruction_methods):
+                reconstruction_steps.append(
+                    ReconstructionStep(
+                        step_id=f"step-{idx_m}",
+                        method=m,
+                        input_fragment_ids=["frag-0"],
+                        gap_start=None,
+                        gap_end=None,
+                        gap_size=None,
+                        result="SUCCESS" if recon_res.success else "FAILED",
+                        verified_bytes=ver_bytes,
+                        reconstructed_bytes=rec_byte_cnt,
+                        missing_bytes=miss_bytes,
+                        validation_status=val_status_str,
+                        confidence=float(score_breakdown_dict.get("total", 0.0)),
+                    )
+                )
+            for idx_d, dmg in enumerate(recon_res.damage_regions):
+                damage_regions.append(
+                    DamageRegion(
+                        region_id=f"damage-{idx_d}",
+                        start_offset=dmg.get("offset", 0),
+                        end_offset=dmg.get("offset", 0) + dmg.get("length", 0),
+                        length=dmg.get("length", 0),
+                        type=dmg.get("type", "CORRUPTED"),
+                        status=_resolve_damage_region_status(dmg.get("status"), recon_res.success),
+                        affected_fragment_ids=["frag-0"],
+                    )
+                )
         else:
             matched_fmt = None
-            for test_fmt in ["pdf", "json", "xml", "png", "jpeg", "csv", "txt"]:
+            for test_fmt in ["pdf", "json", "xml", "png", "jpeg", "zip", "csv", "txt"]:
                 val_test = validate_artifact(test_fmt, content)
                 if val_test.valid:
                     matched_fmt = test_fmt
@@ -2571,6 +2773,9 @@ def _recover_direct_fallback(
         output_dict=output_dict,
         output_raw=output_raw,
         detection_mode=detection_mode,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
     )
 
 
@@ -2580,6 +2785,9 @@ def execute_traced_recoveries(
     case_id: Optional[str] = None,
     detection_mode: Optional[str] = None,
     candidates: Optional[List[Candidate]] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> List[RecoveryRun]:
     """Execute canonical traced forensic recovery runs supporting multiple candidates.
 
@@ -2596,6 +2804,9 @@ def execute_traced_recoveries(
         case_id: Optional associated case identifier.
         detection_mode: Optional detection mode ('known_file', 'blind', 'synthetic_harness').
         candidates: Optional explicit list of Candidate objects to evaluate.
+        case_name: Optional investigation case name.
+        investigator: Optional lead investigator name.
+        notes: Optional forensic notes.
 
     Returns:
         List of stored RecoveryRun instances for all evaluated candidates.
@@ -2757,6 +2968,9 @@ def execute_traced_recoveries(
                     scan_meta=scan_meta,
                     precomputed_recon=precomputed_recon,
                     next_offset=next_cand_offset,
+                    case_name=case_name,
+                    investigator=investigator,
+                    notes=notes,
                 )
                 runs.append(pair_run)
                 idx += 2
@@ -2768,6 +2982,9 @@ def execute_traced_recoveries(
                     case_id=case_id,
                     detection_mode=detection_mode,
                     scan_meta=scan_meta,
+                    case_name=case_name,
+                    investigator=investigator,
+                    notes=notes,
                 )
                 runs.append(contig_run)
                 idx += 1
@@ -2786,6 +3003,9 @@ def execute_traced_recoveries(
                     detection_mode=detection_mode,
                     next_offset=next_offset,
                     scan_meta=scan_meta,
+                    case_name=case_name,
+                    investigator=investigator,
+                    notes=notes,
                 )
                 runs.append(standalone_run)
                 idx += 1
@@ -2798,6 +3018,9 @@ def execute_traced_recoveries(
                 case_id=case_id,
                 detection_mode=detection_mode or "known_file",
                 scan_meta=scan_meta,
+                case_name=case_name,
+                investigator=investigator,
+                notes=notes,
             )
             runs.append(err_run)
             idx += 1
@@ -2818,6 +3041,9 @@ def execute_traced_recovery(
     artifact_id: Optional[str] = None,
     detection_mode: Optional[str] = None,
     candidates: Optional[List[Candidate]] = None,
+    case_name: Optional[str] = None,
+    investigator: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> RecoveryRun:
     """Execute a single-candidate traced forensic recovery run over *content*.
 
@@ -2832,6 +3058,9 @@ def execute_traced_recovery(
         artifact_id: Optional associated artifact identifier.
         detection_mode: Optional detection mode ('known_file', 'blind', 'synthetic_harness').
         candidates: Optional explicit list of Candidate objects to evaluate.
+        case_name: Optional investigation case name.
+        investigator: Optional lead investigator name.
+        notes: Optional forensic notes.
 
     Returns:
         Stored RecoveryRun instance containing the real forensic trace.
@@ -2842,6 +3071,9 @@ def execute_traced_recovery(
         case_id=case_id,
         detection_mode=detection_mode,
         candidates=candidates,
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
     )
     if runs:
         if len(runs) == 1:
@@ -2882,6 +3114,9 @@ def execute_traced_recovery(
         case_id=case_id,
         artifact_id=None,
         detection_mode=detection_mode or "blind",
+        case_name=case_name,
+        investigator=investigator,
+        notes=notes,
     )
     if artifact_id is not None:
         store.link_artifact_to_run(artifact_id, fallback_run.run_id)

@@ -256,7 +256,8 @@ def test_scenario_g_reconstructed_json_accounting():
     assert run.total_reconstructed_bytes > 0
     assert run.provenance is not None
     assert run.provenance["reconstruction_method"] == "JSON_STRUCTURAL_CLOSURE"
-    assert run.total_verified_bytes + run.total_reconstructed_bytes + run.total_missing_bytes == run.total_input_bytes
+    assert run.total_verified_bytes + run.total_missing_bytes == run.total_input_bytes
+    assert run.total_verified_bytes + run.total_reconstructed_bytes == len(bytes.fromhex(run.output["recovered_bytes"]))
 
 
 # ── Scenario H: Ambiguous Bifragment Preserves Ambiguity ─────────────────────
