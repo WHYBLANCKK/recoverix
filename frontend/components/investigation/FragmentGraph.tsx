@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   ForensicFragment,
   DamageRegion,
@@ -45,7 +45,7 @@ interface InspectorNode {
   status: string;
   source: string;
   description: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 export function FragmentGraph({
@@ -193,23 +193,15 @@ export function FragmentGraph({
     };
   };
 
-  const [selectedNode, setSelectedNode] = useState<InspectorNode>(getInitialNode);
+  const [selectedCustomNode, setSelectedCustomNode] = useState<InspectorNode | null>(null);
+  const [prevFilename, setPrevFilename] = useState<string>(filename);
+  if (prevFilename !== filename) {
+    setPrevFilename(filename);
+    setSelectedCustomNode(null);
+  }
 
-  // Sync selected node when inputs change
-  useEffect(() => {
-    setSelectedNode(getInitialNode());
-  }, [
-    filename,
-    totalBytes,
-    verifiedBytes,
-    reconstructedBytes,
-    missingBytes,
-    fragments,
-    damageRegions,
-    reconstructionSteps,
-    status,
-    reconstructionMethod,
-  ]);
+  const selectedNode = selectedCustomNode ?? getInitialNode();
+  const setSelectedNode = (node: InspectorNode) => setSelectedCustomNode(node);
 
   // Compute actual node count for display
   const nodeCount = isContiguous

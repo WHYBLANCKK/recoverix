@@ -11,13 +11,13 @@ import {
   generateCaseInterpretation,
   buildDeterministicCaseInterpretation,
   ApiError,
+  RawBackendArtifact,
 } from "@/lib/api";
 import { PriorityBadge } from "@/components/dashboard/PriorityBadge";
 import {
   BrainCircuit,
   RefreshCw,
   Zap,
-  Sparkles,
   Clock,
   Cpu,
   AlertTriangle,
@@ -25,9 +25,7 @@ import {
   AlertCircle,
   Loader2,
   Layers,
-  Database,
   FileCheck2,
-  Network,
 } from "lucide-react";
 
 interface CaseInterpretationCardProps {
@@ -35,7 +33,7 @@ interface CaseInterpretationCardProps {
   onCaseChange?: (caseId: string) => void;
   className?: string;
   artifacts?: Artifact[];
-  recoveryRuns?: any[];
+  recoveryRuns?: RawBackendArtifact[];
 }
 
 function formatGeneratedTime(isoString: string): string {
@@ -56,6 +54,18 @@ function formatGeneratedTime(isoString: string): string {
   }
 }
 
+function getCachedCaseInterpretation(caseId: string): GroundedCaseInterpretation | null {
+  if (typeof window !== "undefined") {
+    const cached = localStorage.getItem(`recoverix_case_interp_${caseId}`);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+  }
+  return null;
+}
+
 export function CaseInterpretationCard({
   caseId,
   onCaseChange,
@@ -63,20 +73,23 @@ export function CaseInterpretationCard({
   artifacts = [],
   recoveryRuns = [],
 }: CaseInterpretationCardProps) {
+  const [prevCaseId, setPrevCaseId] = useState<string>(caseId);
   const [selectedCaseId, setSelectedCaseId] = useState<string>(caseId);
   const [customCaseInput, setCustomCaseInput] = useState<string>(caseId);
   const [isEditingCase, setIsEditingCase] = useState<boolean>(false);
 
-  // Sync prop changes
-  useEffect(() => {
+  if (prevCaseId !== caseId) {
+    setPrevCaseId(caseId);
     setSelectedCaseId(caseId);
     setCustomCaseInput(caseId);
-  }, [caseId]);
+  }
 
   const activeCaseId = selectedCaseId || caseId || "case_001";
 
-  const [interpretation, setInterpretation] = useState<GroundedCaseInterpretation | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [interpretation, setInterpretation] = useState<GroundedCaseInterpretation | null>(
+    () => getCachedCaseInterpretation(activeCaseId)
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(() => !getCachedCaseInterpretation(activeCaseId));
   const [isNotGenerated, setIsNotGenerated] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -120,8 +133,35 @@ export function CaseInterpretationCard({
   }, [activeCaseId]);
 
   useEffect(() => {
-    loadInterpretation();
-  }, [loadInterpretation]);
+    let ignore = false;
+    if (!activeCaseId) return;
+
+    getCaseInterpretation(activeCaseId)
+      .then((data) => {
+        if (!ignore) {
+          setInterpretation(data);
+          setIsNotGenerated(false);
+          setIsLoading(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!ignore) {
+          if (err instanceof ApiError && err.status === 404) {
+            setIsNotGenerated(true);
+            setInterpretation(null);
+          } else {
+            const msg = err instanceof Error ? err.message : "Unable to load case interpretation.";
+            setLoadError(msg);
+            setInterpretation(null);
+          }
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeCaseId]);
 
   const handleCaseSwitch = (newId: string) => {
     const trimmed = newId.trim();
@@ -369,7 +409,7 @@ export function CaseInterpretationCard({
   }
 
   // 4. Grounded Interpretation Display State
-  const { facts, interpretation: output, source, cached, generated_at, case_graph_fingerprint } =
+  const { facts, interpretation: output, cached, generated_at, case_graph_fingerprint } =
     interpretation;
 
   // Determine ambiguity indicator across case clusters

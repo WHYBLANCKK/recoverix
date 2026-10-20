@@ -37,7 +37,7 @@ export function ArtifactTable({ artifacts }: { artifacts: Artifact[] }) {
             <Filter className="w-4 h-4 text-slate-400" />
             <select 
               value={filterPriority}
-              onChange={(e) => setFilterPriority(e.target.value as any)}
+              onChange={(e) => setFilterPriority(e.target.value as PriorityLevel | "ALL")}
               className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
             >
               <option value="ALL">All Priorities</option>
@@ -49,7 +49,7 @@ export function ArtifactTable({ artifacts }: { artifacts: Artifact[] }) {
           </div>
           <select 
             value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value as any)}
+            onChange={(e) => setFilterCategory(e.target.value as ArtifactCategory | "ALL")}
             className="bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
           >
             <option value="ALL">All Categories</option>

@@ -30,7 +30,6 @@ export function ByteEvidenceMap({
   missingBytes,
   fragments,
   damageRegions,
-  reconstructionSteps,
 }: ByteEvidenceMapProps) {
   const [hoveredSegment, setHoveredSegment] = useState<TimelineSegment | null>(null);
 

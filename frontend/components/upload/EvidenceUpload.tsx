@@ -69,10 +69,11 @@ export default function EvidenceUpload() {
       clearInterval(stepInterval);
       setCurrentStep(SINGLE_FILE_PIPELINE.length);
       setSingleResult(res);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Recovery execution failed:", e);
       clearInterval(stepInterval);
-      setErrorMsg(e.message || "Forensic analysis failed to recover evidence");
+      const msg = e instanceof Error ? e.message : "Forensic analysis failed to recover evidence";
+      setErrorMsg(msg);
     } finally {
       setIsAnalyzing(false);
     }
@@ -99,10 +100,11 @@ export default function EvidenceUpload() {
       setTimeout(() => {
         router.push(`/dashboard?case_id=${newCase.id}`);
       }, 400);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Disk analysis pipeline error:", e);
       clearInterval(interval);
-      setErrorMsg(e.message || "Disk image processing failed");
+      const msg = e instanceof Error ? e.message : "Disk image processing failed";
+      setErrorMsg(msg);
     } finally {
       setIsAnalyzing(false);
     }

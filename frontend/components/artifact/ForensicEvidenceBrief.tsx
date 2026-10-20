@@ -8,7 +8,6 @@ import {
   BrainCircuit,
   RefreshCw,
   Zap,
-  Sparkles,
   Clock,
   Cpu,
   AlertTriangle,
@@ -52,15 +51,14 @@ export function ForensicEvidenceBrief({ artifact, artifactId }: ForensicEvidence
   const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const loadInterpretation = useCallback(async () => {
-    if (!targetId) return;
+  const fetchAndApply = useCallback(async (id: string) => {
     setIsLoading(true);
     setLoadError(null);
     setIsNotGenerated(false);
     setActionError(null);
 
     try {
-      const data = await getArtifactInterpretation(targetId);
+      const data = await getArtifactInterpretation(id);
       setInterpretation(data);
       setIsNotGenerated(false);
     } catch (err: unknown) {
@@ -75,11 +73,44 @@ export function ForensicEvidenceBrief({ artifact, artifactId }: ForensicEvidence
     } finally {
       setIsLoading(false);
     }
-  }, [targetId]);
+  }, []);
 
   useEffect(() => {
-    loadInterpretation();
-  }, [loadInterpretation]);
+    let ignore = false;
+    if (!targetId) return;
+
+    getArtifactInterpretation(targetId)
+      .then((data) => {
+        if (!ignore) {
+          setInterpretation(data);
+          setIsNotGenerated(false);
+          setIsLoading(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!ignore) {
+          if (err instanceof ApiError && err.status === 404) {
+            setIsNotGenerated(true);
+            setInterpretation(null);
+          } else {
+            const msg = err instanceof Error ? err.message : "Unable to load interpretation.";
+            setLoadError(msg);
+            setInterpretation(null);
+          }
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [targetId]);
+
+  const handleRetry = () => {
+    if (targetId) {
+      fetchAndApply(targetId);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!targetId || isActionLoading) return;
@@ -161,7 +192,7 @@ export function ForensicEvidenceBrief({ artifact, artifactId }: ForensicEvidence
           <p className="text-rose-700 font-sans">{loadError}</p>
           <button
             type="button"
-            onClick={loadInterpretation}
+            onClick={handleRetry}
             className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-rose-300 text-rose-800 hover:bg-rose-100/50 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
           >
             <RefreshCw className="w-3 h-3" /> Retry
@@ -228,7 +259,7 @@ export function ForensicEvidenceBrief({ artifact, artifactId }: ForensicEvidence
   }
 
   // 4. Grounded Interpretation Display State
-  const { facts, interpretation: output, source, cached, generated_at } = interpretation;
+  const { facts, interpretation: output, cached, generated_at } = interpretation;
 
   return (
     <div className="bg-white border border-slate-200/90 rounded-xl p-6 font-mono shadow-xs space-y-6">

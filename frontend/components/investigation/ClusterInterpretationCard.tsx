@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   GroundedClusterInterpretation,
   AuthoritativeClusterClassification,
-  DeterministicRelationshipFact,
 } from "@/lib/types";
 import {
   getClusterInterpretation,
@@ -17,7 +16,6 @@ import {
   BrainCircuit,
   RefreshCw,
   Zap,
-  Sparkles,
   Clock,
   Cpu,
   AlertTriangle,
@@ -26,8 +24,6 @@ import {
   Loader2,
   Layers,
   ChevronRight,
-  Info,
-  GitBranch,
 } from "lucide-react";
 
 interface ClusterInterpretationCardProps {
@@ -106,15 +102,16 @@ export function ClusterInterpretationCard({
   onClusterChange,
   className = "",
 }: ClusterInterpretationCardProps) {
+  const [prevClusterId, setPrevClusterId] = useState<string>(clusterId);
   const [selectedClusterId, setSelectedClusterId] = useState<string>(clusterId);
   const [customClusterInput, setCustomClusterInput] = useState<string>(clusterId);
   const [isEditingCluster, setIsEditingCluster] = useState<boolean>(false);
 
-  // Sync prop changes
-  useEffect(() => {
+  if (prevClusterId !== clusterId) {
+    setPrevClusterId(clusterId);
     setSelectedClusterId(clusterId);
     setCustomClusterInput(clusterId);
-  }, [clusterId]);
+  }
 
   const activeClusterId = selectedClusterId || clusterId || "cluster_0";
 
@@ -152,8 +149,35 @@ export function ClusterInterpretationCard({
   }, [caseId, activeClusterId]);
 
   useEffect(() => {
-    loadInterpretation();
-  }, [loadInterpretation]);
+    let ignore = false;
+    if (!caseId || !activeClusterId) return;
+
+    getClusterInterpretation(caseId, activeClusterId)
+      .then((data) => {
+        if (!ignore) {
+          setInterpretation(data);
+          setIsNotGenerated(false);
+          setIsLoading(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!ignore) {
+          if (err instanceof ApiError && err.status === 404) {
+            setIsNotGenerated(true);
+            setInterpretation(null);
+          } else {
+            const msg = err instanceof Error ? err.message : "Unable to load cluster interpretation.";
+            setLoadError(msg);
+            setInterpretation(null);
+          }
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [caseId, activeClusterId]);
 
   const handleClusterSwitch = (newId: string) => {
     const trimmed = newId.trim();
@@ -378,7 +402,7 @@ export function ClusterInterpretationCard({
   }
 
   // 4. Grounded Interpretation Display State
-  const { facts, relationships, interpretation: output, source, cached, generated_at, cluster_fingerprint } =
+  const { facts, relationships, interpretation: output, cached, generated_at, cluster_fingerprint } =
     interpretation;
 
   return (
