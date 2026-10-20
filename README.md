@@ -382,6 +382,10 @@ Recoverix is architected as an open-source recovery tool. Deployments must consi
 - **No Built-In Authentication**: Recoverix contains **no built-in user accounts, passwords, API keys, or session management**.
 - **Public Network Exposure**: Binding the backend to `0.0.0.0` or exposing port 8000 directly to the public internet allows any network client to upload files and download recovered artifacts. Network deployments must be protected by an authenticating reverse proxy (e.g. Cloudflare Access, OAuth2-Proxy, Nginx with mTLS or HTTP Basic Auth) and TLS termination.
 
+### Recovered-Artifact SHA-256 Integrity & Provenance Semantics
+- **Creation Hashes vs. Legacy Backfilled Hashes**: For newly recovered artifacts (Pipeline A case analysis and Pipeline B standalone file recovery), SHA-256 digests are computed and persisted at creation time directly over the recovered binary payload before storage. For legacy pre-Step 6 database records where `sha256` was `NULL`, schema initialization performs a deterministic, snapshot-in-time backfill from persisted blobs (strictly prioritizing canonical `artifact:{id}` keys over unmigrated keys, and rejecting ambiguous collisions with evidence files).
+- **Integrity Verification vs. Authorization Boundary**: Recovered artifact SHA-256 verification provides cryptographic payload tampering and bit-rot detection at download time (fail-closed HTTP 404 with detail `Integrity verification failed for artifact '{id}'` if persisted bytes diverge from the recorded digest). **SHA-256 integrity verification is not user authentication or tenant/case authorization**. Any network client with access to an artifact ID or case ID can request its download; access isolation must be enforced by upstream authenticating proxies.
+
 ### Input Bounds & Defense Against Resource Exhaustion
 - **Input Size Bound**: Strictly enforced at **5 MiB (5,242,880 bytes)** across both the CLI and web endpoints. Files exceeding this limit are rejected immediately with HTTP 413 (`FILE_TOO_LARGE`).
 - **Empty File Rejection**: 0-byte submissions are rejected immediately with HTTP 400 (`EMPTY_FILE`).

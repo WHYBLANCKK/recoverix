@@ -8,13 +8,14 @@ and producing downloadable recovered byte buffers.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import urllib.parse
 import uuid
 from pathlib import PurePath
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, UploadFile, File, HTTPException, status, Response, Body, Request
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Response, Body, Request
 from pydantic import BaseModel
 
 from backend.app.store import store, MAX_EVIDENCE_SIZE
@@ -22,6 +23,7 @@ from backend.app.ingestion.reader import read_upload_bounded, UploadTooLargeErro
 from backend.app.recovery.tracer import execute_traced_recovery
 from backend.app.scoring.explainer import explain_artifact
 from backend.app.recovery.adapter import extract_recovered_bytes
+from backend.app.recovery.artifact_integrity import verify_artifact_download_integrity
 
 
 def sanitize_filename(filename: Optional[str], default: str = "recovered_file.bin") -> str:
@@ -95,6 +97,10 @@ class FileRecoveryResponse(BaseModel):
     reconstruction_steps: Optional[List[Dict[str, Any]]] = None
     total_input_bytes: Optional[int] = None
     provenance: Optional[Dict[str, Any]] = None
+    case_name: Optional[str] = None
+    investigator: Optional[str] = None
+    notes: Optional[str] = None
+    sha256: Optional[str] = None
 
 
 router = APIRouter(tags=["file_recovery"])
@@ -102,7 +108,13 @@ router = APIRouter(tags=["file_recovery"])
 
 @router.post("/recover-file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="recover_single_file")
 @router.post("/recover/file", response_model=FileRecoveryResponse, status_code=status.HTTP_200_OK, operation_id="recover_single_file_alias")
-async def recover_single_file(request: Request, file: UploadFile = File(...)) -> FileRecoveryResponse:
+async def recover_single_file(
+    request: Request,
+    file: UploadFile = File(...),
+    case_name: Optional[str] = Form(None),
+    investigator: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+) -> FileRecoveryResponse:
     """Upload a single evidence file for deterministic byte recovery and validation."""
     cl_header = request.headers.get("content-length")
     if cl_header and cl_header.strip().isdigit():
@@ -142,11 +154,33 @@ async def recover_single_file(request: Request, file: UploadFile = File(...)) ->
     orig_filename = sanitize_filename(file.filename, default="uploaded_file.bin")
     file_id = f"rec_file_{uuid.uuid4().hex}"
 
+    # Sanitize optional investigation metadata
+    clean_case_name = re.sub(r"[\x00-\x1f\x7f]", "", case_name).strip()[:128] if case_name else None
+    if clean_case_name == "":
+        clean_case_name = None
+    clean_investigator = (
+        re.sub(r"[\x00-\x1f\x7f]", "", investigator).strip()[:128]
+        if investigator
+        else None
+    )
+    if clean_investigator == "":
+        clean_investigator = None
+    clean_notes = (
+        re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", notes).strip()[:1000]
+        if notes
+        else None
+    )
+    if clean_notes == "":
+        clean_notes = None
+
     # Execute and trace recovery
     recovery_run = execute_traced_recovery(
         filename=orig_filename,
         content=content,
         artifact_id=file_id,
+        case_name=clean_case_name,
+        investigator=clean_investigator,
+        notes=clean_notes,
     )
 
     # Re-map from recovery_run
@@ -165,14 +199,19 @@ async def recover_single_file(request: Request, file: UploadFile = File(...)) ->
     # ... mapping logic ...
 
     rec_filename = f"recovered_{orig_filename}"
-    val_status = "PASSED" if recovery_run.status != "UNRECOVERABLE" else "FAILED"
+    val_details = recovery_run.validation or {}
+    val_is_valid = bool(val_details.get("valid", False)) if "valid" in val_details else (status_val in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED"))
+    val_status = "PASSED" if val_is_valid else "FAILED"
 
     # Keep response matching
     score_breakdown = recovery_run.confidence
-    val_details = recovery_run.validation
 
     recovered_content = extract_recovered_bytes(recovery_run)
-    is_downloadable = (status_val != "UNRECOVERABLE") and (len(recovered_content) > 0)
+    is_downloadable = (
+        status_val in ("FULLY_RECOVERED", "PARTIALLY_RECOVERED")
+        and val_status == "PASSED"
+        and len(recovered_content) > 0
+    )
     download_url = f"/api/recover-file/{file_id}/download"
 
     content_preview = None
@@ -223,6 +262,14 @@ async def recover_single_file(request: Request, file: UploadFile = File(...)) ->
         "provenance": recovery_run.provenance,
     }
 
+    meta_dict["case_name"] = clean_case_name
+    meta_dict["investigator"] = clean_investigator
+    meta_dict["notes"] = clean_notes
+
+    content_sha = hashlib.sha256(recovered_content).hexdigest() if recovered_content else None
+    if content_sha:
+        meta_dict["sha256"] = content_sha
+
     store.store_recovered_file(file_id, meta_dict, recovered_content)
 
     return FileRecoveryResponse(**meta_dict)
@@ -238,31 +285,37 @@ def get_recovered_file_metadata(file_id: str) -> FileRecoveryResponse:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Recovered file '{file_id}' not found",
         )
+    if meta.get("case_name") is None or meta.get("investigator") is None or meta.get("notes") is None:
+        run = store.get_recovery_run(file_id) or store.get_recovery_run_by_artifact(file_id)
+        if run is not None:
+            if meta.get("case_name") is None:
+                meta["case_name"] = run.case_name
+            if meta.get("investigator") is None:
+                meta["investigator"] = run.investigator
+            if meta.get("notes") is None:
+                meta["notes"] = run.notes
     return FileRecoveryResponse(**meta)
 
 
 @router.get("/recover-file/{file_id}/download", status_code=status.HTTP_200_OK, operation_id="download_recovered_file")
 @router.get("/recover/file/{file_id}/download", status_code=status.HTTP_200_OK, operation_id="download_recovered_file_alias")
 def download_recovered_file(file_id: str) -> Response:
-    """Download raw byte buffer of a recovered single file."""
-    meta = store.get_recovered_file_metadata(file_id)
+    """Download raw byte buffer of a recovered single file with strict SHA-256 integrity verification."""
+    record = store.get_artifact_record(file_id)
+    if record is None:
+        run = store.get_recovery_run(file_id) or store.get_recovery_run_by_artifact(file_id)
+        if run and run.artifact_id:
+            record = store.get_artifact_record(run.artifact_id)
+
     content = store.get_recovered_file_bytes(file_id)
+    if content is None and record is not None:
+        content = store.get_artifact_bytes(record.artifact_id)
 
-    if (
-        meta is None
-        or content is None
-        or meta.get("status") == "UNRECOVERABLE"
-        or not meta.get("is_downloadable", False)
-        or len(content) == 0
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Recovered file '{file_id}' not found or unrecoverable",
-        )
+    verified_bytes = verify_artifact_download_integrity(record, content, file_id, context="file")
 
-    raw_rec_name = meta.get("recovered_filename", "recovered_file.bin")
+    raw_rec_name = (record.recovered_filename if record else None) or "recovered_file.bin"
     rec_name = sanitize_filename(raw_rec_name, default="recovered_file.bin")
-    fmt_key = meta.get("format", "").lower()
+    fmt_key = (record.format if record else "").lower()
     mime_map = {
         "txt": "text/plain",
         "csv": "text/csv",
@@ -275,10 +328,15 @@ def download_recovered_file(file_id: str) -> Response:
         "zip": "application/zip",
     }
     media_type = mime_map.get(fmt_key, "application/octet-stream")
+    sha_val = (record.sha256 if record and record.sha256 else hashlib.sha256(verified_bytes).hexdigest()).lower()
     return Response(
-        content=content,
+        content=verified_bytes,
         media_type=media_type,
-        headers={"Content-Disposition": format_content_disposition(rec_name)},
+        headers={
+            "Content-Disposition": format_content_disposition(rec_name),
+            "ETag": f'"{sha_val}"',
+            "X-Artifact-SHA256": sha_val,
+        },
     )
 
 
@@ -288,11 +346,24 @@ def explain_recovered_file(file_id: str, body: Optional[Dict[str, Any]] = Body(N
     """Generate or retrieve a cached grounded evidence interpretation for a single recovered file."""
     meta = store.get_recovered_file_metadata(file_id)
     if meta is not None:
-        return explain_artifact(file_id, meta)
+        explanation = explain_artifact(file_id, meta)
+        try:
+            exp_str = json.dumps(explanation) if isinstance(explanation, dict) else str(explanation)
+            store.update_artifact_ai_summary(file_id, exp_str)
+        except Exception:
+            pass
+        return explanation
 
     run = store.get_recovery_run(file_id) or store.get_recovery_run_by_artifact(file_id)
     if run is not None:
-        return explain_artifact(file_id, run)
+        explanation = explain_artifact(file_id, run)
+        try:
+            exp_str = json.dumps(explanation) if isinstance(explanation, dict) else str(explanation)
+            target_id = run.artifact_id or file_id
+            store.update_artifact_ai_summary(target_id, exp_str)
+        except Exception:
+            pass
+        return explanation
 
     artifact = store.get_artifact(file_id)
     if artifact is not None:
