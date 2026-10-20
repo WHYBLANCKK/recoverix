@@ -127,7 +127,7 @@ export default function CasesPage() {
   const unrecoverableCount = runs.filter((r) => r.status === "UNRECOVERABLE").length;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-mono selection:bg-emerald-500/20 selection:text-emerald-950">
+    <div className="min-h-screen bg-white text-slate-900 flex flex-col font-mono selection:bg-emerald-500/20 selection:text-emerald-950">
       {/* Top Banner */}
       <div className="border-b border-slate-200 bg-white px-6 py-8">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-6">

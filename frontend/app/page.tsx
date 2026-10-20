@@ -285,11 +285,11 @@ export default function Home() {
   const reconPct = totalOutput > 0 ? Math.round((result!.reconstructed_bytes / totalOutput) * 100) : 0;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-950">
+    <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-950">
       {/* Hero Section */}
-      <section className="relative overflow-hidden pt-12 pb-20 md:pt-16 md:pb-28 border-b border-slate-200/80 bg-gradient-to-b from-white via-[#F8FAFC] to-[#F1F5F9]">
+      <section className="relative overflow-hidden pt-12 pb-20 md:pt-16 md:pb-28 border-b border-slate-200/80 bg-white">
         {/* Subtle grid background */}
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#E2E8F0_1px,transparent_1px),linear-gradient(to_bottom,#E2E8F0_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-60" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#E2E8F0_1px,transparent_1px),linear-gradient(to_bottom,#E2E8F0_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-40" />
 
         <div className="max-w-5xl mx-auto px-4 sm:px-6 relative z-10 text-center space-y-6">
           {/* Eyebrow Badge */}
@@ -377,10 +377,10 @@ export default function Home() {
                     </p>
                   </div>
 
-                  <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
-                    <span>Client-to-Engine TLS Encrypted</span>
-                    <span>·</span>
-                    <span>Automatic 24h Purge</span>
+                  <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-600 bg-slate-100/90 border border-slate-200 px-3.5 py-1 rounded-full">
+                    <span>HTTPS / TLS Encrypted in Transit</span>
+                    <span className="text-slate-300">·</span>
+                    <span>24-Hour Ephemeral Retention</span>
                   </div>
                 </div>
               </div>
@@ -492,43 +492,43 @@ export default function Home() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 font-mono text-xs">
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-2">
                     <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                       <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">1</span>
-                      <span>Corruption Destroys Real Bytes</span>
+                      <span>Corruption Destroys Original Data</span>
                     </div>
                     <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
-                      Physical damage, truncated network transfers, or interrupted writes often destroy original file bytes completely. When bytes are gone, no tool can genuinely recover them without guessing.
+                      Physical damage, interrupted transfers, and disk truncation overwrite or truncate real bytes. When bytes are gone, no tool can genuinely recover them without guessing.
                     </p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-2">
                     <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                       <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">2</span>
-                      <span>Fabricating Data Misrepresents Truth</span>
+                      <span>Recoverix Preserves Recoverable Content</span>
                     </div>
                     <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
-                      Generative models that invent plausible replacement text, numbers, or pixels risk altering the historical record and presenting artificial data as original evidence.
+                      Every surviving authentic byte and valid format segment is extracted intact. Genuine evidence is prioritized and preserved without destructive transformations.
                     </p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-2">
                     <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                       <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">3</span>
-                      <span>Preserve Content & Isolate Gaps</span>
+                      <span>Reconstruction Distinguished from Evidence</span>
                     </div>
                     <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
-                      Recoverix extracts every recoverable byte, clearly identifies missing spans, and only reconstructs the minimal specification framing (such as closing brackets or trailers) required to open the file.
+                      Structural syntax required for file parseability (like closing delimiters or trailers) is tracked separately. Missing content is logged as unobserved gaps and never fabricated.
                     </p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                  <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-2">
                     <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                       <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-700 flex items-center justify-center text-[11px]">4</span>
-                      <span>Inspect Every Step of the Output</span>
+                      <span>Transparent Disclosure of Gaps & Validation</span>
                     </div>
                     <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
-                      Instead of an opaque “recovered successfully” banner, you receive byte-exact accounting, structural parser validation checks, and full transparency on what was salvaged and what was lost.
+                      Every recovery reports exact byte accounting, identifies gaps, tests output against official specification parsers, and computes SHA-256 integrity checksums.
                     </p>
                   </div>
                 </div>
@@ -1146,7 +1146,7 @@ export default function Home() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-mono">
             {/* Principle 1: RECOVER */}
-            <div className="bg-[#F8FAFC] border border-slate-200 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
+            <div className="bg-slate-50/70 border border-slate-200/90 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
               <div className="w-10 h-10 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-700">
                 <FileCheck className="w-5 h-5" />
               </div>
@@ -1158,7 +1158,7 @@ export default function Home() {
             </div>
 
             {/* Principle 2: PROVE */}
-            <div className="bg-[#F8FAFC] border border-slate-200 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
+            <div className="bg-slate-50/70 border border-slate-200/90 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
               <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-300 flex items-center justify-center text-slate-700">
                 <Cpu className="w-5 h-5" />
               </div>
@@ -1170,7 +1170,7 @@ export default function Home() {
             </div>
 
             {/* Principle 3: UNDERSTAND */}
-            <div className="bg-[#F8FAFC] border border-slate-200 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
+            <div className="bg-slate-50/70 border border-slate-200/90 p-6 rounded-2xl space-y-4 hover:border-slate-300 transition-colors shadow-xs">
               <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700">
                 <GitBranch className="w-5 h-5" />
               </div>
@@ -1183,38 +1183,86 @@ export default function Home() {
           </div>
 
           {/* Byte Conservation Invariants */}
-          <div className="bg-slate-900 text-slate-100 rounded-2xl p-6 sm:p-8 font-mono border border-slate-800 shadow-xl space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-              <span className="text-xs uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Verifiable Principle: Byte Conservation Invariants</span>
+          <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 font-mono border border-slate-200 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+              <div>
+                <span className="text-xs uppercase font-bold tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full inline-flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  <span>Procedural Standard: Byte Conservation Invariants</span>
+                </span>
+                <h4 className="text-xl font-bold font-mono text-slate-900 mt-2">
+                  Mathematical Byte Accounting (V / R / M)
+                </h4>
+              </div>
+              <span className="text-[11px] font-sans text-slate-500">
+                Deterministic Byte Provenance
               </span>
-              <span className="text-[10px] text-slate-400">VERIFIED PROVENANCE · NON-FABRICATED RECOVERY</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-              <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
-                <div className="text-emerald-300 font-bold text-sm">
-                  Verified (V) + Missing (M) = Total Input Bytes
+
+            {/* Definitions */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
+              <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-1.5">
+                <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm">
+                  <span className="w-5 h-5 rounded bg-emerald-100 border border-emerald-200 text-emerald-800 flex items-center justify-center text-xs">V</span>
+                  <span>Verified Original Bytes</span>
                 </div>
-                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
-                  Every byte of uploaded evidence is definitively accounted for. Either it is cryptographically verified from the physical evidence, or it is cataloged as an unobserved gap. No byte is dropped or hidden.
+                <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                  Bytes directly extracted and cryptographically matched from observed evidence with zero modification.
                 </p>
               </div>
-              <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
-                <div className="text-slate-200 font-bold text-sm">
-                  Verified (V) + Reconstructed (R) = Total Output Bytes
+
+              <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-1.5">
+                <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+                  <span className="w-5 h-5 rounded bg-slate-200 border border-slate-300 text-slate-800 flex items-center justify-center text-xs">R</span>
+                  <span>Reconstructed Syntax</span>
                 </div>
-                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
-                  The recovered downloadable artifact contains only authentic evidence bytes plus the minimum specification-compliant structural closures (such as trailer headers or container footers) needed for parser validity.
+                <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                  Minimal structural syntax (closing tags, delimiter pairs, or format headers) added strictly to satisfy parser specifications.
                 </p>
               </div>
+
+              <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 space-y-1.5">
+                <div className="flex items-center gap-2 text-amber-700 font-bold text-sm">
+                  <span className="w-5 h-5 rounded bg-amber-100 border border-amber-200 text-amber-800 flex items-center justify-center text-xs">M</span>
+                  <span>Missing Unobserved Gaps</span>
+                </div>
+                <p className="text-[11px] font-sans text-slate-600 leading-relaxed">
+                  Damaged or truncated regions preserved as unobserved gaps. Never filled with synthetic speculation or artificial content.
+                </p>
+              </div>
+            </div>
+
+            {/* Equations */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+              <div className="p-4 rounded-xl bg-emerald-50/40 border border-emerald-200/80 space-y-2">
+                <div className="text-emerald-900 font-bold text-sm">
+                  V + M = Total Input Bytes
+                </div>
+                <p className="text-[11px] font-sans text-slate-700 leading-relaxed">
+                  Every byte in the damaged file is cataloged: either preserved as authentic evidence (V) or logged as an unobserved gap (M). No byte is dropped or obscured.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="text-slate-900 font-bold text-sm">
+                  V + R = Total Output Bytes
+                </div>
+                <p className="text-[11px] font-sans text-slate-700 leading-relaxed">
+                  The recovered downloadable output contains only authentic evidence bytes (V) plus verified structural repairs (R) needed for file-format validity.
+                </p>
+              </div>
+            </div>
+
+            {/* Crucial Integrity Caveat */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-sans text-slate-600 leading-relaxed">
+              <strong className="font-mono text-slate-900">Important Scope Note:</strong> Byte conservation equations verify procedural integrity and transparent bookkeeping. They ensure no evidence is silently discarded or secretly synthesized. Byte accounting does <em>not</em> prove semantic completeness, factual accuracy, or historical authenticity of the underlying content.
             </div>
           </div>
         </div>
       </section>
 
       {/* Supported Evidence Section: 8 Formats Matrix */}
-      <section id="evidence" className="py-20 border-b border-slate-200/80 bg-[#F8FAFC]">
+      <section id="evidence" className="py-20 border-b border-slate-200/80 bg-neutral-50/50">
         <div className="max-w-6xl mx-auto px-6 space-y-12">
           <div className="text-center space-y-3 max-w-2xl mx-auto">
             <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500">

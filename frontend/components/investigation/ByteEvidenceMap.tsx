@@ -154,7 +154,7 @@ export function ByteEvidenceMap({
             <span className="text-slate-700">VERIFIED ({vPercent}%)</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded bg-sky-500" />
+            <div className="w-3 h-3 rounded bg-slate-600" />
             <span className="text-slate-700">RECONSTRUCTED ({rPercent}%)</span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -192,8 +192,8 @@ export function ByteEvidenceMap({
                       : "bg-emerald-500 text-white hover:bg-emerald-600"
                     : seg.type === "RECONSTRUCTED"
                     ? isHovered
-                      ? "bg-sky-600 text-white ring-2 ring-sky-400 shadow-sm"
-                      : "bg-sky-500 text-white hover:bg-sky-600"
+                      ? "bg-slate-700 text-white ring-2 ring-slate-400 shadow-sm"
+                      : "bg-slate-600 text-white hover:bg-slate-700"
                     : isHovered
                     ? "bg-amber-600 text-white ring-2 ring-amber-400 shadow-sm"
                     : "bg-amber-500 text-white hover:bg-amber-600"
@@ -218,7 +218,7 @@ export function ByteEvidenceMap({
                       ? "bg-emerald-100 text-emerald-800 border-emerald-300"
                       : hoveredSegment.type === "MISSING"
                       ? "bg-amber-100 text-amber-800 border-amber-300"
-                      : "bg-sky-100 text-sky-800 border-sky-300"
+                      : "bg-slate-100 text-slate-800 border-slate-300"
                   }`}
                 >
                   {hoveredSegment.name}

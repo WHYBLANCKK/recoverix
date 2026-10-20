@@ -181,7 +181,7 @@ export default function SetupPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#F8FAFC] text-slate-900 py-12 px-4 sm:px-6 font-sans">
+    <main className="min-h-screen bg-white text-slate-900 py-12 px-4 sm:px-6 font-sans">
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Page Header */}
         <div className="border-b border-slate-200 pb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -314,7 +314,7 @@ export default function SetupPage() {
                   </div>
                   <div>
                     <span className="text-slate-500 block">IN-MEMORY STATE</span>
-                    <span className="text-sky-700 font-semibold">VERIFIED BUFFER</span>
+                    <span className="text-emerald-700 font-semibold">VERIFIED BUFFER</span>
                   </div>
                 </div>
 
@@ -368,13 +368,13 @@ export default function SetupPage() {
                       "Truncated JSON log file; reconstructs missing closing delimiters (R=2B, V=61B)"
                     )
                   }
-                  className="p-3 rounded-xl bg-sky-50/60 hover:bg-sky-50 border border-sky-300 text-left transition-all shadow-2xs group relative"
+                  className="p-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-300 text-left transition-all shadow-2xs group relative"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-sky-800 font-bold text-[11px] group-hover:text-sky-700">
+                    <span className="text-slate-800 font-bold text-[11px] group-hover:text-slate-900">
                       ★ incident_log.json
                     </span>
-                    <span className="text-[9px] uppercase font-bold bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded">
+                    <span className="text-[9px] uppercase font-bold bg-slate-200 text-slate-800 px-1.5 py-0.5 rounded">
                       R &gt; 0 RECONSTRUCTION
                     </span>
                   </div>
@@ -664,20 +664,20 @@ export default function SetupPage() {
                       isPassed
                         ? "bg-emerald-50/70 border-emerald-300 text-emerald-900 font-semibold"
                         : isCurrent
-                        ? "bg-sky-50 border-sky-300 text-sky-900 font-semibold shadow-xs"
+                        ? "bg-emerald-50/40 border-emerald-300 text-emerald-950 font-semibold shadow-xs"
                         : "border-slate-100 bg-slate-50/50 text-slate-400"
                     }`}
                   >
                     {isPassed ? (
                       <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
                     ) : isCurrent ? (
-                      <Loader2 className="w-4 h-4 text-sky-600 animate-spin shrink-0" />
+                      <Loader2 className="w-4 h-4 text-emerald-600 animate-spin shrink-0" />
                     ) : (
                       <div className="w-4 h-4 rounded-full border border-slate-300 shrink-0" />
                     )}
                     <span
                       className={`tracking-wider ${
-                        isPassed ? "text-emerald-800" : isCurrent ? "text-sky-800" : "text-slate-400"
+                        isPassed ? "text-emerald-800" : isCurrent ? "text-emerald-900" : "text-slate-400"
                       }`}
                     >
                       {stage}

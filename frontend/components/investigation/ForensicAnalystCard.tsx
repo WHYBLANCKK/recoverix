@@ -106,7 +106,7 @@ export function ForensicAnalystCard({
       case "HIGH":
         return "bg-amber-50 text-amber-800 border-amber-300";
       case "MEDIUM":
-        return "bg-sky-50 text-sky-800 border-sky-300";
+        return "bg-slate-100 text-slate-800 border-slate-300";
       case "LOW":
       default:
         return "bg-slate-100 text-slate-700 border-slate-300";
@@ -218,7 +218,7 @@ export function ForensicAnalystCard({
               <span
                 className={`border px-2.5 py-0.5 rounded font-mono font-semibold ${
                   reconstructedBytes > 0
-                    ? "bg-sky-50 text-sky-800 border-sky-300 font-bold"
+                    ? "bg-slate-100 text-slate-800 border-slate-300 font-bold"
                     : "bg-slate-100 text-slate-600 border-slate-200"
                 }`}
               >
@@ -241,8 +241,8 @@ export function ForensicAnalystCard({
 
           {/* Safety Notice: Reconstructed vs Preserved Missing */}
           {reconstructedBytes > 0 ? (
-            <div className="bg-sky-50/70 border border-sky-200 rounded-xl p-3 text-xs text-sky-950 font-sans flex items-start gap-2">
-              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 font-sans flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <div>
                 <strong>Why this reconstruction is safe:</strong> The{" "}
                 {reconstructedBytes} reconstructed bytes were derived strictly from observed container structure and format grammar rules rather than predicted semantic content.
@@ -294,7 +294,7 @@ export function ForensicAnalystCard({
             {/* C. WHY THIS MATTERS */}
             <div className="bg-slate-50 border border-slate-200 p-5 rounded-xl space-y-2">
               <div className="flex items-center gap-2 text-slate-700 font-semibold uppercase text-[11px] tracking-wider">
-                <FileSearch className="w-4 h-4 text-sky-600" />
+                <FileSearch className="w-4 h-4 text-slate-600" />
                 <span>C. Why This Matters</span>
               </div>
               <p className="text-slate-800 font-sans leading-relaxed text-xs">

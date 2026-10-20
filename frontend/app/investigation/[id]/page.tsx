@@ -181,7 +181,7 @@ export default function InvestigationPage({
 
   if (loading && !result) {
     return (
-      <main className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center text-slate-600 font-mono">
+      <main className="min-h-screen bg-white flex flex-col items-center justify-center text-slate-600 font-mono">
         <Loader2 className="w-10 h-10 text-emerald-600 animate-spin mb-4" />
         <p className="text-xs uppercase tracking-wider font-semibold">Hydrating Forensic Investigation Workspace...</p>
       </main>
@@ -191,7 +191,7 @@ export default function InvestigationPage({
   if (!result) {
     if (errorType === "NETWORK_ERROR") {
       return (
-        <main className="min-h-screen bg-[#F8FAFC] text-slate-800 py-16 px-6 font-mono text-center space-y-4">
+        <main className="min-h-screen bg-white text-slate-800 py-16 px-6 font-mono text-center space-y-4">
           <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-2" />
           <h2 className="text-xl font-bold text-slate-900 uppercase tracking-wider">RECOVERY ENGINE UNREACHABLE</h2>
           <p className="text-xs text-slate-600 max-w-md mx-auto font-sans leading-relaxed">
@@ -217,7 +217,7 @@ export default function InvestigationPage({
     }
 
     return (
-      <main className="min-h-screen bg-[#F8FAFC] text-slate-800 py-16 px-6 font-mono text-center space-y-4">
+      <main className="min-h-screen bg-white text-slate-800 py-16 px-6 font-mono text-center space-y-4">
         <h2 className="text-xl font-bold text-slate-900 uppercase tracking-wider">INVESTIGATION NOT FOUND OR EXPIRED</h2>
         <p className="text-xs text-slate-600 max-w-md mx-auto font-sans leading-relaxed">
           No active recovery run or artifact records match identifier <code className="text-emerald-700 font-bold">{fileId}</code>. Standalone recovery sessions are automatically purged after 24 hours.
@@ -266,7 +266,7 @@ export default function InvestigationPage({
   const reconstructionSteps = result.reconstruction_steps || [];
 
   return (
-    <main className="min-h-screen bg-[#F8FAFC] text-slate-900 py-8 px-4 sm:px-6 font-mono selection:bg-emerald-500/20 selection:text-emerald-950">
+    <main className="min-h-screen bg-white text-slate-900 py-8 px-4 sm:px-6 font-mono selection:bg-emerald-500/20 selection:text-emerald-950">
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Expired Session Notice */}
         {isExpired && (

@@ -38,7 +38,7 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
 
   if (error) {
     return (
-      <main className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center text-slate-800 font-mono">
+      <main className="min-h-screen bg-white flex flex-col items-center justify-center text-slate-800 font-mono">
         <h2 className="text-xl font-bold mb-4 text-slate-900">ARTIFACT NOT FOUND</h2>
         <Link href="/dashboard" className="text-xs text-emerald-700 hover:underline font-semibold">Return to Case Dashboard</Link>
       </main>
@@ -47,7 +47,7 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
 
   if (!data) {
     return (
-      <main className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
+      <main className="min-h-screen bg-white flex items-center justify-center">
         <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
       </main>
     );
@@ -56,7 +56,7 @@ export default function ArtifactPage({ params }: { params: Promise<{ id: string 
   const { artifact, relatedArtifacts } = data;
 
   return (
-    <main className="min-h-screen bg-[#F8FAFC] text-slate-900 py-8 px-6 selection:bg-emerald-500/20 selection:text-emerald-950 font-mono">
+    <main className="min-h-screen bg-white text-slate-900 py-8 px-6 selection:bg-emerald-500/20 selection:text-emerald-950 font-mono">
       <div className="max-w-6xl mx-auto space-y-8">
         
         {/* Top Navigation & Header */}

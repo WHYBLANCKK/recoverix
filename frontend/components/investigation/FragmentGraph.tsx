@@ -238,9 +238,9 @@ export function FragmentGraph({
                 isUnrecoverable
                   ? "bg-rose-500"
                   : isStructuralReconstruction
-                  ? "bg-sky-500"
+                  ? "bg-slate-500"
                   : isShuffled
-                  ? "bg-sky-500"
+                  ? "bg-slate-500"
                   : isFragmentedWithGap
                   ? "bg-amber-500"
                   : "bg-emerald-500"
@@ -272,7 +272,7 @@ export function FragmentGraph({
               isUnrecoverable
                 ? "bg-rose-50 text-rose-800 border-rose-200"
                 : isStructuralReconstruction
-                ? "bg-sky-50 text-sky-800 border-sky-200"
+                ? "bg-slate-100 text-slate-800 border-slate-300"
                 : "bg-emerald-50 text-emerald-800 border-emerald-200"
             }`}
           >
@@ -441,18 +441,18 @@ export function FragmentGraph({
                 }
                 className={`cursor-pointer max-w-md w-full p-4 rounded-xl border text-center transition-all ${
                   selectedNode.id === "recon-closure"
-                    ? "bg-sky-50 border-2 border-sky-600 text-sky-950 scale-105 shadow-md shadow-sky-500/10"
-                    : "bg-white border border-sky-300 hover:border-sky-500 text-slate-800 shadow-2xs"
+                    ? "bg-slate-50 border-2 border-slate-700 text-slate-950 scale-105 shadow-md"
+                    : "bg-white border border-slate-300 hover:border-slate-500 text-slate-800 shadow-2xs"
                 }`}
               >
-                <div className="flex items-center justify-center gap-1.5 text-sky-700 text-xs font-bold uppercase mb-1">
+                <div className="flex items-center justify-center gap-1.5 text-slate-800 text-xs font-bold uppercase mb-1">
                   <Cpu className="w-4 h-4" />
                   <span>RECONSTRUCTED REGION: {rBytes} B</span>
                 </div>
                 <div className="text-xs font-bold text-slate-900">
                   Offset {vBytes} B – {vBytes + rBytes} B
                 </div>
-                <div className="text-[11px] text-sky-900 font-medium mt-0.5">
+                <div className="text-[11px] text-slate-900 font-medium mt-0.5">
                   METHOD: {reconstructionMethod || "JSON_STRUCTURAL_CLOSURE"}
                 </div>
                 <div className="text-[10px] text-slate-500 mt-1">
@@ -677,11 +677,11 @@ export function FragmentGraph({
                     }
                     className={`cursor-pointer p-3.5 rounded-xl border text-center transition-all ${
                       selectedNode.id === trailerFrag.fragment_id
-                        ? "bg-sky-50 border-2 border-sky-600 text-sky-950 shadow-md scale-105"
-                        : "bg-white border border-sky-300 hover:border-sky-500 text-slate-800 shadow-2xs"
+                        ? "bg-slate-50 border-2 border-slate-700 text-slate-900 shadow-md scale-105"
+                        : "bg-white border border-slate-300 hover:border-slate-500 text-slate-800 shadow-2xs"
                     }`}
                   >
-                    <div className="text-[9px] uppercase font-bold text-sky-700">
+                    <div className="text-[9px] uppercase font-bold text-slate-700">
                       RAW INPUT: OFFSET 0
                     </div>
                     <div className="text-xs font-bold text-slate-900 mt-0.5">
@@ -690,7 +690,7 @@ export function FragmentGraph({
                     <div className="text-[10px] text-slate-600 mt-0.5 font-medium">
                       Trailer / Xref Dict ({trailerFrag.length} B)
                     </div>
-                    <div className="text-[9px] bg-sky-100 text-sky-800 rounded px-1.5 py-0.5 mt-1 font-semibold inline-block">
+                    <div className="text-[9px] bg-slate-100 text-slate-800 rounded px-1.5 py-0.5 mt-1 font-semibold inline-block">
                       DISPLACED TO HEAD
                     </div>
                   </div>
@@ -714,11 +714,11 @@ export function FragmentGraph({
                     }
                     className={`cursor-pointer p-3.5 rounded-xl border text-center transition-all ${
                       selectedNode.id === headerFrag.fragment_id
-                        ? "bg-sky-50 border-2 border-sky-600 text-sky-950 shadow-md scale-105"
-                        : "bg-white border border-sky-300 hover:border-sky-500 text-slate-800 shadow-2xs"
+                        ? "bg-slate-50 border-2 border-slate-700 text-slate-900 shadow-md scale-105"
+                        : "bg-white border border-slate-300 hover:border-slate-500 text-slate-800 shadow-2xs"
                     }`}
                   >
-                    <div className="text-[9px] uppercase font-bold text-sky-700">
+                    <div className="text-[9px] uppercase font-bold text-slate-700">
                       RAW INPUT: OFFSET {headerFrag.offset} B
                     </div>
                     <div className="text-xs font-bold text-slate-900 mt-0.5">
@@ -727,7 +727,7 @@ export function FragmentGraph({
                     <div className="text-[10px] text-slate-600 mt-0.5 font-medium">
                       %PDF-1.4 Header & Stream ({headerFrag.length} B)
                     </div>
-                    <div className="text-[9px] bg-sky-100 text-sky-800 rounded px-1.5 py-0.5 mt-1 font-semibold inline-block">
+                    <div className="text-[9px] bg-slate-100 text-slate-800 rounded px-1.5 py-0.5 mt-1 font-semibold inline-block">
                       DISPLACED TO TAIL
                     </div>
                   </div>
@@ -757,11 +757,11 @@ export function FragmentGraph({
                 }
                 className={`cursor-pointer max-w-md w-full p-3.5 rounded-xl border text-center transition-all ${
                   selectedNode.id === "shuffled-rel"
-                    ? "bg-sky-50 border-2 border-sky-600 text-sky-950 scale-105 shadow-md shadow-sky-500/10"
-                    : "bg-white border border-sky-300 hover:border-sky-500 text-slate-800 shadow-2xs"
+                    ? "bg-slate-50 border-2 border-slate-700 text-slate-900 scale-105 shadow-md shadow-slate-500/10"
+                    : "bg-white border border-slate-300 hover:border-slate-500 text-slate-800 shadow-2xs"
                 }`}
               >
-                <div className="flex items-center justify-center gap-1.5 text-sky-700 text-xs font-bold uppercase mb-0.5">
+                <div className="flex items-center justify-center gap-1.5 text-slate-700 text-xs font-bold uppercase mb-0.5">
                   <Shuffle className="w-3.5 h-3.5" />
                   <span>RECONSTRUCTION RELATIONSHIP: FRAGMENT_UNSHUFFLE</span>
                 </div>
@@ -922,7 +922,7 @@ export function FragmentGraph({
                       : selectedNode.status.includes("UNRECOVERABLE")
                       ? "text-rose-700"
                       : selectedNode.status.includes("RECONSTRUCTED")
-                      ? "text-sky-700"
+                      ? "text-slate-700"
                       : "text-emerald-700"
                   }`}
                 >
@@ -942,7 +942,7 @@ export function FragmentGraph({
                     : selectedNode.status.includes("UNRECOVERABLE") || selectedNode.status.includes("FAILED")
                     ? "bg-rose-100 text-rose-800 border-rose-300"
                     : selectedNode.status.includes("RECONSTRUCTED") || selectedNode.status.includes("REORDERED")
-                    ? "bg-sky-100 text-sky-800 border-sky-300"
+                    ? "bg-slate-100 text-slate-800 border-slate-300"
                     : "bg-slate-200 text-slate-800 border-slate-300"
                 }`}
               >
