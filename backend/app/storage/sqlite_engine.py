@@ -16,6 +16,7 @@ import hashlib
 import os
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from typing import Generator, Optional
@@ -143,29 +144,45 @@ CREATE TABLE IF NOT EXISTS blobs (
 """
 
 
-def _safe_add_column(conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:
+def _safe_add_column(
+    conn: sqlite3.Connection,
+    table: str,
+    col: str,
+    col_type: str,
+    max_retries: int = 10,
+) -> None:
     """Add column to table idempotently and race-safely against concurrent processes.
 
     Guarantees:
     1. Inspects table schema first; skips ALTER TABLE if column exists.
-    2. If ALTER TABLE fails with OperationalError, re-inspects table schema.
-    3. Treats duplicate column errors as benign only if the column is confirmed present.
-    4. Never swallows unrelated OperationalError exceptions.
+    2. If ALTER TABLE fails with OperationalError:
+       a. If column is confirmed present in schema, returns cleanly (idempotent).
+       b. If duplicate column error, returns cleanly.
+       c. If database is locked/busy, retries with backoff up to max_retries.
+    3. Never swallows unrelated OperationalError exceptions.
     """
-    cur = conn.cursor()
-    cur.execute(f"PRAGMA table_info({table});")
-    existing_cols = {row[1] for row in cur.fetchall()}
-    if col in existing_cols:
-        return
-
-    try:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};")
-    except sqlite3.OperationalError as e:
+    for attempt in range(max_retries):
+        cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({table});")
-        verified_cols = {row[1] for row in cur.fetchall()}
-        if col in verified_cols and "duplicate column name" in str(e).lower():
+        existing_cols = {row[1] for row in cur.fetchall()}
+        if col in existing_cols:
             return
-        raise
+
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};")
+            return
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            cur.execute(f"PRAGMA table_info({table});")
+            verified_cols = {row[1] for row in cur.fetchall()}
+            if col in verified_cols:
+                return
+
+            if ("locked" in err_msg or "busy" in err_msg) and attempt < max_retries - 1:
+                time.sleep(0.05 * (attempt + 1))
+                continue
+
+            raise
 
 
 class SqliteEngine:
@@ -247,8 +264,17 @@ class SqliteEngine:
         conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS};")
 
         if not self._is_memory:
-            conn.execute("PRAGMA journal_mode = WAL;")
-            conn.execute("PRAGMA synchronous = NORMAL;")
+            try:
+                row = conn.execute("PRAGMA journal_mode;").fetchone()
+                if row and str(row[0]).lower() != "wal":
+                    conn.execute("PRAGMA journal_mode = WAL;")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                conn.execute("PRAGMA synchronous = NORMAL;")
+            except sqlite3.OperationalError:
+                pass
 
         return conn
 
@@ -289,62 +315,71 @@ class SqliteEngine:
             raise RuntimeError("SqliteEngine is closed")
 
         with self._lock:
-            conn = self.connect()
-            try:
-                conn.executescript(SCHEMA_DDL)
-                # Race-safe defensive column migrations using _safe_add_column
-                for col in ("case_name", "investigator", "notes"):
-                    _safe_add_column(conn, "recovery_runs", col, "TEXT")
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    conn = self.connect()
+                    try:
+                        conn.executescript(SCHEMA_DDL)
+                        # Race-safe defensive column migrations using _safe_add_column
+                        for col in ("case_name", "investigator", "notes"):
+                            _safe_add_column(conn, "recovery_runs", col, "TEXT")
 
-                _safe_add_column(conn, "artifacts", "created_at", "TEXT")
-                _safe_add_column(conn, "artifacts", "sha256", "TEXT")
+                        _safe_add_column(conn, "artifacts", "created_at", "TEXT")
+                        _safe_add_column(conn, "artifacts", "sha256", "TEXT")
 
-                _safe_add_column(conn, "cases", "session_id", "TEXT")
-                _safe_add_column(conn, "recovery_runs", "session_id", "TEXT")
-                _safe_add_column(conn, "artifacts", "session_id", "TEXT")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_recovery_runs_session ON recovery_runs(session_id);")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id);")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_session ON cases(session_id);")
+                        _safe_add_column(conn, "cases", "session_id", "TEXT")
+                        _safe_add_column(conn, "recovery_runs", "session_id", "TEXT")
+                        _safe_add_column(conn, "artifacts", "session_id", "TEXT")
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_recovery_runs_session ON recovery_runs(session_id);")
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id);")
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_session ON cases(session_id);")
 
-                # Safe, deterministic backfill of sha256 for legacy artifact records where sha256 is NULL.
-                # Prioritizes canonical 'artifact:{id}' key over legacy '{id}' key.
-                # If only legacy key exists, checks for collision with evidence_files.
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    SELECT
-                        a.artifact_id,
-                        bc.data AS canon_data,
-                        bl.data AS legacy_data,
-                        ef.case_id AS colliding_case_id
-                    FROM artifacts a
-                    LEFT JOIN blobs bc ON bc.blob_key = ('artifact:' || a.artifact_id)
-                    LEFT JOIN blobs bl ON bl.blob_key = a.artifact_id
-                    LEFT JOIN evidence_files ef ON ef.case_id = a.artifact_id
-                    WHERE a.sha256 IS NULL;
-                    """
-                )
-                legacy_rows = cur.fetchall()
-                for legacy_row in legacy_rows:
-                    art_id = legacy_row[0]
-                    canon_data = legacy_row[1]
-                    legacy_data = legacy_row[2]
-                    colliding_case_id = legacy_row[3]
-
-                    target_bytes: Optional[bytes] = None
-                    if canon_data is not None:
-                        target_bytes = bytes(canon_data)
-                    elif legacy_data is not None and colliding_case_id is None:
-                        target_bytes = bytes(legacy_data)
-
-                    if target_bytes is not None:
-                        digest = hashlib.sha256(target_bytes).hexdigest()
-                        conn.execute(
-                            "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ? AND sha256 IS NULL;",
-                            (digest, art_id),
+                        # Safe, deterministic backfill of sha256 for legacy artifact records where sha256 is NULL.
+                        # Prioritizes canonical 'artifact:{id}' key over legacy '{id}' key.
+                        # If only legacy key exists, checks for collision with evidence_files.
+                        cur = conn.cursor()
+                        cur.execute(
+                            """
+                            SELECT
+                                a.artifact_id,
+                                bc.data AS canon_data,
+                                bl.data AS legacy_data,
+                                ef.case_id AS colliding_case_id
+                            FROM artifacts a
+                            LEFT JOIN blobs bc ON bc.blob_key = ('artifact:' || a.artifact_id)
+                            LEFT JOIN blobs bl ON bl.blob_key = a.artifact_id
+                            LEFT JOIN evidence_files ef ON ef.case_id = a.artifact_id
+                            WHERE a.sha256 IS NULL;
+                            """
                         )
-            finally:
-                conn.close()
+                        legacy_rows = cur.fetchall()
+                        for legacy_row in legacy_rows:
+                            art_id = legacy_row[0]
+                            canon_data = legacy_row[1]
+                            legacy_data = legacy_row[2]
+                            colliding_case_id = legacy_row[3]
+
+                            target_bytes: Optional[bytes] = None
+                            if canon_data is not None:
+                                target_bytes = bytes(canon_data)
+                            elif legacy_data is not None and colliding_case_id is None:
+                                target_bytes = bytes(legacy_data)
+
+                            if target_bytes is not None:
+                                digest = hashlib.sha256(target_bytes).hexdigest()
+                                conn.execute(
+                                    "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ? AND sha256 IS NULL;",
+                                    (digest, art_id),
+                                )
+                        break
+                    finally:
+                        conn.close()
+                except sqlite3.OperationalError as e:
+                    if ("locked" in str(e).lower() or "busy" in str(e).lower()) and attempt < max_retries - 1:
+                        time.sleep(0.05 * (attempt + 1))
+                        continue
+                    raise
 
     def clear_all_tables(self) -> None:
         """Clear all stored data across all tables respecting foreign key deletion order."""
