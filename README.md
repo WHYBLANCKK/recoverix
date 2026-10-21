@@ -164,7 +164,7 @@ Contributions are welcome. Pull requests must adhere to our core engineering sta
 
 If you find Recoverix valuable for digital forensics, incident response, or verifiable file recovery research, consider supporting ongoing development:
 
-👉 **[Sponsor @WHYBLANCKK on GitHub Sponsors](https://github.com/sponsors/WHYBLANCKK)**
+ **[Sponsor @WHYBLANCKK on GitHub Sponsors](https://github.com/sponsors/WHYBLANCKK)**
 
 Sponsorship directly supports maintenance, format parser enhancements, CI test infrastructure, and research into non-probabilistic evidence recovery.
 
