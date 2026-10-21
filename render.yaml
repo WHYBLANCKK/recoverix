@@ -16,3 +16,7 @@ services:
         value: "1"
       - key: RECOVERIX_CORS_ORIGINS
         value: "https://recoverix-staging.vercel.app,http://localhost:3000"
+      - key: RECOVERIX_COOKIE_SECURE
+        value: "1"
+      - key: RECOVERIX_SESSION_SECRET
+        generateValue: true

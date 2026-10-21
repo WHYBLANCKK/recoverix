@@ -59,6 +59,9 @@ User Browser (Phone / Laptop)
 | `RECOVERIX_DB_PATH` | `/app/data/recoverix.db` | Path to ephemeral SQLite database |
 | `RECOVERIX_TRUSTED_PROXIES` | `private` | Trusts Render's internal private proxy mesh (`10.x.x.x`) for rate limiting while defending against client IP spoofing |
 | `RECOVERIX_CORS_ORIGINS` | `https://<your-frontend-domain>` | Restricts CORS to the deployed frontend (e.g. `https://recoverix.vercel.app`) |
+| `RECOVERIX_COOKIE_SECURE` | `1` | Enforces `Secure` flag on `recoverix_session` HTTP-only cookies over HTTPS |
+| `RECOVERIX_SESSION_SECRET` | High-entropy string (Render `generateValue: true`) | Secret key used for HMAC-SHA256 session token signatures |
+| `RECOVERIX_REQUIRE_SESSION_SECRET` | `1` (or `RECOVERIX_ENV=production`) | Strict mode: enforces fail-closed startup if session secret is unset |
 | `PYTHONUNBUFFERED` | `1` | Ensures immediate container log flushing |
 
 ### B. Frontend (Vercel Hobby)
@@ -87,6 +90,8 @@ User Browser (Phone / Laptop)
    - `RECOVERIX_TRUSTED_PROXIES` = `private`
    - `PYTHONUNBUFFERED` = `1`
    - `RECOVERIX_CORS_ORIGINS` = `https://recoverix-staging.vercel.app,http://localhost:3000`
+   - `RECOVERIX_COOKIE_SECURE` = `1`
+   - `RECOVERIX_SESSION_SECRET` = *(Click Generate or set a random 64-char secret)*
 6. Click **Create Web Service**.
 7. Wait ~2–3 minutes for the build to finish. Verify backend health:
    ```bash
