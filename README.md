@@ -17,8 +17,7 @@
 
 <p align="center">
   <a href="https://recoverix-staging.vercel.app/"><strong>Live Staging</strong></a> •
-  <a href="https://github.com/WHYBLANCKK/recoverix"><strong>GitHub Repository</strong></a> •
-  <a href="https://github.com/sponsors/WHYBLANCKK"><strong>Sponsor Recoverix</strong></a>
+  <a href="https://github.com/WHYBLANCKK/recoverix"><strong>GitHub Repository</strong></a>
 </p>
 
 ---
@@ -146,27 +145,6 @@ npm run build
 ```
 
 Synthetic benchmarks and empirical evaluation corpus runners are available in `benchmark/` (`python3 -m benchmark.run_baseline` and `python3 -m benchmark.run_realworld`).
-
----
-
-## Contributing
-
-Contributions are welcome. Pull requests must adhere to our core engineering standards:
-
-1. **Deterministic Reconstruction:** No probabilistic guessing, heuristic generation, or generative AI models to fill missing bytes.
-2. **Strict $V / R / M$ Accounting:** Accurately classify verified evidence, reconstructed syntax, and missing gaps.
-3. **Defensive Bounds:** Enforce bounded execution against recursion bombs and sanitize all output filenames to safe basenames.
-4. **Test Verification:** Include tests for intact, repairable, and unrecoverable fixtures. Ensure `pytest tests/` and `npm run build` pass before opening a PR against `main`.
-
----
-
-## Sponsorship
-
-If you find Recoverix valuable for digital forensics, incident response, or verifiable file recovery research, consider supporting ongoing development:
-
- **[Sponsor @WHYBLANCKK on GitHub Sponsors](https://github.com/sponsors/WHYBLANCKK)**
-
-Sponsorship directly supports maintenance, format parser enhancements, CI test infrastructure, and research into non-probabilistic evidence recovery.
 
 ---
 
